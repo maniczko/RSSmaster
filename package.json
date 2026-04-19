@@ -1,0 +1,26 @@
+{
+  "name": "rssmaster",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "bootstrap": "npm install && python scripts/bootstrap_python.py",
+    "bootstrap:api": "python scripts/bootstrap_python.py",
+    "bootstrap:web": "npm install",
+    "db:init": "python scripts/init_db.py",
+    "dev": "concurrently -k -n api,web -c yellow,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "python scripts/dev_api.py",
+    "dev:web": "npm run dev --workspace @rssmaster/web",
+    "build": "npm run build --workspace @rssmaster/web",
+    "test:unit": "npm run test:unit:web && npm run test:unit:api",
+    "test:unit:web": "npm run test --workspace @rssmaster/web",
+    "test:unit:api": "python scripts/test_api_unit.py",
+    "check": "npm run build && npm run test:unit && python scripts/check_api.py",
+    "health": "python scripts/check_health.py"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
