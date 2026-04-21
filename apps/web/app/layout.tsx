@@ -5,6 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "rssmaster",
   description: "Lokalna aplikacja RSS do czytania i selekcji artykulow",
+  manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

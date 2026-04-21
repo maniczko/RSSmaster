@@ -1,6 +1,7 @@
 export * from "@/app/components/app-shell";
 export * from "@/app/components/article-queue-list";
 export * from "@/app/components/annotation-panel";
+export * from "@/app/components/capture-studio";
 export * from "@/app/components/feed-browser";
 export * from "@/app/components/feed-stream";
 export * from "@/app/components/library-views-nav";

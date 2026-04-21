@@ -543,6 +543,12 @@ class WorkspaceService:
                 serialize_item_card(row)
                 for row in snapshot["saved_items"]
             ],
+            "continuity_items": [
+                serialize_export_item(row)
+                for row in snapshot["continuity_items"]
+            ],
+            "item_tags": snapshot["item_tags"],
+            "collection_items": snapshot["collection_items"],
         }
 
     def _refresh_story_clusters_and_rank(
@@ -1167,6 +1173,13 @@ def serialize_item_card_from_item_model(item: dict[str, object]) -> dict[str, ob
         "channel_feed_url": channel["feed_url"],
         "story_cluster_id": None,
         "story_cluster_size": 1,
+    }
+
+
+def serialize_export_item(row: dict[str, object]) -> dict[str, object]:
+    return {
+        **serialize_item_card(row),
+        "is_archived": bool(row.get("archived_at")),
     }
 
 

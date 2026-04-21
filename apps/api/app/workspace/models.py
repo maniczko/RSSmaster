@@ -317,6 +317,21 @@ class CaptureResponse(BaseModel):
     item: WorkspaceItemCardModel
 
 
+class WorkspaceContinuityItemModel(WorkspaceItemCardModel):
+    is_archived: bool = False
+
+
+class WorkspaceItemTagAssignmentModel(BaseModel):
+    item_id: str
+    tag_id: str
+    tag_name: str
+
+
+class WorkspaceCollectionItemAssignmentModel(BaseModel):
+    collection_id: str
+    item_id: str
+
+
 class WorkspaceExportResponse(BaseModel):
     exported_at: str
     profile: ReaderProfileModel
@@ -326,3 +341,6 @@ class WorkspaceExportResponse(BaseModel):
     collections: list[CollectionModel]
     saved_searches: list[SavedSearchModel]
     saved_items: list[WorkspaceItemCardModel]
+    continuity_items: list[WorkspaceContinuityItemModel] = []
+    item_tags: list[WorkspaceItemTagAssignmentModel] = []
+    collection_items: list[WorkspaceCollectionItemAssignmentModel] = []

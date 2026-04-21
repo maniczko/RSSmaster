@@ -8,6 +8,8 @@ The first continuity milestone is intentionally narrow:
 - stored reading progress per article
 - resume surfaces in the reader and briefing
 - quick URL capture into the saved library
+- dedicated `/capture` entry point with prefilled URL/title support
+- manifest-driven web share target and bookmarklet-friendly browser capture
 - exportable workspace state for portability
 
 ## Offline / PWA Scope

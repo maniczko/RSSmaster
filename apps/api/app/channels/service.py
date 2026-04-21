@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import UTC, datetime
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -34,6 +36,16 @@ class FeedMetadata:
     feed_url: str
     description: str | None
     language: str | None
+    estimated_items_per_week: int | None
+    sample_items: list["FeedPreviewItem"]
+
+
+@dataclass(slots=True, frozen=True)
+class FeedPreviewItem:
+    title: str
+    url: str
+    published_at: str | None
+    image_url: str | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -107,6 +119,26 @@ class FeedLinkParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "head":
             self._inside_head = False
+
+
+class FirstImageParser(HTMLParser):
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.base_url = base_url
+        self.image_url: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.image_url is not None or tag.lower() != "img":
+            return
+
+        attributes = {key.lower(): value for key, value in attrs if key}
+        src = attributes.get("src")
+        if not src:
+            return
+
+        normalized = try_normalize_url(urljoin(self.base_url, src))
+        if normalized:
+            self.image_url = normalized
 
 
 class ChannelDiscoveryService:
@@ -305,6 +337,7 @@ class ChannelDiscoveryService:
             site_url = child_text(channel, {"link"})
             description = child_text(channel, {"description"})
             language = child_text(channel, {"language"})
+            entry_nodes = [child for child in channel if local_name(child.tag) == "item"]
         elif root_name == "feed":
             title = child_text(root, {"title"})
             description = child_text(root, {"subtitle"})
@@ -318,6 +351,7 @@ class ChannelDiscoveryService:
                 if href and rel in {"alternate", ""}:
                     site_url = urljoin(resolved_url, href)
                     break
+            entry_nodes = [child for child in root if local_name(child.tag) == "entry"]
         elif root_name == "rdf":
             channel = next((child for child in root if local_name(child.tag) == "channel"), None)
             if channel is None:
@@ -326,6 +360,7 @@ class ChannelDiscoveryService:
             site_url = child_text(channel, {"link"})
             description = child_text(channel, {"description"})
             language = child_text(channel, {"language"})
+            entry_nodes = [child for child in root if local_name(child.tag) == "item"]
         else:
             return None
 
@@ -333,12 +368,18 @@ class ChannelDiscoveryService:
             title = urlsplit(resolved_url).netloc or resolved_url
 
         normalized_site_url = normalize_url(urljoin(resolved_url, site_url)) if site_url else None
+        feed_url = normalize_url(resolved_url)
+        parsed_entries = [build_feed_preview_item(entry, base_url=normalized_site_url or feed_url, fallback_url=feed_url) for entry in entry_nodes[:12]]
+        sample_items = [entry for entry in parsed_entries[:3] if entry is not None]
+        estimated_items_per_week = estimate_items_per_week(parsed_entries)
         return FeedMetadata(
             title=title,
             site_url=normalized_site_url,
-            feed_url=normalize_url(resolved_url),
+            feed_url=feed_url,
             description=description,
             language=language,
+            estimated_items_per_week=estimated_items_per_week,
+            sample_items=sample_items,
         )
 
 
@@ -545,6 +586,150 @@ def child_text(element: ElementTree.Element, names: set[str]) -> str | None:
     return None
 
 
+def build_feed_preview_item(
+    entry: ElementTree.Element,
+    *,
+    base_url: str,
+    fallback_url: str,
+) -> FeedPreviewItem | None:
+    title = child_text(entry, {"title"}) or "Bez tytulu"
+    entry_url = resolve_entry_url(entry, base_url=base_url) or fallback_url
+    published_at = resolve_entry_published_at(entry)
+    image_url = resolve_entry_image_url(entry, base_url=base_url)
+
+    normalized_url = try_normalize_url(entry_url) or fallback_url
+    return FeedPreviewItem(
+        title=title,
+        url=normalized_url,
+        published_at=published_at,
+        image_url=image_url,
+    )
+
+
+def resolve_entry_url(entry: ElementTree.Element, *, base_url: str) -> str | None:
+    if local_name(entry.tag) == "entry":
+        for child in entry:
+            if local_name(child.tag) != "link":
+                continue
+            rel = (child.attrib.get("rel") or "alternate").lower()
+            href = child.attrib.get("href")
+            if href and rel in {"alternate", ""}:
+                return urljoin(base_url, href)
+        for child in entry:
+            if local_name(child.tag) == "id" and child.text:
+                return child.text.strip()
+
+    link = child_text(entry, {"link"})
+    if link:
+        return urljoin(base_url, link)
+
+    guid = child_text(entry, {"guid"})
+    if guid and "://" in guid:
+        return guid.strip()
+
+    return None
+
+
+def resolve_entry_published_at(entry: ElementTree.Element) -> str | None:
+    published = child_text(entry, {"published", "updated", "pubdate", "date"})
+    if not published:
+        return None
+    return parse_feed_timestamp(published)
+
+
+def resolve_entry_image_url(entry: ElementTree.Element, *, base_url: str) -> str | None:
+    for node in entry.iter():
+        node_name = local_name(node.tag)
+        url_value = node.attrib.get("url")
+        if url_value and node_name == "thumbnail":
+            normalized = try_normalize_url(urljoin(base_url, url_value))
+            if normalized:
+                return normalized
+
+        if url_value and node_name == "content":
+            media_type = (node.attrib.get("type") or "").lower()
+            if media_type.startswith("image/"):
+                normalized = try_normalize_url(urljoin(base_url, url_value))
+                if normalized:
+                    return normalized
+
+        if url_value and node_name == "enclosure":
+            media_type = (node.attrib.get("type") or "").lower()
+            if media_type.startswith("image/"):
+                normalized = try_normalize_url(urljoin(base_url, url_value))
+                if normalized:
+                    return normalized
+
+    for node in entry.iter():
+        node_name = local_name(node.tag)
+        if node_name not in {"description", "summary", "content", "encoded"} or not node.text:
+            continue
+        parser = FirstImageParser(base_url)
+        try:
+            parser.feed(node.text)
+        except Exception:
+            continue
+        if parser.image_url:
+            return parser.image_url
+
+    return None
+
+
+def estimate_items_per_week(entries: list[FeedPreviewItem | None]) -> int | None:
+    timestamps = [parse_iso_timestamp(entry.published_at) for entry in entries if entry and entry.published_at]
+    dated_entries = [timestamp for timestamp in timestamps if timestamp is not None]
+    unique_entries = sorted(set(dated_entries))
+    if len(unique_entries) < 2:
+        return None
+
+    newest = unique_entries[-1]
+    oldest = unique_entries[0]
+    span_days = max((newest - oldest).total_seconds() / 86400, 1)
+    estimate = round((len(unique_entries) / span_days) * 7)
+    return max(1, min(estimate, 999))
+
+
+def parse_feed_timestamp(value: str) -> str | None:
+    candidate = value.strip()
+    if not candidate:
+        return None
+
+    normalized = candidate.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(candidate)
+        except (TypeError, ValueError, IndexError):
+            return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def try_normalize_url(raw_url: str) -> str | None:
+    try:
+        return normalize_url(raw_url)
+    except ApiError:
+        return None
+
+
 def build_preview_candidate(feed: FeedMetadata, existing_channel: dict[str, object] | None) -> dict[str, object]:
     return {
         "feed_url": feed.feed_url,
@@ -552,6 +737,16 @@ def build_preview_candidate(feed: FeedMetadata, existing_channel: dict[str, obje
         "site_url": feed.site_url,
         "description": feed.description,
         "language": feed.language,
+        "estimated_items_per_week": feed.estimated_items_per_week,
+        "sample_items": [
+            {
+                "title": item.title,
+                "url": item.url,
+                "published_at": item.published_at,
+                "image_url": item.image_url,
+            }
+            for item in feed.sample_items
+        ],
         "already_subscribed": existing_channel is not None,
         "existing_channel_id": str(existing_channel["id"]) if existing_channel is not None else None,
     }

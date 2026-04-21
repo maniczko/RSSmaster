@@ -1029,12 +1029,138 @@ class WorkspaceRepository:
                 ORDER BY datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at)) DESC
                 """
             ).fetchall()
+            continuity_items = connection.execute(
+                """
+                SELECT
+                    i.id,
+                    i.channel_id,
+                    i.title,
+                    i.author,
+                    i.source_url,
+                    i.excerpt,
+                    i.published_at,
+                    i.is_read,
+                    i.is_favorite,
+                    i.archived_at,
+                    i.digest_candidate,
+                    c.title AS channel_title,
+                    c.category AS channel_category,
+                    c.feed_url AS channel_feed_url,
+                    sc.id AS story_cluster_id,
+                    COALESCE(sc.item_count, 1) AS story_cluster_size
+                FROM items i
+                INNER JOIN channels c
+                    ON c.id = i.channel_id
+                LEFT JOIN story_cluster_items sci
+                    ON sci.item_id = i.id
+                LEFT JOIN story_clusters sc
+                    ON sc.id = sci.cluster_id
+                WHERE (
+                    i.is_favorite = 1
+                    OR i.digest_candidate = 1
+                    OR i.archived_at IS NOT NULL
+                    OR i.is_read = 1
+                    OR EXISTS(
+                        SELECT 1
+                        FROM annotations a
+                        WHERE a.item_id = i.id
+                    )
+                    OR EXISTS(
+                        SELECT 1
+                        FROM item_tags it
+                        WHERE it.item_id = i.id
+                    )
+                    OR EXISTS(
+                        SELECT 1
+                        FROM collection_items ci
+                        WHERE ci.item_id = i.id
+                    )
+                )
+                ORDER BY datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at)) DESC
+                """
+            ).fetchall()
+            item_tags = connection.execute(
+                """
+                SELECT
+                    it.item_id,
+                    it.tag_id,
+                    t.name AS tag_name
+                FROM item_tags it
+                INNER JOIN tags t
+                    ON t.id = it.tag_id
+                WHERE EXISTS(
+                    SELECT 1
+                    FROM items i
+                    WHERE i.id = it.item_id
+                      AND (
+                        i.is_favorite = 1
+                        OR i.digest_candidate = 1
+                        OR i.archived_at IS NOT NULL
+                        OR i.is_read = 1
+                        OR EXISTS(
+                            SELECT 1
+                            FROM annotations a
+                            WHERE a.item_id = i.id
+                        )
+                        OR EXISTS(
+                            SELECT 1
+                            FROM item_tags it2
+                            WHERE it2.item_id = i.id
+                        )
+                        OR EXISTS(
+                            SELECT 1
+                            FROM collection_items ci
+                            WHERE ci.item_id = i.id
+                        )
+                      )
+                )
+                ORDER BY lower(t.name), it.item_id
+                """
+            ).fetchall()
+            collection_items = connection.execute(
+                """
+                SELECT
+                    ci.collection_id,
+                    ci.item_id
+                FROM collection_items ci
+                WHERE EXISTS(
+                    SELECT 1
+                    FROM items i
+                    WHERE i.id = ci.item_id
+                      AND (
+                        i.is_favorite = 1
+                        OR i.digest_candidate = 1
+                        OR i.archived_at IS NOT NULL
+                        OR i.is_read = 1
+                        OR EXISTS(
+                            SELECT 1
+                            FROM annotations a
+                            WHERE a.item_id = i.id
+                        )
+                        OR EXISTS(
+                            SELECT 1
+                            FROM item_tags it
+                            WHERE it.item_id = i.id
+                        )
+                        OR EXISTS(
+                            SELECT 1
+                            FROM collection_items ci2
+                            WHERE ci2.item_id = i.id
+                        )
+                      )
+                )
+                ORDER BY ci.collection_id, ci.item_id
+                """
+            ).fetchall()
         return {
             "annotations": self.list_annotations(item_id=None, search=None, limit=500),
             "tags": self.list_tags(),
             "collections": self.list_collections(),
             "saved_searches": self.list_saved_searches(),
             "saved_items": [dict(row) for row in saved_items],
+            "continuity_items": [dict(row) for row in continuity_items],
+            "item_tags": [dict(row) for row in item_tags],
+            "collection_items": [dict(row) for row in collection_items],
         }
 
 

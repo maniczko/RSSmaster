@@ -117,11 +117,90 @@ Success response:
     "updated_at": "2026-04-17T17:00:00Z"
   },
   "discovery": {
-    "mode": "homepage",
+    "mode": "head_metadata",
     "resolved_feed_url": "https://example.com/feed.xml"
   }
 }
 ```
+
+### `POST /api/v1/channels/preview`
+
+Request:
+
+```json
+{
+  "input_url": "https://example.com"
+}
+```
+
+Rules:
+
+- Request shape is intentionally minimal and matches the Website add-flow input.
+- `input_url` may be a homepage or a direct feed URL.
+- Response is additive preview data only; it does not create or mutate a channel.
+- `sample_items` contains up to 3 recent feed entries when the parsed RSS/Atom preview exposes them.
+- `estimated_items_per_week` is best-effort and may be `null` when the feed exposes fewer than 2 reliable timestamps.
+
+Success response:
+
+```json
+{
+  "status": "ready",
+  "input_url": "https://example.com/",
+  "discovery": {
+    "mode": "head_metadata",
+    "resolved_feed_url": "https://example.com/feed.xml",
+    "candidates": [
+      "https://example.com/feed.xml"
+    ]
+  },
+  "feed": {
+    "feed_url": "https://example.com/feed.xml",
+    "title": "Example Feed",
+    "site_url": "https://example.com",
+    "description": "Latest updates from Example.",
+    "language": "pl",
+    "estimated_items_per_week": 4,
+    "sample_items": [
+      {
+        "title": "Recent entry title",
+        "url": "https://example.com/posts/recent-entry",
+        "published_at": "2026-04-20T08:00:00Z",
+        "image_url": "https://example.com/images/recent-entry.jpg"
+      }
+    ],
+    "already_subscribed": false,
+    "existing_channel_id": null
+  },
+  "candidates": [
+    {
+      "feed_url": "https://example.com/feed.xml",
+      "title": "Example Feed",
+      "site_url": "https://example.com",
+      "description": "Latest updates from Example.",
+      "language": "pl",
+      "estimated_items_per_week": 4,
+      "sample_items": [
+        {
+          "title": "Recent entry title",
+          "url": "https://example.com/posts/recent-entry",
+          "published_at": "2026-04-20T08:00:00Z",
+          "image_url": "https://example.com/images/recent-entry.jpg"
+        }
+      ],
+      "already_subscribed": false,
+      "existing_channel_id": null
+    }
+  ],
+  "existing_channel": null
+}
+```
+
+Notes:
+
+- `status` may be `ready`, `already_subscribed`, or `multiple_candidates`.
+- `feed` is `null` when discovery returns `multiple_candidates`.
+- UI should use `sample_items` for lightweight result previews and `estimated_items_per_week` only as an honest local cadence hint, not as a popularity proxy.
 
 ### `PATCH /api/v1/channels/{channel_id}`
 
@@ -406,6 +485,41 @@ Response includes:
 ### `GET /api/v1/delivery/logs`
 
 Returns persisted delivery log rows, optionally filtered by `digest_id`.
+
+## Workspace
+
+### `POST /api/v1/workspace/capture`
+
+Request:
+
+```json
+{
+  "url": "https://example.com/article",
+  "title": "Optional override title",
+  "note": "Optional operator note"
+}
+```
+
+Rules:
+
+- `url` is required.
+- Only `http` and `https` URLs are accepted.
+- The backend fetches the source URL, derives readable content, and stores the item in the captured/saved library flow.
+- Duplicate captures reconcile on normalized source URL instead of creating endless copies.
+
+Response:
+
+```json
+{
+  "item": {
+    "id": "itm_123",
+    "title": "Article title",
+    "source_url": "https://example.com/article",
+    "is_favorite": true,
+    "digest_candidate": true
+  }
+}
+```
 
 ## Settings
 

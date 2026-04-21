@@ -28,12 +28,28 @@ import {
   WorkspacePanel,
 } from "./components";
 import {
+  buildFeedBrowserTree,
+  buildFeedIconUrl,
+  buildSourcePreviewMetrics,
+  buildSourcePreviewRequestKey,
+  buildSourcePreviewTopics,
+  canAutoPreviewSourceInput as shouldAutoPreviewSourceInput,
+  formatCompactNumber,
+  formatRelativeDate,
+  getDomainLabel,
+  getFeedGlyph,
+  getSourcePreviewUiState,
+  getFeedFolderId,
   getReaderViewControlsFromPreference,
   mapStoryClusterCard,
+  normalizeReaderText,
+  sanitizeReaderParagraphs,
+  shouldDropReaderParagraph,
   shouldApplyReaderViewPreference,
 } from "./lib";
 import type {
   AnnotationPanelModel,
+  FeedBrowserTreeFolder,
   RankingPreference,
   SavedViewChipModel,
   SourceHealthCardModel,
@@ -440,8 +456,17 @@ type ChannelPreviewCandidate = {
   site_url: string | null;
   description: string | null;
   language: string | null;
+  estimated_items_per_week: number | null;
+  sample_items: ChannelPreviewItem[];
   already_subscribed: boolean;
   existing_channel_id: string | null;
+};
+
+type ChannelPreviewItem = {
+  title: string;
+  url: string;
+  published_at: string | null;
+  image_url: string | null;
 };
 
 type ChannelPreviewPayload = {
@@ -456,6 +481,28 @@ type ChannelPreviewPayload = {
   candidates: ChannelPreviewCandidate[];
   existing_channel: Channel | null;
 };
+
+type SourceAddModeId =
+  | "website"
+  | "web_feed"
+  | "track_changes"
+  | "google_news"
+  | "bluesky"
+  | "facebook"
+  | "telegram"
+  | "newsletter"
+  | "import_feeds"
+  | "monitoring"
+  | "podcast";
+
+type SourceAddModeDefinition = {
+  id: SourceAddModeId;
+  label: string;
+  description: string;
+  enabled: boolean;
+};
+
+type SourceSurfaceMode = "add" | "manage";
 
 type SyncRunPayload = {
   run: SyncRun;
@@ -697,6 +744,75 @@ const initialFeedback: FeedbackState = {
     "Kolejka czytnika po lewej wypelni sie po pierwszym udanym syncu.",
   ],
 };
+
+const sourceAddModes: SourceAddModeDefinition[] = [
+  {
+    id: "website",
+    label: "Strona",
+    description: "Wykryj RSS ze strony glownej albo domeny.",
+    enabled: true,
+  },
+  {
+    id: "web_feed",
+    label: "RSS / Atom",
+    description: "Wklej bezposredni adres feedu.",
+    enabled: true,
+  },
+  {
+    id: "track_changes",
+    label: "Sledzenie zmian",
+    description: "Monitorowanie zmian poza klasycznym RSS.",
+    enabled: false,
+  },
+  {
+    id: "google_news",
+    label: "Google News",
+    description: "Tematyczne feedy z agregatora wiadomosci.",
+    enabled: false,
+  },
+  {
+    id: "bluesky",
+    label: "Bluesky",
+    description: "Strumienie spolecznosciowe i custom feeds.",
+    enabled: false,
+  },
+  {
+    id: "facebook",
+    label: "Facebook",
+    description: "Strony i posty publikowane poza RSS.",
+    enabled: false,
+  },
+  {
+    id: "telegram",
+    label: "Telegram",
+    description: "Kanaly i wiadomosci spoza zwyklego feeda.",
+    enabled: false,
+  },
+  {
+    id: "newsletter",
+    label: "Newsletter",
+    description: "Zrodla email i digesty.",
+    enabled: false,
+  },
+  {
+    id: "import_feeds",
+    label: "Import OPML",
+    description: "Przenies feedy z OPML albo innego czytnika.",
+    enabled: true,
+  },
+  {
+    id: "monitoring",
+    label: "Monitoring",
+    description: "Query-driven feedy i monitoring slow kluczowych.",
+    enabled: false,
+  },
+  {
+    id: "podcast",
+    label: "Podcast",
+    description: "Audio feedy i seriale odcinkowe.",
+    enabled: false,
+  },
+];
 
 const terminalSyncStates = new Set<SyncRun["status"]>(["partial_success", "failed", "canceled", "completed"]);
 
@@ -1040,11 +1156,6 @@ function patchViewPreferenceMap(
   };
 }
 
-function normalizeFeedFolderLabel(category: string | null | undefined) {
-  const value = category?.trim();
-  return value ? value : "Bez folderu";
-}
-
 function filterVisibleSelection(selectedItemIds: string[], queueItems: Item[]) {
   return selectedItemIds.filter((itemId) => queueItems.some((item) => item.id === itemId));
 }
@@ -1082,6 +1193,89 @@ function getPreviewTitle(payload: ChannelPreviewPayload) {
     return "Wybierz wykryty feed";
   }
   return "Podglad zrodla gotowy";
+}
+
+function getSourceDiscoveryModeLabel(mode: ChannelPreviewPayload["discovery"]["mode"] | undefined) {
+  if (mode === "direct") {
+    return "Bezposredni feed";
+  }
+  if (mode === "head_metadata") {
+    return "Autodetect w stronie";
+  }
+  if (mode === "heuristic") {
+    return "Heurystyka";
+  }
+  return "Autodetect";
+}
+
+function isSourcePreviewMode(mode: SourceAddModeId) {
+  return mode === "website" || mode === "web_feed";
+}
+
+function getSourceLanguageLabel(language: string | null | undefined) {
+  if (!language) {
+    return "Bez oznaczenia jezyka";
+  }
+  const normalized = language.trim().toLowerCase();
+  if (!normalized) {
+    return "Bez oznaczenia jezyka";
+  }
+  if (normalized === "pl" || normalized === "pl-pl") {
+    return "Polski";
+  }
+  if (normalized === "en" || normalized === "en-us" || normalized === "en-gb") {
+    return "English";
+  }
+  if (normalized === "de" || normalized === "de-de") {
+    return "Deutsch";
+  }
+  if (normalized === "fr" || normalized === "fr-fr") {
+    return "Francais";
+  }
+  return normalized.toUpperCase();
+}
+
+function getSourceHostLabel(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  return (
+    getDomainLabel(value) ??
+    value
+      .replace(/^https?:\/\//i, "")
+      .replace(/^www\./i, "")
+      .split("/")[0]
+      ?.trim() ??
+    null
+  );
+}
+
+function SourceIdentityMark({
+  label,
+  siteUrl,
+}: {
+  label: string;
+  siteUrl?: string | null;
+}) {
+  const iconUrl = buildFeedIconUrl(siteUrl);
+
+  return (
+    <span aria-hidden="true" className="source-result-mark">
+      {iconUrl ? (
+        <img
+          alt=""
+          className="source-result-mark-image"
+          loading="lazy"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+          src={iconUrl}
+        />
+      ) : null}
+      <span className="source-result-mark-fallback">{getFeedGlyph(label)}</span>
+    </span>
+  );
 }
 
 function getChannelStateLabel(state: Channel["state"]) {
@@ -1401,71 +1595,6 @@ function dedupeStoryQueue(pool: Item[], enabled: boolean) {
   });
 }
 
-function normalizeReaderText(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function isReaderBoilerplateLine(value: string) {
-  const normalized = normalizeReaderText(value);
-  const lowered = normalized.toLocaleLowerCase("pl-PL");
-  const asciiNormalized = normalized
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-
-  if (!normalized) {
-    return true;
-  }
-
-  if (asciiNormalized.startsWith("zrodlo zdjec:")) {
-    return true;
-  }
-  if (asciiNormalized.startsWith("zrodlo artykulu:") || asciiNormalized === "zrodlo artykulu") {
-    return true;
-  }
-  if (/^oprac\./i.test(normalized)) {
-    return true;
-  }
-  if (asciiNormalized.startsWith("dzwiek zostal wygenerowany automatycznie")) {
-    return true;
-  }
-  if (/^\d{1,2} [\p{L}ąćęłńóśźż]+ \d{4}, \d{2}:\d{2}$/iu.test(normalized)) {
-    return true;
-  }
-  if (/[+]\d+$/.test(normalized) && !/[.!?]/.test(normalized) && normalized.split(/\s+/).length <= 8) {
-    return true;
-  }
-  if (/^redakcja\b/i.test(normalized) && normalized.split(/\s+/).length <= 4) {
-    return true;
-  }
-  if (/^(autor|author)\b/i.test(normalized) && normalized.split(/\s+/).length <= 6) {
-    return true;
-  }
-  if (
-    lowered.includes("źródło artykułu") ||
-    lowered.includes("źródło zdjęć") ||
-    lowered.includes("dźwięk został wygenerowany automatycznie")
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function sanitizeReaderParagraphs(paragraphs: string[], articleTitle?: string | null) {
-  const normalizedTitle = articleTitle ? normalizeReaderText(articleTitle).toLocaleLowerCase("pl-PL") : null;
-
-  return paragraphs
-    .map((paragraph) => normalizeReaderText(paragraph))
-    .filter((paragraph) => paragraph && !isReaderBoilerplateLine(paragraph))
-    .filter((paragraph, index) => {
-      if (!normalizedTitle) {
-        return true;
-      }
-      return !(index === 0 && paragraph.toLocaleLowerCase("pl-PL") === normalizedTitle);
-    });
-}
-
 function sanitizeReaderHtml(cleanedHtml: string | null | undefined, articleTitle?: string | null) {
   if (!cleanedHtml) {
     return null;
@@ -1482,14 +1611,11 @@ function sanitizeReaderHtml(cleanedHtml: string | null | undefined, articleTitle
   }
 
   const normalizedTitle = articleTitle ? normalizeReaderText(articleTitle).toLocaleLowerCase("pl-PL") : null;
+  const nodes = Array.from(container.querySelectorAll("p, li, blockquote, h2, h3, h4"));
+  const nodeTexts = nodes.map((node) => normalizeReaderText(node.textContent ?? ""));
 
-  for (const [index, node] of Array.from(container.querySelectorAll("p, li, blockquote")).entries()) {
-    const text = normalizeReaderText(node.textContent ?? "");
-    if (isReaderBoilerplateLine(text)) {
-      node.remove();
-      continue;
-    }
-    if (normalizedTitle && index === 0 && text.toLocaleLowerCase("pl-PL") === normalizedTitle) {
+  for (const [index, node] of nodes.entries()) {
+    if (shouldDropReaderParagraph(nodeTexts, index, normalizedTitle)) {
       node.remove();
     }
   }
@@ -1954,6 +2080,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const pathname = usePathname();
   const [inputUrl, setInputUrl] = useState("");
   const [category, setCategory] = useState("");
+  const [sourceSurfaceMode, setSourceSurfaceMode] = useState<SourceSurfaceMode>("add");
+  const [sourceAddMode, setSourceAddMode] = useState<SourceAddModeId>("website");
+  const [showSourceOptions, setShowSourceOptions] = useState(false);
+  const [sourceLanguageFilter, setSourceLanguageFilter] = useState("all");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([]);
@@ -2056,6 +2186,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const articleContentRef = useRef<HTMLDivElement | null>(null);
   const readingProgressRef = useRef<Record<string, ReaderProgressSnapshot>>({});
   const applyingViewPreferenceRef = useRef(false);
+  const sourcePreviewRequestIdRef = useRef(0);
+  const lastSourcePreviewKeyRef = useRef<string | null>(null);
   const libraryScopedItems = useMemo(
     () =>
       items.filter((item) => {
@@ -2079,7 +2211,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           return item.channel_id === feedFilter.value;
         }
         if (feedFilter.kind === "category") {
-          return normalizeFeedFolderLabel(item.channel.category) === feedFilter.value;
+          return getFeedFolderId(item.channel.category) === feedFilter.value;
         }
         return true;
       }),
@@ -2134,6 +2266,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     () => Object.fromEntries(channels.map((channel) => [channel.id, channel.title])),
     [channels],
   );
+  const channelSiteUrls = useMemo(
+    () => Object.fromEntries(channels.map((channel) => [channel.id, channel.site_url ?? channel.feed_url])),
+    [channels],
+  );
   const feedCountsByChannelId = useMemo(() => {
     const counts = new Map<string, number>();
     for (const item of libraryScopedItems) {
@@ -2142,57 +2278,17 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     return counts;
   }, [libraryScopedItems]);
   const feedBrowserFolders = useMemo(() => {
-    const groups = new Map<
-      string,
-      {
-        label: string;
-        unreadCount: number;
-        channels: Array<{
-          id: string;
-          label: string;
-          unreadCount: number;
-        }>;
-      }
-    >();
-
-    for (const channel of channels) {
-      const folderLabel = normalizeFeedFolderLabel(channel.category);
-      const scopedCount = feedCountsByChannelId.get(channel.id) ?? 0;
-      if (scopedCount === 0 && channel.unread_count === 0) {
-        continue;
-      }
-
-      const current = groups.get(folderLabel) ?? {
-        label: folderLabel,
-        unreadCount: 0,
-        channels: [],
-      };
-
-      current.unreadCount += scopedCount;
-      current.channels.push({
-        id: channel.id,
-        label: channel.title,
-        unreadCount: scopedCount,
-      });
-      groups.set(folderLabel, current);
-    }
-
-    return Array.from(groups.values())
-      .map((group) => ({
-        ...group,
-        channels: [...group.channels].sort((left, right) => {
-          if (right.unreadCount !== left.unreadCount) {
-            return right.unreadCount - left.unreadCount;
-          }
-          return left.label.localeCompare(right.label, "pl");
-        }),
-      }))
-      .sort((left, right) => {
-        if (right.unreadCount !== left.unreadCount) {
-          return right.unreadCount - left.unreadCount;
-        }
-        return left.label.localeCompare(right.label, "pl");
-      });
+    return buildFeedBrowserTree(
+      channels
+        .map((channel) => ({
+          id: channel.id,
+          label: channel.title,
+          category: channel.category,
+          siteUrl: channel.site_url ?? channel.feed_url,
+          unreadCount: feedCountsByChannelId.get(channel.id) ?? 0,
+        }))
+        .filter((channel) => channel.unreadCount > 0),
+    );
   }, [channels, feedCountsByChannelId]);
   const latestDigest = digestHistory[0] ?? null;
   const selectedBulkItems = useMemo(
@@ -3450,85 +3546,155 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     };
   }, [apiBaseUrl, selectedItem?.id]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setPreviewBusy(true);
-    setChannelPreview(null);
-    setFeedback({
-      tone: "idle",
-      title: "Podglad zrodla",
-      lines: ["Backend sprawdza, czy to bezposredni feed, czy strona glowna wymagajaca autodiscovery."],
-    });
+  const requestSourcePreview = useEffectEvent(
+    async ({
+      origin = "manual",
+      overrideInput,
+    }: {
+      origin?: "manual" | "auto";
+      overrideInput?: string;
+    } = {}) => {
+      const resolvedInput = (overrideInput ?? inputUrl).trim();
+      if (!resolvedInput) {
+        lastSourcePreviewKeyRef.current = null;
+        setChannelPreview(null);
+        setPreviewBusy(false);
+        return;
+      }
 
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/v1/channels/preview`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          input_url: inputUrl,
-            category: category || undefined,
-        }),
-      });
+      const previewMode = sourceAddMode === "web_feed" ? "web_feed" : "website";
+      const requestKey = buildSourcePreviewRequestKey(previewMode, resolvedInput);
+      if (requestKey) {
+        lastSourcePreviewKeyRef.current = requestKey;
+      }
 
-      const payload = (await readResponsePayload(response)) as ChannelPreviewPayload | ApiErrorEnvelope;
-      if (!response.ok) {
-        const lines = [getPayloadMessage(payload, "Dodanie kanalu nie powiodlo sie.")];
-        const candidates = isErrorEnvelope(payload) ? payload.error?.details?.candidates : undefined;
-        if (Array.isArray(candidates) && candidates.length > 0) {
-          lines.push("Wykryte kandydaty:");
-          lines.push(...candidates);
+      const requestId = sourcePreviewRequestIdRef.current + 1;
+      sourcePreviewRequestIdRef.current = requestId;
+      setPreviewBusy(true);
+
+      if (origin === "manual") {
+        setFeedback({
+          tone: "idle",
+          title: "Podglad zrodla",
+          lines: ["Backend sprawdza bezposredni feed, autodiscovery na stronie i heurystyki RSS."],
+        });
+      }
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/v1/channels/preview`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            input_url: resolvedInput,
+          }),
+        });
+
+        const payload = (await readResponsePayload(response)) as ChannelPreviewPayload | ApiErrorEnvelope;
+        if (requestId !== sourcePreviewRequestIdRef.current) {
+          return;
         }
 
-        setFeedback({
-          tone: "error",
-          title: isErrorEnvelope(payload) ? payload.error?.code ?? "channel_add_failed" : "channel_add_failed",
-          lines,
-        });
-        return;
-      }
+        if (!response.ok) {
+          const lines = [getPayloadMessage(payload, "Dodanie kanalu nie powiodlo sie.")];
+          const candidates = isErrorEnvelope(payload) ? payload.error?.details?.candidates : undefined;
+          if (Array.isArray(candidates) && candidates.length > 0) {
+            lines.push("Wykryte kandydaty:");
+            lines.push(...candidates);
+          }
 
-      if (isErrorEnvelope(payload) || !payload) {
-        setFeedback({
-          tone: "error",
-          title: "channel_preview_failed",
-          lines: [isErrorEnvelope(payload) ? payload.error?.message ?? "Podglad kanalu nie powiodl sie." : "Podglad kanalu nie powiodl sie."],
-        });
-        return;
-      }
+          setChannelPreview(null);
+          setFeedback({
+            tone: "error",
+            title: isErrorEnvelope(payload) ? payload.error?.code ?? "channel_add_failed" : "channel_add_failed",
+            lines,
+          });
+          return;
+        }
 
-      setChannelPreview(payload);
-      setFeedback({
-        tone: payload.status === "already_subscribed" ? "idle" : "success",
-        title: getPreviewTitle(payload),
-        lines:
-          payload.status === "multiple_candidates"
-            ? [
-                `Tryb wykrywania: ${payload.discovery.mode}`,
-                `Wybierz 1 z ${payload.candidates.length} poprawnych feedow do subskrypcji.`,
-              ]
-            : payload.status === "already_subscribed"
+        if (isErrorEnvelope(payload) || !payload) {
+          setChannelPreview(null);
+          setFeedback({
+            tone: "error",
+            title: "channel_preview_failed",
+            lines: [isErrorEnvelope(payload) ? payload.error?.message ?? "Podglad kanalu nie powiodl sie." : "Podglad kanalu nie powiodl sie."],
+          });
+          return;
+        }
+
+        setChannelPreview(payload);
+        setFeedback({
+          tone: "idle",
+          title: getPreviewTitle(payload),
+          lines:
+            payload.status === "multiple_candidates"
               ? [
-                  `Juz subskrybowane: ${payload.existing_channel?.title ?? payload.feed?.title ?? "istniejace zrodlo"}`,
-                  `Rozwiazany feed: ${payload.discovery.resolved_feed_url ?? payload.feed?.feed_url ?? "nieznany"}`,
-                ]
-              : [
                   `Tryb wykrywania: ${payload.discovery.mode}`,
-                  `Rozwiazany feed: ${payload.discovery.resolved_feed_url ?? payload.feed?.feed_url ?? "nieznany"}`,
-                ],
-      });
-    } catch (error) {
-      setFeedback({
-        tone: "error",
-        title: "Zadanie nie powiodlo sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
-      });
-    } finally {
-      setPreviewBusy(false);
-    }
+                  `Wybierz 1 z ${payload.candidates.length} poprawnych feedow do subskrypcji.`,
+                ]
+              : payload.status === "already_subscribed"
+                ? [
+                    `Juz subskrybowane: ${payload.existing_channel?.title ?? payload.feed?.title ?? "istniejace zrodlo"}`,
+                    `Rozwiazany feed: ${payload.discovery.resolved_feed_url ?? payload.feed?.feed_url ?? "nieznany"}`,
+                  ]
+                : [
+                    `Tryb wykrywania: ${payload.discovery.mode}`,
+                    `Rozwiazany feed: ${payload.discovery.resolved_feed_url ?? payload.feed?.feed_url ?? "nieznany"}`,
+                  ],
+        });
+      } catch (error) {
+        if (requestId !== sourcePreviewRequestIdRef.current) {
+          return;
+        }
+
+        setChannelPreview(null);
+        setFeedback({
+          tone: "error",
+          title: "Zadanie nie powiodlo sie",
+          lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        });
+      } finally {
+        if (requestId === sourcePreviewRequestIdRef.current) {
+          setPreviewBusy(false);
+        }
+      }
+    },
+  );
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await requestSourcePreview({ origin: "manual" });
   }
+
+  useEffect(() => {
+    if (sourceAddMode !== "website") {
+      lastSourcePreviewKeyRef.current = null;
+      return;
+    }
+
+    const requestKey = buildSourcePreviewRequestKey("website", inputUrl);
+    if (!requestKey) {
+      lastSourcePreviewKeyRef.current = null;
+      if (!inputUrl.trim()) {
+        setChannelPreview(null);
+      }
+      return;
+    }
+
+    if (requestKey === lastSourcePreviewKeyRef.current) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void requestSourcePreview({ origin: "auto", overrideInput: inputUrl });
+    }, 320);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [inputUrl, requestSourcePreview, sourceAddMode]);
 
   async function handleConfirmChannelAdd(feedUrl?: string) {
     const resolvedUrl = feedUrl ?? channelPreview?.feed?.feed_url ?? inputUrl.trim();
@@ -3570,6 +3736,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       setInputUrl("");
       setCategory("");
       setChannelPreview(null);
+      lastSourcePreviewKeyRef.current = null;
+      setShowSourceOptions(false);
+      setSourceSurfaceMode("add");
       setFeedback({
         tone: "success",
         title: "Kanal zapisany",
@@ -5057,6 +5226,98 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   const latestRun = syncRuns[0] ?? null;
   const firstDigestCandidate = queueItems.find((item) => item.digest_candidate) ?? null;
+  const currentSourceAddMode = sourceAddModes.find((entry) => entry.id === sourceAddMode) ?? sourceAddModes[0];
+  const sourcePreviewPool = useMemo(() => {
+    const seen = new Set<string>();
+    const entries: ChannelPreviewCandidate[] = [];
+
+    const collect = (candidate: ChannelPreviewCandidate | null | undefined) => {
+      if (!candidate || seen.has(candidate.feed_url)) {
+        return;
+      }
+      seen.add(candidate.feed_url);
+      entries.push(candidate);
+    };
+
+    collect(channelPreview?.feed);
+    for (const candidate of channelPreview?.candidates ?? []) {
+      collect(candidate);
+    }
+
+    return entries;
+  }, [channelPreview]);
+  const sourceLanguageOptions = useMemo(() => {
+    const entries = new Map<string, string>([["all", "Wszystkie wyniki"]]);
+
+    for (const candidate of sourcePreviewPool) {
+      const value = candidate.language?.trim().toLowerCase() || "unknown";
+      if (!entries.has(value)) {
+        entries.set(value, getSourceLanguageLabel(candidate.language));
+      }
+    }
+
+    return Array.from(entries.entries()).map(([value, label]) => ({ value, label }));
+    }, [sourcePreviewPool]);
+  const visibleSourceCandidates = useMemo(() => {
+    return sourcePreviewPool.filter((candidate) => {
+      if (sourceLanguageFilter === "all") {
+        return true;
+      }
+
+      const candidateLanguage = candidate.language?.trim().toLowerCase() || "unknown";
+      return candidateLanguage === sourceLanguageFilter;
+    });
+  }, [sourceLanguageFilter, sourcePreviewPool]);
+  const primarySourceCandidate = visibleSourceCandidates[0] ?? sourcePreviewPool[0] ?? null;
+  const sourceExistingChannel = useMemo(() => {
+    const existingChannelId = channelPreview?.existing_channel?.id ?? primarySourceCandidate?.existing_channel_id ?? null;
+    if (!existingChannelId) {
+      return null;
+    }
+    return channels.find((channel) => channel.id === existingChannelId) ?? channelPreview?.existing_channel ?? null;
+  }, [channelPreview, channels, primarySourceCandidate]);
+  const sourcePreviewState = getSourcePreviewUiState({
+    previewBusy,
+    preview: channelPreview
+      ? {
+          status: channelPreview.status,
+          feed: channelPreview.feed,
+        }
+      : null,
+    hasError: feedback.tone === "error",
+  });
+  const sourcePreviewItems = primarySourceCandidate?.sample_items ?? [];
+  const sourcePrimaryMetrics = useMemo(
+    () =>
+      buildSourcePreviewMetrics({
+        candidate: primarySourceCandidate,
+        unreadCount: sourceExistingChannel?.unread_count ?? null,
+        discoveryLabel: getSourceDiscoveryModeLabel(channelPreview?.discovery.mode),
+        languageLabel: primarySourceCandidate ? getSourceLanguageLabel(primarySourceCandidate.language) : null,
+      }),
+    [channelPreview?.discovery.mode, primarySourceCandidate, sourceExistingChannel?.unread_count],
+  );
+  const sourceTopicChips = useMemo(() => {
+    return buildSourcePreviewTopics({
+      category,
+      existingCategory: sourceExistingChannel?.category ?? null,
+      inputUrl,
+      feedUrl: primarySourceCandidate?.feed_url ?? null,
+      siteUrl: primarySourceCandidate?.site_url ?? null,
+      language: primarySourceCandidate?.language ?? null,
+      modeLabel: currentSourceAddMode.label,
+      sampleItems: primarySourceCandidate?.sample_items ?? [],
+      sourceGroupNames: sourceGroups.map((group) => group.name),
+    });
+  }, [category, currentSourceAddMode.label, inputUrl, primarySourceCandidate, sourceExistingChannel, sourceGroups]);
+  const shouldShowSourceFeedback = feedback.tone !== "idle" || subscribeBusy || opmlImportBusy || captureBusy || sourcePreviewState === "error";
+
+  useEffect(() => {
+    if (!sourceLanguageOptions.some((option) => option.value === sourceLanguageFilter)) {
+      setSourceLanguageFilter("all");
+    }
+  }, [sourceLanguageFilter, sourceLanguageOptions]);
+
   const readerSectionLabel =
     libraryView === "continue"
       ? "Kontynuuj czytanie"
@@ -5154,12 +5415,79 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       meta: deliverySettings?.smtp_ready ? "ok" : "cfg",
     },
   ];
+  const currentSectionNavItem = uiGlobalNav.find((item) => item.id === currentSection) ?? uiGlobalNav[0];
   const activeFeedScopeLabel =
     feedFilter.kind === "channel"
       ? channelTitles[feedFilter.value] ?? "Wybrane zrodlo"
       : feedFilter.kind === "category"
         ? feedFilter.value
         : "Wszystkie feedy";
+
+  function folderContainsSelectedFilter(folder: FeedBrowserTreeFolder): boolean {
+    if (feedFilter.kind === "category" && feedFilter.value === folder.id) {
+      return true;
+    }
+
+    if (feedFilter.kind === "channel" && folder.channels.some((channel) => channel.id === feedFilter.value)) {
+      return true;
+    }
+
+    return folder.children.some((child) => folderContainsSelectedFilter(child));
+  }
+
+  type FeedBrowserFolderNode = {
+    id: string;
+    label: string;
+    meta: string | number;
+    active?: boolean;
+    expanded?: boolean;
+    onSelect: () => void;
+    onToggle: () => void;
+    children: FeedBrowserFolderNode[];
+    channels: {
+      id: string;
+      label: string;
+      siteUrl: string | null;
+      meta: string | number;
+      active?: boolean;
+      onSelect: () => void;
+    }[];
+  };
+
+  function mapFolderToFeedBrowserNode(folder: FeedBrowserTreeFolder): FeedBrowserFolderNode {
+    const isActive = feedFilter.kind === "category" && feedFilter.value === folder.id;
+    const isExpanded = isActive || folderContainsSelectedFilter(folder) || !collapsedFeedFolders.includes(folder.id);
+
+    return {
+      id: folder.id,
+      label: folder.label,
+      meta: folder.unreadCount,
+      active: isActive,
+      expanded: isExpanded,
+      onSelect: () => {
+        setFeedFilter({ kind: "category", value: folder.id });
+        setIsSidebarOpen(false);
+      },
+      onToggle: () =>
+        setCollapsedFeedFolders((current) =>
+          current.includes(folder.id)
+            ? current.filter((entry) => entry !== folder.id)
+            : [...current, folder.id],
+        ),
+      children: folder.children.map((child) => mapFolderToFeedBrowserNode(child)),
+      channels: folder.channels.map((channel) => ({
+        id: channel.id,
+        label: channel.label,
+        siteUrl: channel.siteUrl,
+        meta: channel.unreadCount,
+        active: feedFilter.kind === "channel" && feedFilter.value === channel.id,
+        onSelect: () => {
+          setFeedFilter({ kind: "channel", value: channel.id });
+          setIsSidebarOpen(false);
+        },
+      })),
+    };
+  }
 
   function renderUiFeedbackCard() {
     return (
@@ -5438,13 +5766,13 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     const sourceLabel = previewItem.channel.title ?? channelTitles[previewItem.channel_id] ?? "Nieznane zrodlo";
     const detailLine =
       itemDetailStatus === "loading"
-        ? "Przygotowuje oczyszczony widok artykulu…"
+        ? "Przygotowujemy czysty widok artykulu."
         : itemDetailStatus === "ready" && readerView === "cleaned_html"
-          ? `Oczyszczony artykul gotowy do czytania${readerWordCount ? ` · ${readerWordCount} slow` : ""}`
+          ? `Czysty widok gotowy do czytania${readerWordCount ? ` · ${readerWordCount} slow` : ""}`
           : itemDetailStatus === "ready" && readerView === "content_text"
-            ? `Pokazuje tekst fallback${readerWordCount ? ` · ${readerWordCount} slow` : ""}`
+            ? `Pokazujemy tekst zastepczy${readerWordCount ? ` · ${readerWordCount} slow` : ""}`
             : itemDetailStatus === "ready" && readerView === "excerpt"
-              ? "Dostepny jest tylko skrot artykulu"
+              ? "Dostepny jest tylko skrot artykulu."
               : itemDetailStatus === "error"
                 ? itemDetailMessage ?? "Nie udalo sie wczytac pelnej tresci."
                 : qualityState.description;
@@ -5527,9 +5855,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
             <div className="feed-reader-flags">
               <span className="feed-reader-flag">{qualityState.badge}</span>
-              {!previewItem.is_read ? <span className="feed-reader-flag">Unread</span> : null}
-              {previewItem.is_favorite ? <span className="feed-reader-flag">Saved</span> : null}
-              {previewItem.digest_candidate ? <span className="feed-reader-flag">Digest</span> : null}
+              {!previewItem.is_read ? <span className="feed-reader-flag">Nieprzeczytane</span> : null}
+              {previewItem.is_favorite ? <span className="feed-reader-flag">Zapisane</span> : null}
+              {previewItem.digest_candidate ? <span className="feed-reader-flag">W digescie</span> : null}
               {resumeProgress && resumeProgress.progress > 2 ? <span className="feed-reader-flag">Wznow {resumeProgress.progress}%</span> : null}
               {highlightCount > 0 ? <span className="feed-reader-flag">{highlightCount} podkreslen</span> : null}
               {noteCount > 0 ? <span className="feed-reader-flag">{noteCount} notatek</span> : null}
@@ -5578,67 +5906,46 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   function renderUiReadSection() {
     const isBrowseMode = readSurfaceMode === "browse";
+
+    if (!isBrowseMode) {
+      return (
+        <section className={`reader-pane reader-pane-flat ${isFocusedMode ? "reader-pane-focused" : ""}`}>
+          {itemsMessage && itemsStatus !== "unsupported" ? (
+            <div className={`reader-inline-note ${itemsStatus === "error" ? "reader-inline-note-error" : ""}`}>
+              {itemsMessage}
+            </div>
+          ) : null}
+
+          {renderUiFeedArticle()}
+        </section>
+      );
+    }
+
     return (
       <section className={`reader-pane reader-pane-flat ${isFocusedMode ? "reader-pane-focused" : ""}`}>
-        {isBrowseMode ? (
-          <header className="reader-pane-header reader-pane-header-flat feed-browse-header feed-browse-header-compact">
-            <div className="feed-browse-title-wrap">
-              <h2>{activeFeedScopeLabel}</h2>
-            </div>
-          </header>
-        ) : (
-          <header className="reader-pane-header reader-pane-header-flat feed-browse-header">
-            <div>
-              <span className="panel-badge">{uiSectionCopy.read.eyebrow}</span>
-              <h2>{activeFeedScopeLabel}</h2>
-              <p>{uiSectionCopy.read.description}</p>
-            </div>
+        <header className="reader-pane-header reader-pane-header-flat feed-browse-header feed-browse-header-compact">
+          <div className="feed-browse-title-wrap">
+            <h2>{activeFeedScopeLabel}</h2>
+          </div>
+        </header>
 
-            <div className="reader-header-side">
-              <div className="reader-stats">
-                <div>
-                  <strong>{queueItems.length}</strong>
-                  <span>widoczne</span>
-                </div>
-                <div>
-                  <strong>{visibleUnreadCount}</strong>
-                  <span>nieprzeczytane</span>
-                </div>
-                <div>
-                  <strong>{visibleFavoriteCount}</strong>
-                  <span>zapisane</span>
-                </div>
-              </div>
-            </div>
-          </header>
-        )}
-
-        <div className={`feed-browse-toolbar ${isBrowseMode ? "feed-browse-toolbar-stream" : ""}`}>
+        <div className="feed-browse-toolbar feed-browse-toolbar-stream">
           <div className="feed-browse-toolbar-left">
             <div className="segmented-control" aria-label="Filtr przeczytania">
               <button className={!showReadItems ? "segment-active" : ""} onClick={() => setShowReadItems(false)} type="button">
-                Unread ({visibleUnreadCount})
+                Nieprzeczytane ({visibleUnreadCount})
               </button>
               <button className={showReadItems ? "segment-active" : ""} onClick={() => setShowReadItems(true)} type="button">
-                All ({queueItems.length})
+                Wszystkie ({queueItems.length})
               </button>
             </div>
           </div>
 
           <div className="feed-browse-toolbar-actions">
-            {isBrowseMode ? (
-              <label className="feed-browse-search">
-                <span>Search in articles</span>
-                <input onChange={(event) => setItemSearch(event.target.value)} placeholder="Search in articles" value={itemSearch} />
-              </label>
-            ) : (
-              <button className="mini-button mini-button-accent" onClick={() => setReadSurfaceMode("browse")} type="button">
-                Wroc do feedu
-              </button>
-            )}
-            <button className={`mini-button ${isCompactList ? "mini-button-accent" : ""}`} onClick={() => setIsCompactList((current) => !current)} type="button">
-              {isCompactList ? "Zwarta lista" : "Karty"}
-            </button>
+            <label className="feed-browse-search">
+              <span>Szukaj w artykulach</span>
+              <input onChange={(event) => setItemSearch(event.target.value)} placeholder="Szukaj w artykulach" value={itemSearch} />
+            </label>
             <div className="segmented-control" aria-label="Kolejnosc sortowania">
               <button className={itemSortMode === "newest" ? "segment-active" : ""} onClick={() => setItemSortMode("newest")} type="button">
                 Najnowsze
@@ -5659,41 +5966,38 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           </div>
         ) : null}
 
-        {isBrowseMode ? (
-          <FeedStream
-            activeItemId={activeItemId}
-            busyItemId={itemActionId}
-            channelTitles={channelTitles}
-            formatTimestamp={formatTimestamp}
-            items={queueItems}
-            onOpen={(itemId) => {
-              setActiveItemId(itemId);
-              setReadingItemId(itemId);
-              setReadSurfaceMode("article");
-            }}
-            onSelect={(itemId) => setActiveItemId(itemId)}
-            onToggleDigest={(itemId) => {
-              const item = queueItems.find((candidate) => candidate.id === itemId);
-              if (item) {
-                void mutateItemState(item, { digest_candidate: !item.digest_candidate });
-              }
-            }}
-            onToggleFavorite={(itemId) => {
-              const item = queueItems.find((candidate) => candidate.id === itemId);
-              if (item) {
-                void mutateItemState(item, { library_action: item.is_favorite ? "unsave" : "save" });
-              }
-            }}
-            onToggleRead={(itemId) => {
-              const item = queueItems.find((candidate) => candidate.id === itemId);
-              if (item) {
-                void mutateItemState(item, { is_read: !item.is_read });
-              }
-            }}
-          />
-        ) : (
-          renderUiFeedArticle()
-        )}
+        <FeedStream
+          activeItemId={activeItemId}
+          busyItemId={itemActionId}
+          channelSiteUrls={channelSiteUrls}
+          channelTitles={channelTitles}
+          formatTimestamp={formatTimestamp}
+          items={queueItems}
+          onOpen={(itemId) => {
+            setActiveItemId(itemId);
+            setReadingItemId(itemId);
+            setReadSurfaceMode("article");
+          }}
+          onSelect={(itemId) => setActiveItemId(itemId)}
+          onToggleDigest={(itemId) => {
+            const item = queueItems.find((candidate) => candidate.id === itemId);
+            if (item) {
+              void mutateItemState(item, { digest_candidate: !item.digest_candidate });
+            }
+          }}
+          onToggleFavorite={(itemId) => {
+            const item = queueItems.find((candidate) => candidate.id === itemId);
+            if (item) {
+              void mutateItemState(item, { library_action: item.is_favorite ? "unsave" : "save" });
+            }
+          }}
+          onToggleRead={(itemId) => {
+            const item = queueItems.find((candidate) => candidate.id === itemId);
+            if (item) {
+              void mutateItemState(item, { is_read: !item.is_read });
+            }
+          }}
+        />
       </section>
     );
   }
@@ -5816,243 +6120,661 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   function renderUiSourcesSection() {
+    const sourceModePlaceholder =
+      currentSourceAddMode.id === "web_feed"
+        ? "https://example.com/feed.xml albo bezposredni adres RSS"
+        : "xyz.pl albo https://xyz.pl";
+    const sourceResultsCount = channelPreview
+      ? channelPreview.status === "multiple_candidates"
+        ? visibleSourceCandidates.length
+        : primarySourceCandidate
+          ? 1
+          : 0
+      : 0;
+    const showSourceImportMode = currentSourceAddMode.id === "import_feeds";
+    const showWebsiteMode = currentSourceAddMode.id === "website";
+    const showBackoffice = sourceSurfaceMode === "manage";
+    const enabledSourceAddModes = sourceAddModes.filter((mode) => mode.enabled);
+    const upcomingSourceAddModes = sourceAddModes.filter((mode) => !mode.enabled);
+    const showTopicSuggestions =
+      showWebsiteMode && Boolean(inputUrl.trim() || category.trim() || primarySourceCandidate || sourceExistingChannel);
+    const sourceHeroTitle = showSourceImportMode
+      ? "Przenies feedy bez tarcia"
+      : showWebsiteMode
+        ? "Obserwuj strony"
+        : "Dodaj feed RSS lub Atom";
+    const sourceHeroDescription = showSourceImportMode
+      ? "Wklej OPML albo liste feedow i przenies biblioteke z innego czytnika bez recznego przepisywania."
+      : showWebsiteMode
+        ? "Wklej strone lub domene. Podglad uruchomi sie sam, pokazemy ostatnie wpisy, a dopiero potem zapiszesz zrodlo."
+        : "Wklej bezposredni RSS albo Atom. Najpierw pokazemy preview, potem zapiszesz zrodlo do biblioteki.";
+    const sourceSearchHint = showWebsiteMode
+      ? "Podglad startuje automatycznie po chwili. Enter sprawdza od razu, a filtr jezyka dotyczy tylko wykrytych wynikow."
+      : currentSourceAddMode.description;
+
+    function renderSourceModeIcon(modeId: SourceAddModeId) {
+      if (modeId === "website") {
+        return (
+          <svg aria-hidden="true" viewBox="0 0 20 20">
+            <circle cx="10" cy="10" fill="none" r="6.25" stroke="currentColor" strokeWidth="1.45" />
+            <path d="M3.75 10h12.5M10 3.75c1.65 1.45 2.5 3.53 2.5 6.25 0 2.72-.85 4.8-2.5 6.25M10 3.75c-1.65 1.45-2.5 3.53-2.5 6.25 0 2.72.85 4.8 2.5 6.25" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.35" />
+          </svg>
+        );
+      }
+      if (modeId === "web_feed") {
+        return (
+          <svg aria-hidden="true" viewBox="0 0 20 20">
+            <path d="M5.25 14.75a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5Z" fill="currentColor" />
+            <path d="M4.75 8.75a6.5 6.5 0 0 1 6.5 6.5M4.75 5.25a10 10 0 0 1 10 10" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.6" />
+          </svg>
+        );
+      }
+      if (modeId === "import_feeds") {
+        return (
+          <svg aria-hidden="true" viewBox="0 0 20 20">
+            <path d="M10 4.5v7.25m0 0 3-3m-3 3-3-3M4.75 13.25V15a1.25 1.25 0 0 0 1.25 1.25h8A1.25 1.25 0 0 0 15.25 15v-1.75" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.45" />
+          </svg>
+        );
+      }
+      return (
+        <svg aria-hidden="true" viewBox="0 0 20 20">
+          <path d="M5.25 5.25h9.5v9.5h-9.5z" fill="none" stroke="currentColor" strokeWidth="1.35" />
+          <path d="M7.5 10h5" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.45" />
+        </svg>
+      );
+    }
+
+    function handleSourceInputChange(nextValue: string) {
+      setInputUrl(nextValue);
+      if (!nextValue.trim()) {
+        lastSourcePreviewKeyRef.current = null;
+        setChannelPreview(null);
+        if (feedback.tone === "error") {
+          setFeedback(initialFeedback);
+        }
+        return;
+      }
+
+      if (!showWebsiteMode || !shouldAutoPreviewSourceInput("website", nextValue)) {
+        setChannelPreview(null);
+      }
+    }
+
     return (
-      <section className="section-screen">
+      <section className="section-screen section-screen-sources">
         <div className="section-screen-header">
           <div>
             <span className="panel-badge">{uiSectionCopy.sources.eyebrow}</span>
             <h2>{uiSectionCopy.sources.title}</h2>
             <p>{uiSectionCopy.sources.description}</p>
           </div>
-          <button className="action-button compact-button" disabled={isSyncing || channels.length === 0} onClick={() => void handleSyncAll()} type="button">
-            {isSyncing ? "Syncowanie..." : "Sync aktywnych"}
+          <div className="section-screen-header-actions">
+            <button className="secondary-button compact-button" onClick={() => router.push("/capture")} type="button">
+              Przechwyc link
+            </button>
+            <button className="action-button compact-button" disabled={isSyncing || channels.length === 0} onClick={() => void handleSyncAll()} type="button">
+              {isSyncing ? "Syncowanie..." : "Sync aktywnych"}
+            </button>
+          </div>
+        </div>
+
+        <div className="source-follow-layout">
+          <aside className="source-add-nav" aria-label="Typ dodawanego zrodla">
+            <div className="source-add-nav-header">
+              <strong>Dodaj nowe</strong>
+              <p>Pokazujemy tylko gotowe sposoby dodawania, aby pierwszy krok pozostal prosty.</p>
+            </div>
+            <div className="source-add-nav-list">
+              {enabledSourceAddModes.map((mode) => (
+                <button
+                  className={`source-add-nav-item ${sourceAddMode === mode.id ? "source-add-nav-item-active" : ""}`}
+                  key={mode.id}
+                  onClick={() => {
+                    lastSourcePreviewKeyRef.current = null;
+                    setChannelPreview(null);
+                    setSourceLanguageFilter("all");
+                    setShowSourceOptions(false);
+                    setSourceSurfaceMode("add");
+                    setSourceAddMode(mode.id);
+                  }}
+                  type="button"
+                >
+                  <span className="source-add-nav-icon">{renderSourceModeIcon(mode.id)}</span>
+                  <span className="source-add-nav-copy">
+                    <strong>{mode.label}</strong>
+                    <small>{mode.enabled ? mode.description : "Wkrotce"}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+            {upcomingSourceAddModes.length > 0 ? (
+              <details className="source-add-nav-upcoming">
+                <summary>Wiecej wkrotce ({upcomingSourceAddModes.length})</summary>
+                <div className="source-add-nav-upcoming-list">
+                  {upcomingSourceAddModes.map((mode) => (
+                    <span className="source-add-nav-upcoming-chip" key={mode.id}>
+                      {mode.label}
+                    </span>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </aside>
+
+          <div className="source-follow-main">
+            <div className="source-follow-hero">
+              <span className="panel-badge">{currentSourceAddMode.label}</span>
+              <h3>{sourceHeroTitle}</h3>
+              <p>{sourceHeroDescription}</p>
+            </div>
+
+            {showSourceImportMode ? (
+              <div className="source-import-shell">
+                <label className="source-import-field">
+                  <span>Wklej OPML albo liste feedow</span>
+                  <textarea
+                    onChange={(event) => setOpmlDraft(event.target.value)}
+                    placeholder="Wklej tutaj OPML, aby przeniesc feedy z innego czytnika RSS"
+                    rows={9}
+                    value={opmlDraft}
+                  />
+                </label>
+                <div className="source-import-actions">
+                  <button className="action-button" disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handleImportOpml()} type="button">
+                    {opmlImportBusy ? "Importowanie..." : "Importuj feedy"}
+                  </button>
+                  <span>RSSmaster zachowa adresy feedow i po imporcie od razu uruchomisz reczny sync.</span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <form className={`source-search-shell ${showWebsiteMode ? "source-search-shell-website" : ""}`} onSubmit={handleSubmit}>
+                  <label className="source-search-field">
+                    <span className="source-search-icon" aria-hidden="true">
+                      <svg viewBox="0 0 20 20">
+                        <circle cx="8.75" cy="8.75" fill="none" r="5.5" stroke="currentColor" strokeWidth="1.55" />
+                        <path d="m12.9 12.9 3.35 3.35" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.55" />
+                      </svg>
+                    </span>
+                    <input
+                      autoComplete="off"
+                      name="inputUrl"
+                      onChange={(event) => {
+                        handleSourceInputChange(event.target.value);
+                      }}
+                      placeholder={sourceModePlaceholder}
+                      required
+                      value={inputUrl}
+                    />
+                    {inputUrl.trim() ? (
+                      <button
+                        aria-label="Wyczysc adres"
+                        className="source-search-clear"
+                        onClick={() => {
+                          setInputUrl("");
+                          setChannelPreview(null);
+                          lastSourcePreviewKeyRef.current = null;
+                          if (feedback.tone === "error") {
+                            setFeedback(initialFeedback);
+                          }
+                        }}
+                        type="button"
+                      >
+                        <svg viewBox="0 0 20 20">
+                          <path d="m5.75 5.75 8.5 8.5m0-8.5-8.5 8.5" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.55" />
+                        </svg>
+                      </button>
+                    ) : null}
+                  </label>
+
+                  <select
+                    aria-label="Filtr wynikow po jezyku"
+                    className="source-search-select"
+                    onChange={(event) => setSourceLanguageFilter(event.target.value)}
+                    title="Filtr wynikow po jezyku"
+                    value={sourceLanguageFilter}
+                  >
+                    {sourceLanguageOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {!showWebsiteMode ? (
+                    <button className="source-search-submit" disabled={previewBusy || subscribeBusy || isPending} type="submit">
+                      {previewBusy ? "Szukam..." : "Znajdz"}
+                    </button>
+                  ) : null}
+                </form>
+
+                <div className="source-search-subline">
+                  <span className="source-search-hint">{sourceSearchHint}</span>
+                  <button className="source-options-toggle" onClick={() => setShowSourceOptions((current) => !current)} type="button">
+                    {showSourceOptions ? "Ukryj opcje" : "Opcje"}
+                  </button>
+                </div>
+
+                {showSourceOptions ? (
+                  <div className="source-search-meta">
+                    <label className="source-search-category">
+                      <span>Kategoria opcjonalna</span>
+                      <input autoComplete="off" name="category" onChange={(event) => setCategory(event.target.value)} placeholder="rynek, design, research" value={category} />
+                    </label>
+                    <span className="source-search-meta-note">
+                      Kategoria zapisze sie razem z feedem, ale nie blokuje prostego flow dodawania strony.
+                    </span>
+                  </div>
+                ) : null}
+              </>
+            )}
+
+            {shouldShowSourceFeedback ? (
+              <div className="source-feedback-card">
+                {renderUiFeedbackCard()}
+              </div>
+            ) : null}
+
+            {!showSourceImportMode ? (
+              <div className="source-results-section">
+                <div className="source-results-header">
+                  <div>
+                    <strong>Feeds</strong>
+                    <span>
+                      {channelPreview
+                        ? `${sourceResultsCount} znalezionych`
+                        : showWebsiteMode
+                          ? "Wklej adres strony, aby zobaczyc podglad"
+                          : "Wklej bezposredni RSS lub Atom, aby zobaczyc podglad"}
+                    </span>
+                  </div>
+                  {channelPreview ? <span className="source-result-chip">{getSourceDiscoveryModeLabel(channelPreview.discovery.mode)}</span> : null}
+                </div>
+
+                {sourcePreviewState === "loading" ? (
+                  <div className="source-empty-state">
+                    <strong>Szukam feedu dla podanego adresu</strong>
+                    <p>Backend sprawdza bezposredni RSS, znaczniki na stronie i heurystyki autodiscovery.</p>
+                  </div>
+                ) : sourcePreviewState === "multiple_candidates" ? (
+                  visibleSourceCandidates.length > 0 ? (
+                    <div className="source-candidate-grid">
+                      {visibleSourceCandidates.map((candidate) => {
+                        const existingChannel =
+                          candidate.existing_channel_id ? channels.find((channel) => channel.id === candidate.existing_channel_id) ?? null : null;
+                        const candidateMetrics = buildSourcePreviewMetrics({
+                          candidate,
+                          unreadCount: existingChannel?.unread_count ?? null,
+                          languageLabel: getSourceLanguageLabel(candidate.language),
+                        });
+                        return (
+                          <article className="source-candidate-card" key={candidate.feed_url}>
+                            <div className="source-candidate-card-head">
+                              <SourceIdentityMark label={candidate.title} siteUrl={candidate.site_url ?? candidate.feed_url} />
+                              <div className="source-candidate-copy">
+                                <strong>{candidate.title}</strong>
+                                <span>
+                                  {[getSourceHostLabel(candidate.site_url ?? candidate.feed_url), getSourceLanguageLabel(candidate.language)]
+                                    .filter(Boolean)
+                                    .join(" | ")}
+                                </span>
+                                {candidateMetrics.length > 0 ? (
+                                  <div className="source-result-metrics">
+                                    {candidateMetrics.map((metric) => (
+                                      <span className="source-metric-chip" key={`${candidate.feed_url}-${metric}`}>
+                                        {metric}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                            <p>{candidate.description ?? candidate.feed_url}</p>
+                            {candidate.sample_items.length > 0 ? (
+                              <div className="source-candidate-preview-list">
+                                {candidate.sample_items.slice(0, 2).map((item) => (
+                                  <span className="source-candidate-preview-item" key={`${candidate.feed_url}-${item.url}`}>
+                                    {item.title}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            <div className="source-candidate-footer">
+                              <span>{candidate.feed_url}</span>
+                              {candidate.already_subscribed && existingChannel ? (
+                                <button className="secondary-button" onClick={() => focusFirstItemFromChannel(existingChannel)} type="button">
+                                  Przejdz do feedu
+                                </button>
+                              ) : (
+                                <button className="action-button compact-button" disabled={subscribeBusy} onClick={() => void handleConfirmChannelAdd(candidate.feed_url)} type="button">
+                                  {subscribeBusy ? "Zapisywanie..." : "Obserwuj"}
+                                </button>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="source-empty-state">
+                      <strong>Ten filtr ukryl wszystkie wyniki</strong>
+                      <p>Na stronie znalezlismy feedy, ale zaden nie pasuje do wybranego jezyka. Zmien filtr, aby zobaczyc wszystkie kandydatury.</p>
+                    </div>
+                  )
+                ) : primarySourceCandidate ? (
+                  <article className="source-result-card">
+                    <div className="source-result-header">
+                      <div className="source-result-headline">
+                        <SourceIdentityMark
+                          label={getSourceHostLabel(primarySourceCandidate.site_url ?? primarySourceCandidate.feed_url) ?? primarySourceCandidate.title}
+                          siteUrl={primarySourceCandidate.site_url ?? primarySourceCandidate.feed_url}
+                        />
+                        <div className="source-result-copy">
+                          <div className="source-result-title-row">
+                            <h3>{primarySourceCandidate.title}</h3>
+                            <p>{getSourceHostLabel(primarySourceCandidate.site_url ?? primarySourceCandidate.feed_url) ?? primarySourceCandidate.feed_url}</p>
+                          </div>
+                          {sourcePrimaryMetrics.length > 0 ? (
+                            <div className="source-result-metrics">
+                              {sourcePrimaryMetrics.map((metric) => (
+                                <span className="source-metric-chip" key={`${primarySourceCandidate.feed_url}-${metric}`}>
+                                  {metric}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                          <span>{primarySourceCandidate.description ?? primarySourceCandidate.feed_url}</span>
+                        </div>
+                      </div>
+                      <div className="source-result-actions">
+                        {sourceExistingChannel ? (
+                          <>
+                            <span className={`source-result-chip ${sourceExistingChannel.state === "archived" ? "source-result-chip-muted" : ""}`}>
+                              {sourceExistingChannel.state === "archived" ? "Zarchiwizowane" : "Juz obserwujesz"}
+                            </span>
+                            {sourceExistingChannel.state !== "archived" ? (
+                              <>
+                                <button className="secondary-button" onClick={() => focusFirstItemFromChannel(sourceExistingChannel)} type="button">
+                                  Przejdz do feedu
+                                </button>
+                                <button className="source-result-secondary-action" disabled={activeChannelId === sourceExistingChannel.id} onClick={() => void handleArchive(sourceExistingChannel)} type="button">
+                                  Przestan obserwowac
+                                </button>
+                              </>
+                            ) : null}
+                          </>
+                        ) : (
+                          <button className="action-button compact-button" disabled={subscribeBusy} onClick={() => void handleConfirmChannelAdd(primarySourceCandidate.feed_url)} type="button">
+                            {subscribeBusy ? "Zapisywanie..." : "Obserwuj"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {sourcePreviewItems.length > 0 ? (
+                      <div className="source-result-preview-grid">
+                        {sourcePreviewItems.map((item) => (
+                          <article className="source-preview-card source-preview-card-article" key={`${primarySourceCandidate.feed_url}-${item.url}`}>
+                            {item.image_url ? <img alt="" className="source-preview-image" loading="lazy" src={item.image_url} /> : null}
+                            <div className="source-preview-content">
+                              <strong>{item.title}</strong>
+                              <p>{formatRelativeDate(item.published_at, new Date(), "Nowy wpis")}</p>
+                            </div>
+                            <a className="source-preview-link" href={item.url} rel="noreferrer" target="_blank">
+                              Otworz wpis
+                            </a>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="source-empty-state">
+                        <strong>Feed gotowy do obserwowania</strong>
+                        <p>
+                          {sourceExistingChannel
+                            ? "To zrodlo jest juz w bibliotece, ale ten feed nie udostepnil krotkiego preview ostatnich wpisow."
+                            : "Feed zostal wykryty poprawnie, ale nie zwrocil krotkiego preview ostatnich wpisow."}
+                        </p>
+                      </div>
+                    )}
+                  </article>
+                ) : (
+                  <div className="source-empty-state">
+                    <strong>{sourcePreviewState === "error" ? "Nie udalo sie wykryc feedu" : "Zacznij od adresu strony"}</strong>
+                    <p>
+                      {sourcePreviewState === "error"
+                        ? feedback.lines[0] ?? "Nie udalo sie wykryc poprawnego feedu dla podanego adresu."
+                        : "Wklej adres strony lub feedu. Najpierw pokazemy wykryty wynik, a dopiero potem zapiszesz zrodlo do biblioteki."}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <aside className="source-follow-aside">
+            <section className="source-aside-card">
+              <span className="panel-badge">Stan zrodel</span>
+              <strong>{activeChannelCount} aktywnych zrodel</strong>
+              <p>
+                {latestRun
+                  ? `Ostatni sync: ${formatTimestamp(latestRun.completed_at ?? latestRun.created_at, "brak znacznika czasu")}.`
+                  : "Nie masz jeszcze zakonczonego syncu dla tej biblioteki."}
+              </p>
+              <div className="source-aside-metrics">
+                <span>{formatCompactNumber(channels.length)} wszystkich zrodel</span>
+                <span>{formatCompactNumber(archivedChannelCount)} zarchiwizowanych</span>
+              </div>
+              <button className="secondary-button" disabled={isSyncing || channels.length === 0} onClick={() => void handleSyncAll()} type="button">
+                {isSyncing ? "Syncowanie..." : "Uruchom sync"}
+              </button>
+            </section>
+
+            <section className="source-aside-card source-aside-card-subtle">
+              <span className="panel-badge">Podpowiedzi kategorii</span>
+              {showTopicSuggestions ? (
+                <>
+                  <p>Klik ustawia kategorie pomocnicza. Nie zmienia wykrywania feedu ani samego preview.</p>
+                  <div className="source-topic-list">
+                    {sourceTopicChips.map((chip) => (
+                      <button
+                        className="source-topic-chip"
+                        key={chip}
+                        onClick={() => {
+                          setShowSourceOptions(true);
+                          setCategory(chip.replace(/^#/, "").replace(/-/g, ", "));
+                        }}
+                        type="button"
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p>Wpisz adres strony, a podpowiemy kilka gotowych kategorii do zapisania razem ze zrodlem.</p>
+              )}
+            </section>
+          </aside>
+        </div>
+
+        <div className="source-ops-divider">
+          <div>
+            <span className="panel-badge">Backoffice zrodel</span>
+            <h3>Stan, pakiety i reczne operacje</h3>
+          </div>
+          <button className="secondary-button compact-button" onClick={() => setSourceSurfaceMode((current) => (current === "manage" ? "add" : "manage"))} type="button">
+            {showBackoffice ? "Ukryj backoffice" : `Pokaz backoffice (${sourceHealthEntries.length})`}
           </button>
         </div>
 
-        <div className="section-grid section-grid-two">
-          <div className="screen-stack">
-            {renderUiFeedbackCard()}
+        {showBackoffice ? (
+          <div className="section-grid section-grid-two">
+            <div className="screen-stack">
+              <WorkspacePanel eyebrow="Source health" title="Grupuj i wyciszaj zrodla" description="Pakiety zrodel, priorytety i czasowe wyciszanie bez ryzyka zgubienia zawartosci." tone="success">
+                <div style={{ display: "grid", gap: "0.55rem" }}>
+                  <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                    <input onChange={(event) => setSourceGroupDraft(event.target.value)} placeholder="Utworz pakiet: rynki, longform, research" value={sourceGroupDraft} />
+                    <input onChange={(event) => setSourceGroupColor(event.target.value)} type="color" value={sourceGroupColor} />
+                    <WorkspaceButton disabled={!sourceGroupDraft.trim() || workspaceBusy} onClick={() => void handleCreateSourceGroup()} tone="accent">
+                      Utworz pakiet
+                    </WorkspaceButton>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                    {sourceGroups.map((group) => (
+                      <WorkspaceChip key={group.id}>{group.name} ({group.channel_count})</WorkspaceChip>
+                    ))}
+                    {sourceGroups.length === 0 ? <WorkspaceChip>Brak pakietow</WorkspaceChip> : null}
+                  </div>
+                </div>
+              </WorkspacePanel>
 
-            <WorkspacePanel eyebrow="Quick add" title="Dodaj zrodlo" description="Dodaj nowe zrodlo bez wychodzenia z aplikacji.">
-              <form className="channel-form" onSubmit={handleSubmit}>
-                <label className="field field-wide">
-                  <span>Adres zrodla</span>
-                  <input autoComplete="off" name="inputUrl" onChange={(event) => { setInputUrl(event.target.value); setChannelPreview(null); }} placeholder="https://example.com lub https://example.com/feed.xml" required value={inputUrl} />
-                </label>
-                <label className="field">
-                  <span>Kategoria</span>
-                  <input autoComplete="off" name="category" onChange={(event) => setCategory(event.target.value)} placeholder="inzynieria, design, research" value={category} />
-                </label>
-                <button className="action-button" disabled={previewBusy || subscribeBusy || isPending} type="submit">
-                  {previewBusy ? "Podglad..." : "Podejrzyj zrodlo"}
-                </button>
-                {channelPreview ? (
-                  <div className="ops-row nav-preview-card">
-                    <div className="ops-row-top">
-                      <strong>{getPreviewTitle(channelPreview)}</strong>
-                      <span>{channelPreview.discovery.mode}</span>
-                    </div>
-                    <span>{channelPreview.discovery.resolved_feed_url ? `Rozwiazano: ${channelPreview.discovery.resolved_feed_url}` : "Wybierz jeden z wykrytych feedow ponizej."}</span>
-                    {channelPreview.status === "already_subscribed" && channelPreview.existing_channel ? (
-                      <>
-                        <span>{channelPreview.existing_channel.title}</span>
-                        <div className="channel-actions">
-                          <button className="secondary-button" onClick={() => focusFirstItemFromChannel(channelPreview.existing_channel!)} type="button">
-                            Przejdz do zrodla
-                          </button>
-                        </div>
-                      </>
-                    ) : null}
-                    {channelPreview.feed ? (
-                      <>
-                        <span>{channelPreview.feed.title}</span>
-                        <span>{channelPreview.feed.description ?? channelPreview.feed.site_url ?? channelPreview.feed.feed_url}</span>
-                        <div className="channel-actions">
-                          <button className="secondary-button" disabled={subscribeBusy || channelPreview.status === "already_subscribed"} onClick={() => void handleConfirmChannelAdd(channelPreview.feed?.feed_url)} type="button">
-                            {subscribeBusy ? "Zapisywanie..." : "Subskrybuj"}
-                          </button>
-                        </div>
-                      </>
-                    ) : null}
-                    {channelPreview.candidates.length > 0 ? (
-                      <div className="nav-preview-candidates">
-                        {channelPreview.candidates.map((candidate) => (
-                          <div className="nav-preview-candidate" key={candidate.feed_url}>
-                            <strong>{candidate.title}</strong>
-                            <span>{candidate.description ?? candidate.feed_url}</span>
-                            <div className="channel-actions">
-                              <button className="secondary-button" disabled={subscribeBusy || candidate.already_subscribed} onClick={() => void handleConfirmChannelAdd(candidate.feed_url)} type="button">
-                                {candidate.already_subscribed ? "Juz dodane" : subscribeBusy ? "Zapisywanie..." : "Subskrybuj"}
-                              </button>
-                            </div>
-                          </div>
+              {sourceHealthEntries.slice(0, 6).map((entry) => (
+                <SourceHealthCard
+                  actions={
+                    <div style={{ display: "grid", gap: "0.55rem" }}>
+                      <select onChange={(event) => void handleSourceControlUpdate(entry.channel_id, { group_id: event.target.value || null })} value={entry.control.group_id ?? ""}>
+                        <option value="">Bez pakietu</option>
+                        {sourceGroups.map((group) => (
+                          <option key={group.id} value={group.id}>
+                            {group.name}
+                          </option>
                         ))}
+                      </select>
+                      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                        <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { snoozed_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })}>
+                          Wstrzymaj na 1d
+                        </WorkspaceButton>
+                        <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { paused_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() })}>
+                          Pauza 7d
+                        </WorkspaceButton>
+                        <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { paused_until: null, snoozed_until: null })}>
+                          Wyczysc timery
+                        </WorkspaceButton>
                       </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </form>
-            </WorkspacePanel>
-
-            <WorkspacePanel eyebrow="Source health" title="Grupuj i wyciszaj zrodla" description="Pakiety zrodel, priorytety i czasowe wyciszanie bez ryzyka zgubienia zawartosci." tone="success">
-              <div style={{ display: "grid", gap: "0.55rem" }}>
-                <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                  <input onChange={(event) => setSourceGroupDraft(event.target.value)} placeholder="Utworz pakiet: rynki, longform, research" value={sourceGroupDraft} />
-                  <input onChange={(event) => setSourceGroupColor(event.target.value)} type="color" value={sourceGroupColor} />
-                  <WorkspaceButton disabled={!sourceGroupDraft.trim() || workspaceBusy} onClick={() => void handleCreateSourceGroup()} tone="accent">
-                    Utworz pakiet
-                  </WorkspaceButton>
-                </div>
-                <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                  {sourceGroups.map((group) => (
-                    <WorkspaceChip key={group.id}>{group.name} ({group.channel_count})</WorkspaceChip>
-                  ))}
-                  {sourceGroups.length === 0 ? <WorkspaceChip>Brak pakietow</WorkspaceChip> : null}
-                </div>
-              </div>
-            </WorkspacePanel>
-
-            {sourceHealthEntries.slice(0, 6).map((entry) => (
-              <SourceHealthCard
-                actions={
-                  <div style={{ display: "grid", gap: "0.55rem" }}>
-                    <select onChange={(event) => void handleSourceControlUpdate(entry.channel_id, { group_id: event.target.value || null })} value={entry.control.group_id ?? ""}>
-                      <option value="">Bez pakietu</option>
-                      {sourceGroups.map((group) => (
-                        <option key={group.id} value={group.id}>
-                          {group.name}
-                        </option>
-                      ))}
-                    </select>
-                    <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                      <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { snoozed_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })}>
-                        Wstrzymaj na 1d
-                      </WorkspaceButton>
-                      <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { paused_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() })}>
-                        Pauza 7d
-                      </WorkspaceButton>
-                      <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { paused_until: null, snoozed_until: null })}>
-                        Wyczysc timery
-                      </WorkspaceButton>
+                      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                        <WorkspaceButton active={entry.control.tier === "priority"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "priority")} tone="accent">
+                          Priorytet
+                        </WorkspaceButton>
+                        <WorkspaceButton active={entry.control.tier === "default"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "default")}>
+                          Domyslnie
+                        </WorkspaceButton>
+                        <WorkspaceButton active={entry.control.tier === "muted"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "muted")} tone="danger">
+                          Wycisz
+                        </WorkspaceButton>
+                      </div>
                     </div>
-                    <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                      <WorkspaceButton active={entry.control.tier === "priority"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "priority")} tone="accent">
-                        Priorytet
-                      </WorkspaceButton>
-                      <WorkspaceButton active={entry.control.tier === "default"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "default")}>
-                        Domyslnie
-                      </WorkspaceButton>
-                      <WorkspaceButton active={entry.control.tier === "muted"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "muted")} tone="danger">
-                        Wycisz
-                      </WorkspaceButton>
-                    </div>
+                  }
+                  key={entry.channel_id}
+                  source={mapSourceHealthCard(entry)}
+                />
+              ))}
+            </div>
+
+            <div className="screen-stack">
+              <WorkspacePanel eyebrow="Continuity" title="Przechwytywanie i eksport" description="Capture i migracje z innych czytnikow sa tutaj, z dala od glownego flow czytania." tone="success">
+                <div style={{ display: "grid", gap: "0.55rem" }}>
+                  <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                    <WorkspaceButton onClick={() => router.push("/capture")} tone="accent">
+                      Otworz szybki capture
+                    </WorkspaceButton>
+                    <WorkspaceButton disabled={workspaceExportBusy} onClick={() => void handleExportWorkspace()}>
+                      {workspaceExportBusy ? "Przygotowywanie..." : "Eksportuj workspace"}
+                    </WorkspaceButton>
                   </div>
-                }
-                key={entry.channel_id}
-                source={mapSourceHealthCard(entry)}
-              />
-            ))}
-          </div>
-
-          <div className="screen-stack">
-            <WorkspacePanel eyebrow="Continuity" title="Przechwytywanie i eksport" description="Capture i migracje z innych czytnikow sa tutaj, z dala od glownego flow czytania." tone="success">
-              <div style={{ display: "grid", gap: "0.55rem" }}>
-                <input onChange={(event) => setCaptureUrl(event.target.value)} placeholder="https://example.com/artykul-do-pozniejszego-czytania" value={captureUrl} />
-                <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                  <WorkspaceButton disabled={!captureUrl.trim() || captureBusy} onClick={() => void handleCaptureUrl()} tone="accent">
-                    {captureBusy ? "Zapisywanie..." : "Zapisz URL"}
-                  </WorkspaceButton>
-                  <WorkspaceButton disabled={workspaceExportBusy} onClick={() => void handleExportWorkspace()}>
-                    {workspaceExportBusy ? "Przygotowywanie..." : "Eksportuj workspace"}
+                  <WorkspaceChip>Dedykowany ekran capture obsluguje deep link, bookmarklet i systemowe udostepnianie.</WorkspaceChip>
+                  <textarea onChange={(event) => setOpmlDraft(event.target.value)} placeholder="Wklej tutaj OPML, aby przeniesc feedy z innego czytnika RSS" rows={5} value={opmlDraft} />
+                  <WorkspaceButton disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handleImportOpml()} tone="accent">
+                    {opmlImportBusy ? "Importowanie..." : "Importuj OPML"}
                   </WorkspaceButton>
                 </div>
-                <textarea onChange={(event) => setOpmlDraft(event.target.value)} placeholder="Wklej tutaj OPML, aby przeniesc feedy z innego czytnika RSS" rows={5} value={opmlDraft} />
-                <WorkspaceButton disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handleImportOpml()} tone="accent">
-                  {opmlImportBusy ? "Importowanie..." : "Importuj OPML"}
-                </WorkspaceButton>
-              </div>
-            </WorkspacePanel>
+              </WorkspacePanel>
 
-            <section className="ops-section">
-              <div className="ops-section-header">
-                <div>
-                  <span className="panel-badge">Reczny sync</span>
-                  <h3>Ostatnie runy</h3>
+              <section className="ops-section">
+                <div className="ops-section-header">
+                  <div>
+                    <span className="panel-badge">Reczny sync</span>
+                    <h3>Ostatnie runy</h3>
+                  </div>
+                  <span>{syncRuns.length} runow</span>
                 </div>
-                <span>{syncRuns.length} runow</span>
-              </div>
 
-              {syncRuns.length === 0 ? (
-                <p className="empty-state">Brak runow syncu. Dodaj zrodlo i uruchom pierwszy reczny sync.</p>
-              ) : (
-                <ul className="ops-list">
-                  {syncRuns.map((run) => (
-                    <li className="ops-row" key={run.id}>
-                      <div className="ops-row-top">
-                        <strong>{getSyncRunStatusLabel(run.status)}</strong>
-                        <span>{formatTimestamp(run.completed_at ?? run.created_at, "Brak znacznika czasu")}</span>
-                      </div>
-                      <span>Kanaly {run.channels_succeeded}/{run.channels_total} ok, {run.channels_failed} nieudanych</span>
-                      <span>Artykuly {run.items_created} nowych, {run.items_seen} widzianych, {run.items_skipped} pominietych</span>
-                      {run.error_message ? <span>{run.error_message}</span> : null}
-                      {run.errors.length > 0 ? (
-                        <ul className="run-error-list">
-                          {run.errors.slice(0, 2).map((error) => (
-                            <li key={`${run.id}-${error.channel_id}-${error.code}`}>
-                              <strong>{error.channel_title}</strong>: {error.message}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+                {syncRuns.length === 0 ? (
+                  <p className="empty-state">Brak runow syncu. Dodaj zrodlo i uruchom pierwszy reczny sync.</p>
+                ) : (
+                  <ul className="ops-list">
+                    {syncRuns.map((run) => (
+                      <li className="ops-row" key={run.id}>
+                        <div className="ops-row-top">
+                          <strong>{getSyncRunStatusLabel(run.status)}</strong>
+                          <span>{formatTimestamp(run.completed_at ?? run.created_at, "Brak znacznika czasu")}</span>
+                        </div>
+                        <span>Kanaly {run.channels_succeeded}/{run.channels_total} ok, {run.channels_failed} nieudanych</span>
+                        <span>Artykuly {run.items_created} nowych, {run.items_seen} widzianych, {run.items_skipped} pominietych</span>
+                        {run.error_message ? <span>{run.error_message}</span> : null}
+                        {run.errors.length > 0 ? (
+                          <ul className="run-error-list">
+                            {run.errors.slice(0, 2).map((error) => (
+                              <li key={`${run.id}-${error.channel_id}-${error.code}`}>
+                                <strong>{error.channel_title}</strong>: {error.message}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
 
-            <section className="ops-section">
-              <div className="ops-section-header">
-                <div>
-                  <span className="panel-badge">Zrodla</span>
-                  <h3>Zarzadzaj kanalami</h3>
+              <section className="ops-section">
+                <div className="ops-section-header">
+                  <div>
+                    <span className="panel-badge">Zrodla</span>
+                    <h3>Zarzadzaj kanalami</h3>
+                  </div>
+                  <span>{archivedChannelCount} zarchiwizowanych</span>
                 </div>
-                <span>{archivedChannelCount} zarchiwizowanych</span>
-              </div>
-              {channels.length === 0 ? (
-                <p className="empty-state">Brak zapisanych kanalow. Uzyj formularza powyzej, aby utworzyc pierwszy.</p>
-              ) : (
-                <ul className="ops-list">
-                  {channels.map((channel) => (
-                    <li className="ops-row" key={channel.id}>
-                      <div className="ops-row-top">
-                        <strong>{channel.title}</strong>
-                        <span className={`channel-state channel-state-${channel.state}`}>{getChannelStateLabel(channel.state)}</span>
-                      </div>
-                      <span>{channel.feed_url}</span>
-                      <span>{channel.category ? `Kategoria: ${channel.category}` : "Brak kategorii"}</span>
-                      <span>Nieprzeczytane artykuly: {channel.unread_count}</span>
-                      {channel.health ? <span>{`Stan: ${getHealthStatusLabel(channel.health.status)} | ${channel.health.summary}`}</span> : null}
-                      <span>{channel.last_fetch_at ? `Ostatni fetch: ${formatTimestamp(channel.last_fetch_at, "nigdy nie synchronizowano")}` : "Ostatni fetch: nigdy nie synchronizowano"}</span>
-                      <span>{channel.last_error ? `Ostatni blad: ${channel.last_error}` : "Ostatni blad: brak"}</span>
-                      <div className="channel-actions">
-                        <input className="channel-inline-input" onChange={(event) => setDraftCategories((current) => ({ ...current, [channel.id]: event.target.value }))} placeholder="Zmien kategorie" value={draftCategories[channel.id] ?? ""} />
-                        <button className="secondary-button" disabled={activeChannelId === channel.id} onClick={() => void handleCategorySave(channel.id)} type="button">
-                          Zapisz kategorie
-                        </button>
-                        <button className="secondary-button" disabled={activeChannelId === channel.id || channel.state === "archived"} onClick={() => void handleStateToggle(channel)} type="button">
-                          {channel.state === "active" ? "Wylacz" : channel.state === "inactive" ? "Wlacz" : "Zarchiwizowany"}
-                        </button>
-                        <button className="danger-button" disabled={activeChannelId === channel.id || channel.state === "archived"} onClick={() => void handleArchive(channel)} type="button">
-                          Archiwizuj
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+                {channels.length === 0 ? (
+                  <p className="empty-state">Brak zapisanych kanalow. Uzyj formularza powyzej, aby utworzyc pierwszy.</p>
+                ) : (
+                  <ul className="ops-list">
+                    {channels.map((channel) => (
+                      <li className="ops-row" key={channel.id}>
+                        <div className="ops-row-top">
+                          <strong>{channel.title}</strong>
+                          <span className={`channel-state channel-state-${channel.state}`}>{getChannelStateLabel(channel.state)}</span>
+                        </div>
+                        <span>{channel.feed_url}</span>
+                        <span>{channel.category ? `Kategoria: ${channel.category}` : "Brak kategorii"}</span>
+                        <span>Nieprzeczytane artykuly: {channel.unread_count}</span>
+                        {channel.health ? <span>{`Stan: ${getHealthStatusLabel(channel.health.status)} | ${channel.health.summary}`}</span> : null}
+                        <span>{channel.last_fetch_at ? `Ostatni fetch: ${formatTimestamp(channel.last_fetch_at, "nigdy nie synchronizowano")}` : "Ostatni fetch: nigdy nie synchronizowano"}</span>
+                        <span>{channel.last_error ? `Ostatni blad: ${channel.last_error}` : "Ostatni blad: brak"}</span>
+                        <div className="channel-actions">
+                          <input className="channel-inline-input" onChange={(event) => setDraftCategories((current) => ({ ...current, [channel.id]: event.target.value }))} placeholder="Zmien kategorie" value={draftCategories[channel.id] ?? ""} />
+                          <button className="secondary-button" disabled={activeChannelId === channel.id} onClick={() => void handleCategorySave(channel.id)} type="button">
+                            Zapisz kategorie
+                          </button>
+                          <button className="secondary-button" disabled={activeChannelId === channel.id || channel.state === "archived"} onClick={() => void handleStateToggle(channel)} type="button">
+                            {channel.state === "active" ? "Wylacz" : channel.state === "inactive" ? "Wlacz" : "Zarchiwizowany"}
+                          </button>
+                          <button className="danger-button" disabled={activeChannelId === channel.id || channel.state === "archived"} onClick={() => void handleArchive(channel)} type="button">
+                            Archiwizuj
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="source-backoffice-collapsed">
+            <strong>Backoffice zostaje w tle</strong>
+            <p>Pakiety zrodel, reczne synci, capture i zarzadzanie kanalami sa schowane, aby pierwszy ekran zostal skupiony na prostym dodawaniu strony.</p>
+          </div>
+        )}
       </section>
     );
   }
@@ -6423,10 +7145,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                   Menu
                 </button>
                 <div className="workspace-appbar-brand">
-                  <span className="workspace-appbar-mark">R</span>
+                  <span className="workspace-appbar-mark">{currentSectionNavItem.shortLabel}</span>
                   <div>
                     <strong>{currentSection === "read" ? activeFeedScopeLabel : uiSectionCopy[currentSection].title}</strong>
-                    <span>{currentSection === "read" ? "Feed reader" : uiSectionCopy[currentSection].description}</span>
+                    <span>{currentSection === "read" ? "Czytnik feedow" : uiSectionCopy[currentSection].description}</span>
                   </div>
                 </div>
               </div>
@@ -6440,7 +7162,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
               <div className="workspace-appbar-status">
                 {currentSection === "read" ? (
                   <button className={`mini-button ${isFocusedMode ? "mini-button-accent" : ""}`} onClick={() => setIsFocusedMode((current) => !current)} type="button">
-                    {isFocusedMode ? "Wyjdz z focus mode" : "Focus mode"}
+                    {isFocusedMode ? "Wyjdz z trybu skupienia" : "Tryb skupienia"}
                   </button>
                 ) : null}
                 <span className="runtime-pill runtime-pill-ok">API {apiBaseUrl.replace(/^https?:\/\//, "")}</span>
@@ -6473,36 +7195,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
               ))}
             </div>
             <FeedBrowser
-              folders={feedBrowserFolders.map((folder) => ({
-                id: folder.label,
-                label: folder.label,
-                meta: folder.unreadCount,
-                active: feedFilter.kind === "category" && feedFilter.value === folder.label,
-                expanded:
-                  (feedFilter.kind === "category" && feedFilter.value === folder.label) ||
-                  (feedFilter.kind === "channel" && folder.channels.some((channel) => channel.id === feedFilter.value)) ||
-                  !collapsedFeedFolders.includes(folder.label),
-                onSelect: () => {
-                  setFeedFilter({ kind: "category", value: folder.label });
-                  setIsSidebarOpen(false);
-                },
-                onToggle: () =>
-                  setCollapsedFeedFolders((current) =>
-                    current.includes(folder.label)
-                      ? current.filter((entry) => entry !== folder.label)
-                      : [...current, folder.label],
-                  ),
-                channels: folder.channels.map((channel) => ({
-                  id: channel.id,
-                  label: channel.label,
-                  meta: channel.unreadCount,
-                  active: feedFilter.kind === "channel" && feedFilter.value === channel.id,
-                  onSelect: () => {
-                    setFeedFilter({ kind: "channel", value: channel.id });
-                    setIsSidebarOpen(false);
-                  },
-                })),
-              }))}
+              folders={feedBrowserFolders.map((folder) => mapFolderToFeedBrowserNode(folder))}
               onOverviewSelect={() => {
                 setFeedFilter({ kind: "all" });
                 setIsSidebarOpen(false);
@@ -6520,9 +7213,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                 setIsSidebarOpen(false);
               }}
               overviewActive={feedFilter.kind === "all"}
-              overviewLabel="Newsfeed"
+              overviewLabel="Wszystkie feedy"
               overviewMeta={libraryScopedItems.length}
-              title="Feeds"
+              title="Feedy"
             />
           </>
         }
@@ -6834,111 +7527,113 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           </WorkspacePanel>
         </section>
 
-        <section className="nav-section">
-          <div className="nav-section-header">
-            <span className="panel-badge">Szybkie dodawanie</span>
-            <span>{activeChannelCount} aktywnych</span>
-          </div>
+        {currentSection !== "sources" ? (
+          <section className="nav-section">
+            <div className="nav-section-header">
+              <span className="panel-badge">Szybkie dodawanie</span>
+              <span>{activeChannelCount} aktywnych</span>
+            </div>
 
-          <form className="channel-form" onSubmit={handleSubmit}>
-            <label className="field field-wide">
-              <span>Adres zrodla</span>
-              <input
-                autoComplete="off"
-                name="inputUrl"
-                onChange={(event) => {
-                  setInputUrl(event.target.value);
-                  setChannelPreview(null);
-                }}
-                placeholder="https://example.com lub https://example.com/feed.xml"
-                required
-                value={inputUrl}
-              />
-            </label>
+            <form className="channel-form" onSubmit={handleSubmit}>
+              <label className="field field-wide">
+                <span>Adres zrodla</span>
+                <input
+                  autoComplete="off"
+                  name="inputUrl"
+                  onChange={(event) => {
+                    setInputUrl(event.target.value);
+                    setChannelPreview(null);
+                  }}
+                  placeholder="https://example.com lub https://example.com/feed.xml"
+                  required
+                  value={inputUrl}
+                />
+              </label>
 
-            <label className="field">
-              <span>Kategoria</span>
-              <input
-                autoComplete="off"
-                name="category"
-                onChange={(event) => setCategory(event.target.value)}
-                placeholder="inzynieria, design, research"
-                value={category}
-              />
-            </label>
+              <label className="field">
+                <span>Kategoria</span>
+                <input
+                  autoComplete="off"
+                  name="category"
+                  onChange={(event) => setCategory(event.target.value)}
+                  placeholder="inzynieria, design, research"
+                  value={category}
+                />
+              </label>
 
-            <button className="action-button" disabled={previewBusy || subscribeBusy || isPending} type="submit">
-              {previewBusy ? "Podglad..." : "Podejrzyj zrodlo"}
-            </button>
+              <button className="action-button" disabled={previewBusy || subscribeBusy || isPending} type="submit">
+                {previewBusy ? "Podglad..." : "Podejrzyj zrodlo"}
+              </button>
 
-            {channelPreview ? (
-              <div className="ops-row nav-preview-card">
-                <div className="ops-row-top">
-                  <strong>{getPreviewTitle(channelPreview)}</strong>
-                  <span>{channelPreview.discovery.mode}</span>
-                </div>
-                <span>
-                  {channelPreview.discovery.resolved_feed_url
-                    ? `Rozwiazano: ${channelPreview.discovery.resolved_feed_url}`
-                    : "Wybierz jeden z wykrytych feedow ponizej."}
-                </span>
-
-                {channelPreview.status === "already_subscribed" && channelPreview.existing_channel ? (
-                  <>
-                    <span>{channelPreview.existing_channel.title}</span>
-                    <div className="channel-actions">
-                      <button
-                        className="secondary-button"
-                        onClick={() => focusFirstItemFromChannel(channelPreview.existing_channel!)}
-                        type="button"
-                      >
-                        Przejdz do zrodla
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-
-                {channelPreview.feed ? (
-                  <>
-                    <span>{channelPreview.feed.title}</span>
-                    <span>{channelPreview.feed.description ?? channelPreview.feed.site_url ?? channelPreview.feed.feed_url}</span>
-                    <div className="channel-actions">
-                      <button
-                        className="secondary-button"
-                        disabled={subscribeBusy || channelPreview.status === "already_subscribed"}
-                        onClick={() => void handleConfirmChannelAdd(channelPreview.feed?.feed_url)}
-                        type="button"
-                      >
-                        {subscribeBusy ? "Zapisywanie..." : "Subskrybuj"}
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-
-                {channelPreview.candidates.length > 0 ? (
-                  <div className="nav-preview-candidates">
-                    {channelPreview.candidates.map((candidate) => (
-                      <div className="nav-preview-candidate" key={candidate.feed_url}>
-                        <strong>{candidate.title}</strong>
-                        <span>{candidate.description ?? candidate.feed_url}</span>
-                        <div className="channel-actions">
-                          <button
-                            className="secondary-button"
-                            disabled={subscribeBusy || candidate.already_subscribed}
-                            onClick={() => void handleConfirmChannelAdd(candidate.feed_url)}
-                            type="button"
-                          >
-                            {candidate.already_subscribed ? "Juz dodane" : subscribeBusy ? "Zapisywanie..." : "Subskrybuj"}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+              {channelPreview ? (
+                <div className="ops-row nav-preview-card">
+                  <div className="ops-row-top">
+                    <strong>{getPreviewTitle(channelPreview)}</strong>
+                    <span>{channelPreview.discovery.mode}</span>
                   </div>
-                ) : null}
-              </div>
-            ) : null}
-          </form>
-        </section>
+                  <span>
+                    {channelPreview.discovery.resolved_feed_url
+                      ? `Rozwiazano: ${channelPreview.discovery.resolved_feed_url}`
+                      : "Wybierz jeden z wykrytych feedow ponizej."}
+                  </span>
+
+                  {channelPreview.status === "already_subscribed" && channelPreview.existing_channel ? (
+                    <>
+                      <span>{channelPreview.existing_channel.title}</span>
+                      <div className="channel-actions">
+                        <button
+                          className="secondary-button"
+                          onClick={() => focusFirstItemFromChannel(channelPreview.existing_channel!)}
+                          type="button"
+                        >
+                          Przejdz do zrodla
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+
+                  {channelPreview.feed ? (
+                    <>
+                      <span>{channelPreview.feed.title}</span>
+                      <span>{channelPreview.feed.description ?? channelPreview.feed.site_url ?? channelPreview.feed.feed_url}</span>
+                      <div className="channel-actions">
+                        <button
+                          className="secondary-button"
+                          disabled={subscribeBusy || channelPreview.status === "already_subscribed"}
+                          onClick={() => void handleConfirmChannelAdd(channelPreview.feed?.feed_url)}
+                          type="button"
+                        >
+                          {subscribeBusy ? "Zapisywanie..." : "Subskrybuj"}
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+
+                  {channelPreview.candidates.length > 0 ? (
+                    <div className="nav-preview-candidates">
+                      {channelPreview.candidates.map((candidate) => (
+                        <div className="nav-preview-candidate" key={candidate.feed_url}>
+                          <strong>{candidate.title}</strong>
+                          <span>{candidate.description ?? candidate.feed_url}</span>
+                          <div className="channel-actions">
+                            <button
+                              className="secondary-button"
+                              disabled={subscribeBusy || candidate.already_subscribed}
+                              onClick={() => void handleConfirmChannelAdd(candidate.feed_url)}
+                              type="button"
+                            >
+                              {candidate.already_subscribed ? "Juz dodane" : subscribeBusy ? "Zapisywanie..." : "Subskrybuj"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </form>
+          </section>
+        ) : null}
 
         <section className="nav-section nav-section-scroll">
           <div className="nav-section-header">

@@ -50,12 +50,21 @@ class PreviewDiscoveryModel(BaseModel):
     candidates: list[str] = Field(default_factory=list)
 
 
+class SourcePreviewItemModel(BaseModel):
+    title: str
+    url: str
+    published_at: str | None = None
+    image_url: str | None = None
+
+
 class SourcePreviewCandidateModel(BaseModel):
     feed_url: str
     title: str
     site_url: str | None
     description: str | None
     language: str | None
+    estimated_items_per_week: int | None = None
+    sample_items: list[SourcePreviewItemModel] = Field(default_factory=list)
     already_subscribed: bool = False
     existing_channel_id: str | None = None
 

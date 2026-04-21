@@ -13,6 +13,7 @@ The MVP intentionally optimizes for one operator on one machine before any multi
 The product should make it easy to:
 
 - subscribe to feeds from direct RSS/Atom URLs or normal homepages
+- save a single web article by URL when reading outside the app
 - keep article ingestion observable and repeatable
 - triage a growing reading list quickly
 - package selected content into one clean daily digest
@@ -97,6 +98,12 @@ After the MVP is stable, likely next layers are:
 - input: manual or scheduled sync
 - system behavior: fetch entries, normalize, deduplicate, persist run history
 - output: updated item list and observable run result
+
+### Flow 2b: capture a read-later link
+
+- input: a normal article URL shared or pasted from outside the app
+- system behavior: fetch, extract, store the article inside the saved library, and preserve a direct route back into the reader
+- output: one saved item ready for later reading without requiring feed subscription first
 
 ### Flow 3: triage articles
 
