@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { ReactNode, RefObject } from "react";
+import { DismissIcon, SearchIcon } from "@/app/components/ui-icons";
+import { WorkspaceButton } from "@/app/components/workspace-primitives";
 
 export type AppShellProps = {
   header: ReactNode;
@@ -34,6 +36,21 @@ export function AppShell({
           />
         ) : null}
         <aside className="app-sidebar" id="rssmaster-sidebar">
+          {onSidebarClose ? (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
+              <WorkspaceButton
+                aria-label="Zamknij menu"
+                onClick={onSidebarClose}
+                style={{ borderRadius: 999, padding: "0.36rem 0.7rem" }}
+                tone="muted"
+              >
+                <span className="button-with-icon">
+                  <DismissIcon className="app-icon button-inline-icon" />
+                  Zamknij
+                </span>
+              </WorkspaceButton>
+            </div>
+          ) : null}
           {sidebar}
         </aside>
         <main className="app-workspace">{children}</main>
@@ -61,6 +78,7 @@ export type AppSidebarLinkProps = {
   label: ReactNode;
   meta?: ReactNode;
   active?: boolean;
+  icon?: ReactNode;
 };
 
 export function AppSidebarLink({
@@ -68,6 +86,7 @@ export function AppSidebarLink({
   label,
   meta,
   active = false,
+  icon,
 }: AppSidebarLinkProps) {
   return (
     <Link
@@ -75,7 +94,10 @@ export function AppSidebarLink({
       className={`app-sidebar-link ${active ? "app-sidebar-link-active" : ""}`}
       href={href}
     >
-      <span>{label}</span>
+      <span className="app-sidebar-link-main">
+        {icon ? <span className="app-sidebar-link-icon">{icon}</span> : null}
+        <span>{label}</span>
+      </span>
       {meta ? <strong>{meta}</strong> : null}
     </Link>
   );
@@ -96,7 +118,10 @@ export function AppHeaderSearch({
 }: AppHeaderSearchProps) {
   return (
     <label className="app-header-search">
-      <span>Szukaj</span>
+      <span className="app-header-search-meta">
+        <SearchIcon className="app-icon app-icon-sm" />
+        <span>Szukaj</span>
+      </span>
       <input
         autoComplete="off"
         onChange={(event) => onChange(event.target.value)}

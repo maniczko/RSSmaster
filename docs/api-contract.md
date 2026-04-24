@@ -32,11 +32,76 @@ All non-2xx responses return the same shape:
 ## Status mapping
 
 - `400` validation failed or request shape is invalid
+- `401` authenticated local session is required for `/api/v1/*` once at least one local account exists
 - `404` requested resource does not exist
 - `409` state conflict or duplicate action
 - `422` feed discovery or content validation failed semantically
 - `500` unexpected server failure
-- `503` dependency or runtime precondition is not available yet
+- `503` dependency or runtime precondition is not available yet, including preview transport failures while fetching an input URL
+
+## Local authentication
+
+- Authentication is local-only and cookie-based.
+- Before any local account exists, the runtime remains open for the legacy single-workspace flow.
+- After the first local account is created, `/api/v1/*` requires a valid local session except `/api/v1/auth/*`.
+- Health and startup diagnostics stay unauthenticated.
+
+### `GET /api/v1/auth/session`
+
+Response:
+
+```json
+{
+  "has_accounts": true,
+  "auth_required": true,
+  "session": {
+    "account": {
+      "id": "acct_123",
+      "username": "mateusz",
+      "display_name": "Mateusz",
+      "created_at": "2026-04-24T09:00:00Z",
+      "last_login_at": "2026-04-24T09:05:00Z"
+    }
+  }
+}
+```
+
+### `POST /api/v1/auth/register`
+
+Request:
+
+```json
+{
+  "username": "mateusz",
+  "display_name": "Mateusz",
+  "password": "supersekret123",
+  "claim_legacy_workspace": true
+}
+```
+
+Rules:
+
+- the first account may set `claim_legacy_workspace = true` to copy the pre-auth shared library into its own workspace database
+- later accounts should use their own isolated workspace database
+- success response uses the same shape as `GET /api/v1/auth/session` and also sets the session cookie
+
+### `POST /api/v1/auth/login`
+
+Request:
+
+```json
+{
+  "username": "mateusz",
+  "password": "supersekret123"
+}
+```
+
+Success response uses the same shape as `GET /api/v1/auth/session` and also sets the session cookie.
+
+### `POST /api/v1/auth/logout`
+
+- revokes the current local session cookie
+- returns the same session envelope with `session: null`
 
 ## Shared list envelope
 
@@ -98,6 +163,8 @@ Rules:
 - `input_url` may be a direct feed URL or a homepage URL.
 - Backend decides whether direct validation or autodiscovery is needed.
 - Ambiguous autodiscovery returns `422` with candidate feeds in `error.details.candidates`.
+- Preview-related discovery failures stay `422` and use `error.details.preview_failure_kind = "discovery"`.
+- Network or transport failures while fetching the source return `503` with `error.code = "source_unreachable"` and `error.details.preview_failure_kind = "transport"`.
 
 Success response:
 
@@ -140,6 +207,8 @@ Rules:
 - Response is additive preview data only; it does not create or mutate a channel.
 - `sample_items` contains up to 3 recent feed entries when the parsed RSS/Atom preview exposes them.
 - `estimated_items_per_week` is best-effort and may be `null` when the feed exposes fewer than 2 reliable timestamps.
+- Expected preview discovery failures return `422` with `error.details.preview_failure_kind = "discovery"`.
+- Transport failures return `503` with `error.code = "source_unreachable"` and `error.details.preview_failure_kind = "transport"`.
 
 Success response:
 
@@ -506,6 +575,7 @@ Rules:
 - Only `http` and `https` URLs are accepted.
 - The backend fetches the source URL, derives readable content, and stores the item in the captured/saved library flow.
 - Duplicate captures reconcile on normalized source URL instead of creating endless copies.
+- If `note` is present, RSSmaster persists it as an item-level note annotation so the reason for saving the article survives the jump into the reader.
 
 Response:
 
@@ -518,6 +588,113 @@ Response:
     "is_favorite": true,
     "digest_candidate": true
   }
+}
+```
+
+### `GET /api/v1/workspace/export`
+
+Returns the portable workspace export used as the base for a continuity bundle.
+
+Response shape:
+
+```json
+{
+  "exported_at": "2026-04-22T12:00:00Z",
+  "profile": {},
+  "sources_opml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><opml version=\"2.0\"></opml>",
+  "annotations": [],
+  "tags": [],
+  "collections": [],
+  "saved_searches": [],
+  "saved_items": [],
+  "continuity_items": [
+    {
+      "id": "itm_123",
+      "source_url": "https://example.com/article",
+      "is_read": false,
+      "is_favorite": true,
+      "digest_candidate": true,
+      "is_archived": false
+    }
+  ],
+  "item_tags": [],
+  "collection_items": []
+}
+```
+
+Rules:
+
+- The export is backend-only state. The browser continuity bundle augments it with local reader continuity and progress before download.
+- `continuity_items` is the portable library-state slice used for cross-device restore.
+- `annotations`, `tags`, `collections`, `saved_searches`, `item_tags`, and `collection_items` are exported as the manual portability layer for reader knowledge capture.
+
+### `POST /api/v1/workspace/continuity/import`
+
+Restores the portable continuity slice against the current local runtime.
+
+Request:
+
+```json
+{
+  "sources_opml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><opml version=\"2.0\"></opml>",
+  "continuity_items": [
+    {
+      "item_id": "itm_remote_123",
+      "source_url": "https://example.com/article",
+      "is_read": false,
+      "is_favorite": true,
+      "digest_candidate": true,
+      "is_archived": false
+    }
+  ],
+  "annotations": [],
+  "tags": [],
+  "collections": [],
+  "saved_searches": [],
+  "item_tags": [],
+  "collection_items": []
+}
+```
+
+Rules:
+
+- `sources_opml` is optional. When present, RSSmaster imports missing feeds before matching library state.
+- Matching happens by `normalized_source_url`, not by opaque item id. Optional exported `item_id` values are used only to map annotation/tag/collection payloads back onto the matched source URL.
+- The current continuity import restores feed presence plus library-state booleans: `is_read`, `is_favorite`, `digest_candidate`, and `is_archived`.
+- When the bundle includes exported reader knowledge, the same import also replays:
+  - notes and highlights onto the primary matched local item for a given `normalized_source_url`
+  - tag assignments onto the primary matched local item
+  - collection definitions and collection memberships for matched items
+  - saved searches
+- Replay is additive and idempotent for repeated imports of the same bundle; it does not yet define cross-device conflict resolution.
+- Reader route, local view preferences, and scroll progress are restored in the browser from the downloaded continuity bundle after this endpoint returns its match map.
+
+Response:
+
+```json
+{
+  "imported_source_count": 1,
+  "duplicate_source_count": 0,
+  "matched_item_count": 1,
+  "unmatched_item_count": 0,
+  "restored_read_count": 0,
+  "restored_saved_count": 1,
+  "restored_digest_count": 1,
+  "restored_archive_count": 0,
+  "restored_annotation_count": 2,
+  "restored_tag_assignment_count": 1,
+  "restored_collection_count": 1,
+  "restored_collection_item_count": 1,
+  "restored_saved_search_count": 1,
+  "matched_items": [
+    {
+      "source_url": "https://example.com/article",
+      "item_id": "itm_local_123",
+      "title": "Article title",
+      "matched_by": "normalized_source_url"
+    }
+  ],
+  "unmatched_source_urls": []
 }
 ```
 

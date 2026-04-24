@@ -452,6 +452,77 @@ class WorkspaceRepository:
             connection.commit()
         return self.get_annotation(annotation_id)
 
+    def ensure_item_note_annotation(self, *, item_id: str, note_text: str) -> dict[str, object]:
+        normalized_note = note_text.strip()
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    id
+                FROM annotations
+                WHERE item_id = ?
+                  AND kind = 'note'
+                  AND archived_at IS NULL
+                  AND note_text = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                [item_id, normalized_note],
+            ).fetchone()
+
+        if row is not None:
+            return self.get_annotation(str(row["id"]))
+
+        return self.create_annotation(
+            item_id=item_id,
+            kind="note",
+            quote_text=None,
+            note_text=normalized_note,
+            color=None,
+        )
+
+    def ensure_annotation_replay(
+        self,
+        *,
+        item_id: str,
+        kind: str,
+        quote_text: str | None,
+        note_text: str | None,
+        color: str | None,
+    ) -> dict[str, object]:
+        normalized_quote = quote_text.strip() if isinstance(quote_text, str) and quote_text.strip() else None
+        normalized_note = note_text.strip() if isinstance(note_text, str) and note_text.strip() else None
+        normalized_color = color.strip() if isinstance(color, str) and color.strip() else None
+
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    id
+                FROM annotations
+                WHERE item_id = ?
+                  AND kind = ?
+                  AND archived_at IS NULL
+                  AND COALESCE(quote_text, '') = COALESCE(?, '')
+                  AND COALESCE(note_text, '') = COALESCE(?, '')
+                  AND COALESCE(color, '') = COALESCE(?, '')
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                [item_id, kind, normalized_quote, normalized_note, normalized_color],
+            ).fetchone()
+
+        if row is not None:
+            return self.get_annotation(str(row["id"]))
+
+        return self.create_annotation(
+            item_id=item_id,
+            kind=kind,
+            quote_text=normalized_quote,
+            note_text=normalized_note,
+            color=normalized_color,
+        )
+
     def get_annotation(self, annotation_id: str) -> dict[str, object]:
         with connect(self.database_path) as connection:
             row = connection.execute(
@@ -570,6 +641,21 @@ class WorkspaceRepository:
             connection.commit()
         return self.list_item_tags(item_id)
 
+    def add_item_tag(self, *, item_id: str, tag_id: str) -> list[dict[str, object]]:
+        with connect(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO item_tags (
+                    item_id,
+                    tag_id
+                )
+                VALUES (?, ?)
+                """,
+                [item_id, tag_id],
+            )
+            connection.commit()
+        return self.list_item_tags(item_id)
+
     def list_item_tags(self, item_id: str) -> list[dict[str, object]]:
         with connect(self.database_path) as connection:
             rows = connection.execute(
@@ -637,6 +723,42 @@ class WorkspaceRepository:
                 )
             connection.commit()
         return self.get_collection(collection_id)
+
+    def ensure_collection(self, *, name: str, description: str | None) -> dict[str, object]:
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    c.id,
+                    c.name,
+                    c.description,
+                    COUNT(ci.item_id) AS item_count
+                FROM collections c
+                LEFT JOIN collection_items ci
+                    ON ci.collection_id = c.id
+                WHERE lower(c.name) = lower(?)
+                GROUP BY c.id, c.name, c.description
+                """,
+                [name],
+            ).fetchone()
+
+        if row is not None:
+            collection = dict(row)
+            if description and not collection.get("description"):
+                with connect(self.database_path) as connection:
+                    connection.execute(
+                        """
+                        UPDATE collections
+                        SET description = ?
+                        WHERE id = ?
+                        """,
+                        [description, collection["id"]],
+                    )
+                    connection.commit()
+                return self.get_collection(str(collection["id"]))
+            return collection
+
+        return self.create_collection(name=name, description=description, item_id=None)
 
     def add_collection_item(self, *, collection_id: str, item_id: str) -> dict[str, object]:
         with connect(self.database_path) as connection:
@@ -721,6 +843,30 @@ class WorkspaceRepository:
         if row is None:
             raise RuntimeError("Saved search was not persisted.")
         return dict(row)
+
+    def ensure_saved_search(self, *, name: str, query: str, default_view: str) -> dict[str, object]:
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    query,
+                    default_view
+                FROM saved_searches
+                WHERE lower(name) = lower(?)
+                  AND query = ?
+                  AND default_view = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                [name, query, default_view],
+            ).fetchone()
+
+        if row is not None:
+            return dict(row)
+
+        return self.create_saved_search(name=name, query=query, default_view=default_view)
 
     def list_source_groups(self) -> list[dict[str, object]]:
         with connect(self.database_path) as connection:
@@ -1162,6 +1308,38 @@ class WorkspaceRepository:
             "item_tags": [dict(row) for row in item_tags],
             "collection_items": [dict(row) for row in collection_items],
         }
+
+    def list_items_by_normalized_source_urls(self, normalized_source_urls: list[str]) -> list[dict[str, object]]:
+        cleaned_urls = [url for url in normalized_source_urls if url]
+        if not cleaned_urls:
+            return []
+
+        placeholders = ", ".join("?" for _ in cleaned_urls)
+        with connect(self.database_path) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    i.id,
+                    i.title,
+                    i.source_url,
+                    i.normalized_source_url,
+                    i.is_read,
+                    i.is_favorite,
+                    i.digest_candidate,
+                    i.archived_at,
+                    datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at)) AS sort_published_at
+                FROM items i
+                WHERE i.normalized_source_url IN ({placeholders})
+                ORDER BY
+                    i.normalized_source_url ASC,
+                    i.is_favorite DESC,
+                    CASE WHEN i.archived_at IS NULL THEN 0 ELSE 1 END ASC,
+                    sort_published_at DESC,
+                    i.id DESC
+                """,
+                cleaned_urls,
+            ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def parse_breakdown(payload: object) -> dict[str, object]:

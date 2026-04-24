@@ -100,6 +100,81 @@ def article_html(*, title: str, deck: str, paragraphs: list[str]) -> str:
     """
 
 
+def premium_cleanup_article_html(*, title: str, deck: str, paragraphs: list[str]) -> str:
+    rendered_paragraphs = "\n".join(f"<p>{paragraph}</p>" for paragraph in paragraphs)
+    return f"""
+    <html>
+      <head>
+        <title>{title}</title>
+        <meta property="og:title" content="{title}" />
+        <meta property="og:image" content="/images/direct-hero-2048x1365.jpg" />
+        <meta property="og:image:alt" content="Direct premium hero" />
+      </head>
+      <body>
+        <main>
+          <article>
+            <header>
+              <img src="/theme/icon-star.svg" alt="Theme badge" />
+              <p>Header promo should not survive.</p>
+            </header>
+            <div id="piano-paywall" class="piano-experience-container">
+              <section>
+                <h1>{title}</h1>
+                <p>{deck}</p>
+              </section>
+              {rendered_paragraphs}
+              <figure>
+                <img src="/images/editorial-photo.jpg" alt="Editorial photo" />
+                <figcaption>Editorial caption</figcaption>
+              </figure>
+              <figure>
+                <img src="/theme/icon-lightbulb.svg" alt="" />
+                <figcaption>Placeholder caption should not keep theme chrome alive.</figcaption>
+              </figure>
+              <div class="wp-content-text-raw">
+                <h2 data-video-title="true">Related video headline should not survive.</h2>
+              </div>
+              <div class="wp-content-part-video">
+                <div class="video-placeholder">Inline video chrome should not survive.</div>
+              </div>
+              <nav>
+                <a href="/direct-home/related-direct-story">Related direct feed story</a>
+                <img src="/theme/icon-star.svg" alt="Theme badge" />
+              </nav>
+              <div class="wp-content-part-teaser">
+                <a class="teaser-inline" href="/direct-home/related-direct-story-2">
+                  <img src="/images/related-card.jpg" alt="Related card" />
+                  <span>Second related teaser should not survive.</span>
+                </a>
+              </div>
+              <div class="teaser-inline">
+                <img role="presentation" src="/theme/pattern-divider.png" />
+              </div>
+              <div
+                id="elevenlabs-audionative-widget"
+                data-playerurl="https://elevenlabs.io/player/index.html"
+                data-projectid="direct-premium"
+              >
+                Loading the <a href="https://elevenlabs.io/text-to-speech">Elevenlabs Text to Speech</a>
+                AudioNative Player...
+              </div>
+              <div id="piano-post-content-1" class="piano-experience-container"></div>
+              <footer>
+                <p>Footer promo CTA should not survive.</p>
+              </footer>
+            </div>
+          </article>
+        </main>
+      </body>
+    </html>
+    """
+
+
+def assert_forbidden_fragments_absent(value: str, *, fragments: list[str]) -> None:
+    for fragment in fragments:
+        assert fragment not in value, f"Unexpected fragment '{fragment}' in payload: {value}"
+
+
 def assert_item_page_contract(
     payload: dict[str, object],
     *,
@@ -155,6 +230,24 @@ def main() -> int:
     base_url = f"http://127.0.0.1:{server.server_port}"
     broken_server = ThreadingHTTPServer(("127.0.0.1", 0), SampleFeedHandler)
     broken_base_url = f"http://127.0.0.1:{broken_server.server_port}"
+    premium_cleanup_forbidden_text = [
+        "Related direct feed story",
+        "Related video headline should not survive.",
+        "Inline video chrome should not survive.",
+        "Second related teaser should not survive.",
+        "Header promo should not survive.",
+        "Footer promo CTA should not survive.",
+        "Elevenlabs",
+        "AudioNative Player",
+        "Theme badge",
+    ]
+    premium_cleanup_forbidden_html = [
+        *premium_cleanup_forbidden_text,
+        "/theme/icon-star.svg",
+        "/theme/icon-lightbulb.svg",
+        "/images/related-card.jpg",
+        "/theme/pattern-divider.png",
+    ]
     server.routes = {
         "/feeds/direct.xml": (
             200,
@@ -209,7 +302,7 @@ def main() -> int:
         "/direct-home/direct-1": (
             200,
             "text/html; charset=utf-8",
-            article_html(
+            premium_cleanup_article_html(
                 title="Direct Feed 1",
                 deck="Direct extraction route used by the release smoke test.",
                 paragraphs=[
@@ -440,6 +533,9 @@ def main() -> int:
             metadata_item_id = next(
                 item["id"] for item in all_items_response.json()["items"] if item["channel_id"] == metadata_channel_id
             )
+            heuristic_item_id = next(
+                item["id"] for item in all_items_response.json()["items"] if item["channel_id"] == heuristic_response.json()["channel"]["id"]
+            )
             inbox_view_response = client.get(
                 "/api/v1/items",
                 params={"view": "inbox"},
@@ -611,6 +707,89 @@ def main() -> int:
             )
             workspace_briefing_response = client.get(
                 "/api/v1/workspace/briefing",
+                headers=cors_headers,
+            )
+            annotation_note_response = client.post(
+                "/api/v1/workspace/annotations",
+                json={
+                    "item_id": heuristic_item_id,
+                    "kind": "note",
+                    "note_text": "Continuity note survives bundle replay.",
+                },
+                headers=cors_headers,
+            )
+            annotation_highlight_response = client.post(
+                "/api/v1/workspace/annotations",
+                json={
+                    "item_id": heuristic_item_id,
+                    "kind": "highlight",
+                    "quote_text": "Heuristic Feed 1",
+                    "color": "amber",
+                },
+                headers=cors_headers,
+            )
+            item_tags_response = client.put(
+                f"/api/v1/workspace/items/{heuristic_item_id}/tags",
+                json={"names": ["Continuity tag"]},
+                headers=cors_headers,
+            )
+            collection_create_response = client.post(
+                "/api/v1/workspace/collections",
+                json={
+                    "name": "Continuity collection",
+                    "description": "Portable continuity bucket",
+                    "item_id": heuristic_item_id,
+                },
+                headers=cors_headers,
+            )
+            saved_search_create_response = client.post(
+                "/api/v1/workspace/saved-searches",
+                json={
+                    "name": "Continuity search",
+                    "query": "heuristic feed",
+                    "default_view": "saved",
+                },
+                headers=cors_headers,
+            )
+            workspace_export_response = client.get(
+                "/api/v1/workspace/export",
+                headers=cors_headers,
+            )
+            export_payload = workspace_export_response.json()
+            heuristic_continuity_item = next(
+                item
+                for item in export_payload["continuity_items"]
+                if item["id"] == heuristic_item_id
+            )
+            with connect(settings.database_file) as connection:
+                connection.execute("DELETE FROM annotations")
+                connection.execute("DELETE FROM item_tags")
+                connection.execute("DELETE FROM tags")
+                connection.execute("DELETE FROM collection_items")
+                connection.execute("DELETE FROM collections")
+                connection.execute("DELETE FROM saved_searches")
+                connection.commit()
+            continuity_import_response = client.post(
+                "/api/v1/workspace/continuity/import",
+                json={
+                    "sources_opml": export_payload["sources_opml"],
+                    "continuity_items": [
+                        {
+                            "item_id": heuristic_continuity_item["id"],
+                            "source_url": heuristic_continuity_item["source_url"],
+                            "is_read": True,
+                            "is_favorite": True,
+                            "digest_candidate": False,
+                            "is_archived": True,
+                        }
+                    ],
+                    "annotations": export_payload["annotations"],
+                    "tags": export_payload["tags"],
+                    "collections": export_payload["collections"],
+                    "saved_searches": export_payload["saved_searches"],
+                    "item_tags": export_payload["item_tags"],
+                    "collection_items": export_payload["collection_items"],
+                },
                 headers=cors_headers,
             )
 
@@ -817,6 +996,18 @@ def main() -> int:
         assert detail_item_response.json()["item"]["cleaned_html"]
         assert "bounded content threshold" in detail_item_response.json()["item"]["content_text"]
         assert "<p>" in detail_item_response.json()["item"]["cleaned_html"]
+        assert f'<img src="{base_url}/images/direct-hero-2048x1365.jpg" alt="Direct premium hero">' in detail_item_response.json()["item"]["cleaned_html"]
+        assert f'<img src="{base_url}/images/editorial-photo.jpg" alt="Editorial photo">' in detail_item_response.json()["item"]["cleaned_html"]
+        assert "Editorial caption" in detail_item_response.json()["item"]["cleaned_html"]
+        assert "Editorial caption" in detail_item_response.json()["item"]["content_text"]
+        assert_forbidden_fragments_absent(
+            detail_item_response.json()["item"]["cleaned_html"],
+            fragments=premium_cleanup_forbidden_html,
+        )
+        assert_forbidden_fragments_absent(
+            detail_item_response.json()["item"]["content_text"],
+            fragments=premium_cleanup_forbidden_text,
+        )
         assert detail_item_response.json()["item"]["library"]["state"] == "inbox"
 
         assert missing_detail_item_response.status_code == 404, missing_detail_item_response.text
@@ -1071,6 +1262,13 @@ def main() -> int:
             workspace_ranking_response,
             workspace_stories_response,
             workspace_briefing_response,
+            annotation_note_response,
+            annotation_highlight_response,
+            item_tags_response,
+            collection_create_response,
+            saved_search_create_response,
+            workspace_export_response,
+            continuity_import_response,
         ):
             assert response.status_code == 200, response.text
             assert response.headers.get("access-control-allow-origin") == "http://127.0.0.1:3000"
@@ -1096,6 +1294,32 @@ def main() -> int:
         assert briefing_payload["recommended"]
         assert briefing_payload["stats"]["recommended_count"] == len(briefing_payload["recommended"])
 
+        assert export_payload["exported_at"]
+        assert export_payload["sources_opml"].startswith('<?xml version="1.0" encoding="UTF-8"?>')
+        assert isinstance(export_payload["continuity_items"], list)
+        assert len(export_payload["annotations"]) >= 2
+        assert len(export_payload["tags"]) >= 1
+        assert len(export_payload["collections"]) >= 1
+        assert len(export_payload["saved_searches"]) >= 1
+        assert isinstance(export_payload["item_tags"], list)
+        assert isinstance(export_payload["collection_items"], list)
+
+        continuity_import_payload = continuity_import_response.json()
+        assert continuity_import_payload["imported_source_count"] == 0
+        assert continuity_import_payload["duplicate_source_count"] >= 0
+        assert continuity_import_payload["matched_item_count"] == 1
+        assert continuity_import_payload["unmatched_item_count"] == 0
+        assert continuity_import_payload["restored_read_count"] == 1
+        assert continuity_import_payload["restored_saved_count"] == 1
+        assert continuity_import_payload["restored_digest_count"] == 0
+        assert continuity_import_payload["restored_archive_count"] == 1
+        assert continuity_import_payload["restored_annotation_count"] == 2
+        assert continuity_import_payload["restored_tag_assignment_count"] == 1
+        assert continuity_import_payload["restored_collection_count"] == 1
+        assert continuity_import_payload["restored_collection_item_count"] == 1
+        assert continuity_import_payload["restored_saved_search_count"] == 1
+        assert continuity_import_payload["matched_items"][0]["item_id"] == heuristic_item_id
+
         with connect(settings.database_file) as connection:
             rows = connection.execute(
                 """
@@ -1119,6 +1343,14 @@ def main() -> int:
                 WHERE id = ?
                 """,
                 [direct_item_id],
+            ).fetchone()
+            heuristic_item_row = connection.execute(
+                """
+                SELECT is_read, is_favorite, archived_at, digest_candidate
+                FROM items
+                WHERE id = ?
+                """,
+                [heuristic_item_id],
             ).fetchone()
             item_count = connection.execute("SELECT COUNT(*) AS count FROM items").fetchone()["count"]
             extraction_rows = connection.execute(
@@ -1154,6 +1386,22 @@ def main() -> int:
         assert direct_item_row["extraction_status"] == "completed"
         assert direct_item_row["cleaned_html"]
         assert direct_item_row["content_text"]
+        assert f'<img src="{base_url}/images/direct-hero-2048x1365.jpg" alt="Direct premium hero">' in direct_item_row["cleaned_html"]
+        assert f'<img src="{base_url}/images/editorial-photo.jpg" alt="Editorial photo">' in direct_item_row["cleaned_html"]
+        assert "Editorial caption" in direct_item_row["cleaned_html"]
+        assert "Editorial caption" in direct_item_row["content_text"]
+        assert_forbidden_fragments_absent(
+            direct_item_row["cleaned_html"],
+            fragments=premium_cleanup_forbidden_html,
+        )
+        assert_forbidden_fragments_absent(
+            direct_item_row["content_text"],
+            fragments=premium_cleanup_forbidden_text,
+        )
+        assert heuristic_item_row["is_read"] == 1
+        assert heuristic_item_row["is_favorite"] == 1
+        assert heuristic_item_row["digest_candidate"] == 0
+        assert heuristic_item_row["archived_at"] is not None
         assert item_count == 3
         assert [(row["extraction_status"], row["count"]) for row in extraction_rows] == [("completed", 3)]
         assert cleaned_item_count == 3

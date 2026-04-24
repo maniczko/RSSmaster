@@ -31,6 +31,19 @@ class Settings(BaseSettings):
     api_url: str = Field(default="http://127.0.0.1:8000", alias="RSSMASTER_API_URL")
 
     database_path: str = Field(default="./data/rssmaster.db", alias="RSSMASTER_DATABASE_PATH")
+    accounts_database_path: str = Field(
+        default="./data/rssmaster_accounts.db",
+        alias="RSSMASTER_ACCOUNTS_DATABASE_PATH",
+    )
+    accounts_workspace_dir: str = Field(
+        default="./data/accounts",
+        alias="RSSMASTER_ACCOUNTS_WORKSPACE_DIR",
+    )
+    accounts_cookie_name: str = Field(
+        default="rssmaster_session",
+        alias="RSSMASTER_ACCOUNTS_COOKIE_NAME",
+    )
+    accounts_session_days: int = Field(default=30, alias="RSSMASTER_ACCOUNTS_SESSION_DAYS")
     digest_max_items: int = Field(default=25, alias="RSSMASTER_DIGEST_MAX_ITEMS")
     fetch_timeout_seconds: int = Field(default=20, alias="RSSMASTER_FETCH_TIMEOUT_SECONDS")
     sentry_dsn: str | None = Field(default=None, alias="RSSMASTER_SENTRY_DSN")
@@ -65,7 +78,14 @@ class Settings(BaseSettings):
 
         return value
 
-    @field_validator("web_port", "api_port", "smtp_port", "digest_max_items", "fetch_timeout_seconds")
+    @field_validator(
+        "web_port",
+        "api_port",
+        "smtp_port",
+        "digest_max_items",
+        "fetch_timeout_seconds",
+        "accounts_session_days",
+    )
     @classmethod
     def validate_positive_int(cls, value: int) -> int:
         if value <= 0:
@@ -107,6 +127,22 @@ class Settings(BaseSettings):
         return (ROOT_DIR / database_path).resolve()
 
     @property
+    def accounts_database_file(self) -> Path:
+        accounts_database_path = Path(self.accounts_database_path)
+        if accounts_database_path.is_absolute():
+            return accounts_database_path
+
+        return (ROOT_DIR / accounts_database_path).resolve()
+
+    @property
+    def accounts_workspace_directory(self) -> Path:
+        accounts_workspace_dir = Path(self.accounts_workspace_dir)
+        if accounts_workspace_dir.is_absolute():
+            return accounts_workspace_dir
+
+        return (ROOT_DIR / accounts_workspace_dir).resolve()
+
+    @property
     def smtp_ready(self) -> bool:
         required_fields = [self.smtp_host, self.smtp_username, self.smtp_password, self.smtp_from, self.kindle_email]
         return all(bool(value) for value in required_fields)
@@ -116,6 +152,10 @@ class Settings(BaseSettings):
             "api_host": self.api_host,
             "api_port": self.api_port,
             "api_url": self.api_url,
+            "accounts_cookie_name": self.accounts_cookie_name,
+            "accounts_database_path": str(self.accounts_database_file),
+            "accounts_session_days": self.accounts_session_days,
+            "accounts_workspace_dir": str(self.accounts_workspace_directory),
             "app_name": self.app_name,
             "database_path": str(self.database_file),
             "digest_max_items": self.digest_max_items,

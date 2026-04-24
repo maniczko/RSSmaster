@@ -2,6 +2,7 @@ export type AppSection = "read" | "discover" | "sources" | "digest" | "settings"
 export type AppLibraryView = "inbox" | "continue" | "saved" | "digest" | "archive";
 export type AppScope = "all" | "unread";
 export type AppSortMode = "newest" | "oldest";
+export type AppReadSurface = "browse" | "article";
 
 export type ParsedAppPath = {
   section: AppSection | null;
@@ -15,6 +16,7 @@ export type AppHrefInput = {
   sort?: AppSortMode;
   q?: string | null;
   item?: string | null;
+  surface?: AppReadSurface | null;
 };
 
 export function isAppSection(value: string | null | undefined): value is AppSection {
@@ -31,6 +33,10 @@ export function isAppScope(value: string | null | undefined): value is AppScope 
 
 export function isAppSortMode(value: string | null | undefined): value is AppSortMode {
   return value === "newest" || value === "oldest";
+}
+
+export function isAppReadSurface(value: string | null | undefined): value is AppReadSurface {
+  return value === "browse" || value === "article";
 }
 
 export function parseAppPath(pathname: string): ParsedAppPath {
@@ -71,6 +77,7 @@ export function buildAppHref({
   sort,
   q,
   item,
+  surface,
 }: AppHrefInput): string {
   const pathname = section === "read" ? `/read/${libraryView}` : `/${section}`;
   const params = new URLSearchParams();
@@ -87,6 +94,9 @@ export function buildAppHref({
   if (item && item.trim()) {
     params.set("item", item.trim());
   }
+  if (surface === "article") {
+    params.set("surface", "article");
+  }
 
   const query = params.toString();
   return query ? `${pathname}?${query}` : pathname;
@@ -99,11 +109,13 @@ export function parseLegacyQueryPath(search: string): {
   sort?: AppSortMode;
   q?: string;
   item?: string;
+  surface?: AppReadSurface;
 } {
   const params = new URLSearchParams(search);
   const view = params.get("view");
   const scope = params.get("scope");
   const sort = params.get("sort");
+  const surface = params.get("surface");
 
   return {
     section: "read",
@@ -112,5 +124,6 @@ export function parseLegacyQueryPath(search: string): {
     sort: isAppSortMode(sort) ? sort : undefined,
     q: params.get("q")?.trim() || undefined,
     item: params.get("item")?.trim() || undefined,
+    surface: isAppReadSurface(surface) ? surface : undefined,
   };
 }

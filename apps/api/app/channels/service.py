@@ -155,6 +155,7 @@ class ChannelDiscoveryService:
                 details={
                     "candidates": [feed.feed_url for feed in preview.feeds],
                     "mode": preview.mode,
+                    "preview_failure_kind": "discovery",
                 },
                 retryable=False,
             )
@@ -218,6 +219,7 @@ class ChannelDiscoveryService:
             message="Could not find a valid RSS or Atom feed for the provided URL.",
             details={
                 "attempted_urls": [normalized_input_url, *candidate_urls, *(candidate.url for candidate in heuristic_candidates)],
+                "preview_failure_kind": "discovery",
             },
             retryable=False,
         )
@@ -292,10 +294,14 @@ class ChannelDiscoveryService:
         except httpx.RequestError as error:
             if strict:
                 raise ApiError(
-                    status_code=422,
+                    status_code=503,
                     code="source_unreachable",
                     message="Could not fetch the provided URL.",
-                    details={"input_url": url, "reason": str(error)},
+                    details={
+                        "input_url": url,
+                        "reason": str(error),
+                        "preview_failure_kind": "transport",
+                    },
                     retryable=True,
                 ) from error
             return None
@@ -306,7 +312,11 @@ class ChannelDiscoveryService:
                     status_code=422,
                     code="source_unreachable",
                     message="The provided URL returned an error response.",
-                    details={"input_url": url, "status_code": response.status_code},
+                    details={
+                        "input_url": url,
+                        "status_code": response.status_code,
+                        "preview_failure_kind": "discovery",
+                    },
                     retryable=False,
                 )
             return None

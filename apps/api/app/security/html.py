@@ -83,6 +83,12 @@ READER_HTML_POLICY = HtmlSanitizationPolicy.create(
         "section",
         "span",
         "strong",
+        "table",
+        "tbody",
+        "td",
+        "th",
+        "thead",
+        "tr",
         "ul",
     ),
     allowed_attributes={

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+import httpx
+
+from app.errors import ApiError
 from app.channels.service import ChannelService
 from app.config import Settings
 
@@ -28,7 +31,7 @@ def build_feed(
 
 
 class ChannelPreviewTests(unittest.TestCase):
-    def make_service(self, resources: dict[str, dict[str, str]]) -> ChannelService:
+    def make_service(self, resources: dict[str, dict[str, str] | Exception | None]) -> ChannelService:
         repository = Mock()
         repository.list_by_normalized_feed_urls.return_value = {}
 
@@ -36,7 +39,10 @@ class ChannelPreviewTests(unittest.TestCase):
 
         def fake_fetch(url: str, *, strict: bool) -> dict[str, str] | None:
             del strict
-            return resources.get(url)
+            result = resources.get(url)
+            if isinstance(result, Exception):
+                raise result
+            return result
 
         service.discovery._fetch = fake_fetch  # type: ignore[method-assign]
         return service
@@ -227,6 +233,54 @@ class ChannelPreviewTests(unittest.TestCase):
         self.assertEqual(len(payload["candidates"]), 2)
         self.assertEqual(payload["candidates"][0]["sample_items"][0]["title"], "A1")
         self.assertEqual(payload["candidates"][1]["sample_items"][0]["title"], "B1")
+
+    def test_preview_discovery_failure_remains_expected_422(self) -> None:
+        homepage_html = """
+        <html>
+          <head>
+            <title>No feeds here</title>
+          </head>
+          <body>Example</body>
+        </html>
+        """
+        service = self.make_service(
+            {
+                "https://example.com/": {
+                    "body": homepage_html,
+                    "content_type": "text/html; charset=utf-8",
+                    "final_url": "https://example.com/",
+                },
+                "https://example.com/feed": None,
+                "https://example.com/rss": None,
+                "https://example.com/atom.xml": None,
+            }
+        )
+
+        with self.assertRaises(ApiError) as context:
+            service.preview_channel(input_url="https://example.com")
+
+        error = context.exception
+        self.assertEqual(error.status_code, 422)
+        self.assertEqual(error.code, "discovery_failed")
+        self.assertFalse(error.retryable)
+        self.assertEqual(error.details["preview_failure_kind"], "discovery")
+
+    def test_preview_transport_failure_becomes_503(self) -> None:
+        service = ChannelService(Settings(environment="test"), Mock())
+        service.repository.list_by_normalized_feed_urls.return_value = {}
+
+        request = httpx.Request("GET", "https://example.com/")
+        request_error = httpx.RequestError("network down", request=request)
+
+        with patch("app.channels.service.httpx.Client.get", side_effect=request_error):
+            with self.assertRaises(ApiError) as context:
+                service.preview_channel(input_url="https://example.com")
+
+        error = context.exception
+        self.assertEqual(error.status_code, 503)
+        self.assertEqual(error.code, "source_unreachable")
+        self.assertTrue(error.retryable)
+        self.assertEqual(error.details["preview_failure_kind"], "transport")
 
 
 if __name__ == "__main__":

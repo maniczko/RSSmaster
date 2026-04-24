@@ -10,4 +10,5 @@ export * from "@/app/components/read-layout";
 export * from "@/app/components/saved-view-chip";
 export * from "@/app/components/source-health-card";
 export * from "@/app/components/story-cluster-card";
+export * from "@/app/components/ui-icons";
 export * from "@/app/components/workspace-primitives";

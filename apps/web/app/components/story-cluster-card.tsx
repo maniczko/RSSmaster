@@ -11,6 +11,7 @@ import {
   WorkspaceMetricList,
   WorkspacePanel,
 } from "@/app/components/workspace-primitives";
+import { ChevronRightIcon, DiscoverIcon, SparkIcon } from "@/app/components/ui-icons";
 
 export type StoryClusterCardProps = {
   cluster: StoryClusterModel;
@@ -63,7 +64,12 @@ export function StoryClusterCard({
       actions={actions}
       className={className}
       description={cluster.summary ?? "Zgrupowane publikacje o jednym rozwijajacym sie temacie."}
-      eyebrow="Klaster historii"
+      eyebrow={
+        <span className="workspace-eyebrow-with-icon">
+          <DiscoverIcon className="app-icon app-icon-xs" />
+          Klaster historii
+        </span>
+      }
       style={style}
       title={cluster.title}
       tone={momentumMeta.tone}
@@ -122,6 +128,7 @@ export function StoryClusterCard({
           {visibleStories.map((story) => (
             <li key={story.id} style={workspaceStyles.listItem}>
               <button
+                disabled={!onStorySelect}
                 onClick={onStorySelect ? () => onStorySelect(story.id) : undefined}
                 style={{
                   display: "grid",
@@ -145,16 +152,24 @@ export function StoryClusterCard({
                   }}
                 >
                   <div style={{ display: "grid", gap: "0.3rem", minWidth: 0 }}>
-                    <strong style={workspaceStyles.title}>{story.title}</strong>
+                    <strong style={workspaceStyles.title}>
+                      <span className="workspace-inline-title-with-icon">
+                        <SparkIcon className="app-icon app-icon-xs" />
+                        {story.title}
+                      </span>
+                    </strong>
                     <span style={workspaceStyles.bodyText}>
                       {story.source} | {formatRelativeDate(story.publishedAt, new Date(), "Nieznany czas publikacji")}
                     </span>
                   </div>
-                  {story.state ? (
-                    <WorkspaceChip tone={getStoryStateTone(story.state)} active={story.state !== "seen"}>
-                      {getStoryStateLabel(story.state)}
-                    </WorkspaceChip>
-                  ) : null}
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {story.state ? (
+                      <WorkspaceChip tone={getStoryStateTone(story.state)} active={story.state !== "seen"}>
+                        {getStoryStateLabel(story.state)}
+                      </WorkspaceChip>
+                    ) : null}
+                    {onStorySelect ? <ChevronRightIcon className="app-icon app-icon-xs" /> : null}
+                  </div>
                 </div>
                 {story.summary ? <p style={workspaceStyles.bodyText}>{story.summary}</p> : null}
               </button>

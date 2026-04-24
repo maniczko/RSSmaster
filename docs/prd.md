@@ -46,7 +46,7 @@ The MVP must support:
 
 The MVP explicitly does not include:
 
-- user accounts, auth, or multi-tenant collaboration
+- hosted auth, remote identity providers, or multi-tenant collaboration
 - cloud deployment as the primary runtime
 - social sharing, annotations, or collaborative reading features
 - recommendation systems or ranking models
@@ -70,8 +70,14 @@ After the MVP is stable, likely next layers are:
 - SQLite is the system of record for MVP state
 - the operator owns configuration locally through `.env` and persisted settings
 - startup failures should fail fast with actionable diagnostics
-- the initial product may assume one trusted operator and no remote auth
+- the initial product may assume one trusted operator and local account auth only
 - local artifacts may exist on disk, but critical workflow state must live in SQLite
+
+## Local account model
+
+- local accounts are in scope when they protect or isolate one operator's durable library on one machine
+- the first account should claim the pre-auth shared workspace instead of discarding existing feeds and saved items
+- account sessions are local-only and do not imply hosted sync, multi-user collaboration, or cloud tenancy
 
 ## Canonical MVP user journey
 
@@ -91,6 +97,7 @@ After the MVP is stable, likely next layers are:
 
 - input: feed URL or homepage URL
 - system behavior: validate, autodiscover when needed, reject ambiguous sources clearly
+- ux rule: the first sources screen should stay add-first and lightweight; operational source management belongs in a secondary layer, not in the default first-contact viewport
 - output: active channel with visible status and metadata
 
 ### Flow 2: ingest new items
@@ -102,7 +109,7 @@ After the MVP is stable, likely next layers are:
 ### Flow 2b: capture a read-later link
 
 - input: a normal article URL shared or pasted from outside the app
-- system behavior: fetch, extract, store the article inside the saved library, and preserve a direct route back into the reader
+- system behavior: fetch, extract, store the article inside the saved library, preserve any quick capture note, and keep a direct route back into the reader article surface
 - output: one saved item ready for later reading without requiring feed subscription first
 
 ### Flow 3: triage articles

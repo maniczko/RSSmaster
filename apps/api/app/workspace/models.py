@@ -344,3 +344,48 @@ class WorkspaceExportResponse(BaseModel):
     continuity_items: list[WorkspaceContinuityItemModel] = []
     item_tags: list[WorkspaceItemTagAssignmentModel] = []
     collection_items: list[WorkspaceCollectionItemAssignmentModel] = []
+
+
+class WorkspaceContinuityImportItemModel(BaseModel):
+    item_id: str | None = None
+    source_url: str
+    is_read: bool = False
+    is_favorite: bool = False
+    digest_candidate: bool = False
+    is_archived: bool = False
+
+
+class WorkspaceContinuityImportRequest(BaseModel):
+    sources_opml: str | None = None
+    continuity_items: list[WorkspaceContinuityImportItemModel] = Field(default_factory=list)
+    annotations: list[AnnotationModel] = Field(default_factory=list)
+    tags: list[TagModel] = Field(default_factory=list)
+    collections: list[CollectionModel] = Field(default_factory=list)
+    saved_searches: list[SavedSearchModel] = Field(default_factory=list)
+    item_tags: list[WorkspaceItemTagAssignmentModel] = Field(default_factory=list)
+    collection_items: list[WorkspaceCollectionItemAssignmentModel] = Field(default_factory=list)
+
+
+class WorkspaceContinuityImportMatchModel(BaseModel):
+    source_url: str
+    item_id: str
+    title: str
+    matched_by: Literal["normalized_source_url"] = "normalized_source_url"
+
+
+class WorkspaceContinuityImportResponse(BaseModel):
+    imported_source_count: int
+    duplicate_source_count: int
+    matched_item_count: int
+    unmatched_item_count: int
+    restored_read_count: int
+    restored_saved_count: int
+    restored_digest_count: int
+    restored_archive_count: int
+    restored_annotation_count: int = 0
+    restored_tag_assignment_count: int = 0
+    restored_collection_count: int = 0
+    restored_collection_item_count: int = 0
+    restored_saved_search_count: int = 0
+    matched_items: list[WorkspaceContinuityImportMatchModel] = Field(default_factory=list)
+    unmatched_source_urls: list[str] = Field(default_factory=list)

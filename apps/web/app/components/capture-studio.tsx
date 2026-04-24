@@ -4,6 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import {
+  BookmarkIcon,
+  CaptureIcon,
+  DismissIcon,
+  ReaderIcon,
+  SourcesIcon,
+} from "@/app/components/ui-icons";
 import { buildCaptureBookmarklet } from "@/app/lib/capture-share";
 import { buildAppHref } from "@/app/lib/app-routes";
 
@@ -61,6 +68,7 @@ export function CaptureStudio({
     try {
       const response = await fetch(`${apiBaseUrl}/api/v1/workspace/capture`, {
         method: "POST",
+        credentials: "include",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
@@ -73,6 +81,9 @@ export function CaptureStudio({
       });
       const payload = ((await response.json()) as CapturePayload | CaptureErrorEnvelope) ?? {};
       if (!response.ok || !("item" in payload) || !payload.item) {
+        if (response.status === 401) {
+          throw new Error("Zaloguj sie w glownej aplikacji RSSmaster, aby zapisac artykul do swojej biblioteki.");
+        }
         const message = "error" in payload ? payload.error?.message : undefined;
         throw new Error(message ?? "Nie udalo sie zapisac artykulu do biblioteki.");
       }
@@ -81,7 +92,9 @@ export function CaptureStudio({
       setFeedback({
         tone: "success",
         title: "Artykul jest juz w RSSmasterze",
-        detail: "Link trafil do zapisanej biblioteki i jest gotowy do czytania w czystym widoku.",
+        detail: note.trim()
+          ? "Link trafil do zapisanej biblioteki, a notatka zostala zapisana przy artykule."
+          : "Link trafil do zapisanej biblioteki i jest gotowy do czytania w czystym widoku.",
       });
     } catch (error) {
       setCaptureResult(null);
@@ -107,7 +120,10 @@ export function CaptureStudio({
     <main className="capture-page">
       <section className="capture-shell">
         <div className="capture-hero">
-          <span className="panel-badge">Capture</span>
+          <span className="panel-badge panel-badge-with-icon">
+            <CaptureIcon className="app-icon app-icon-xs" />
+            Capture
+          </span>
           <h1>Zapisz artykul z dowolnej strony</h1>
           <p>
             Wklej link i jednym ruchem wrzuc go do zapisanej biblioteki. Ten ekran jest tez gotowy pod bookmarklet i systemowe
@@ -123,7 +139,10 @@ export function CaptureStudio({
                 <span>Najkrotsza droga od strony w przegladarce do czystego czytnika RSSmastera.</span>
               </div>
               <Link className="secondary-button" href="/sources">
-                Dodawanie zrodel
+                <span className="button-with-icon">
+                  <SourcesIcon className="app-icon button-inline-icon" />
+                  Dodawanie zrodel
+                </span>
               </Link>
             </div>
 
@@ -153,10 +172,16 @@ export function CaptureStudio({
 
               <div className="capture-actions">
                 <button className="action-button" disabled={!url.trim() || busy} type="submit">
-                  {busy ? "Zapisywanie..." : "Zapisz do biblioteki"}
+                  <span className="button-with-icon">
+                    <BookmarkIcon className="app-icon button-inline-icon" />
+                    {busy ? "Zapisywanie..." : "Zapisz do biblioteki"}
+                  </span>
                 </button>
                 <button className="secondary-button" disabled={busy && !captureResult} onClick={resetForm} type="button">
-                  Wyczysc
+                  <span className="button-with-icon">
+                    <DismissIcon className="app-icon button-inline-icon" />
+                    Wyczysc
+                  </span>
                 </button>
               </div>
             </form>
@@ -175,15 +200,22 @@ export function CaptureStudio({
                             section: "read",
                             libraryView: "saved",
                             item: captureResult.itemId,
+                            surface: "article",
                           }),
                         )
                       }
                       type="button"
                     >
-                      Otworz zapisany artykul
+                      <span className="button-with-icon">
+                        <ReaderIcon className="app-icon button-inline-icon" />
+                        Otworz zapisany artykul
+                      </span>
                     </button>
                     <button className="secondary-button" onClick={resetForm} type="button">
-                      Zapisz kolejny link
+                      <span className="button-with-icon">
+                        <CaptureIcon className="app-icon button-inline-icon" />
+                        Zapisz kolejny link
+                      </span>
                     </button>
                   </div>
                 ) : null}
@@ -201,22 +233,34 @@ export function CaptureStudio({
 
             <div className="capture-hint-stack">
               <div className="capture-hint-card">
-                <span className="panel-badge">Bookmarklet</span>
+                <span className="panel-badge panel-badge-with-icon">
+                  <BookmarkIcon className="app-icon app-icon-xs" />
+                  Bookmarklet
+                </span>
                 <strong>Przeciagnij do paska zakladek</strong>
                 <p>Klikniecie na dowolnej stronie otworzy RSSmaster z gotowym URL-em do zapisu.</p>
                 <a className="action-button compact-button" href="#" ref={bookmarkletLinkRef}>
-                  Zapisz do RSSmastera
+                  <span className="button-with-icon">
+                    <CaptureIcon className="app-icon button-inline-icon" />
+                    Zapisz do RSSmastera
+                  </span>
                 </a>
               </div>
 
               <div className="capture-hint-card">
-                <span className="panel-badge">Share target</span>
+                <span className="panel-badge panel-badge-with-icon">
+                  <CaptureIcon className="app-icon app-icon-xs" />
+                  Share target
+                </span>
                 <strong>Udostepnianie z telefonu lub przegladarki</strong>
                 <p>Po instalacji aplikacji system moze kierowac udostepniony link bezposrednio tutaj, z prefillowanym adresem i tytulem.</p>
               </div>
 
               <div className="capture-hint-card">
-                <span className="panel-badge">Po zapisie</span>
+                <span className="panel-badge panel-badge-with-icon">
+                  <ReaderIcon className="app-icon app-icon-xs" />
+                  Po zapisie
+                </span>
                 <strong>Artykul trafia prosto do zapisanych</strong>
                 <p>Capture ustawia wpis jako zapisany i gotowy do dalszego czytania, digestu albo anotacji.</p>
               </div>

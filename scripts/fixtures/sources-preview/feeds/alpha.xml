@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Alpha Feed</title>
+    <link>__FIXTURE_ORIGIN__/site-multi/</link>
+    <description>Alpha candidate</description>
+    <language>en</language>
+    <item>
+      <title>Alpha entry</title>
+      <link>__FIXTURE_ORIGIN__/site-multi/articles/alpha</link>
+      <guid>alpha-1</guid>
+      <pubDate>Mon, 20 Apr 2026 06:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

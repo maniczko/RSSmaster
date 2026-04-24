@@ -211,11 +211,20 @@ export function WorkspaceEmptyState({
   return (
     <div
       className={className}
-      style={mergeStyles(workspaceStyles.panelMuted, { padding: "0.95rem" }, style)}
+      style={mergeStyles(
+        workspaceStyles.panelMuted,
+        {
+          display: "grid",
+          gap: "0.55rem",
+          alignContent: "start",
+          padding: "1.1rem 1.15rem",
+        },
+        style,
+      )}
     >
       <strong style={workspaceStyles.title}>{title}</strong>
       <p style={workspaceStyles.bodyText}>{description}</p>
-      {action ? <div style={{ marginTop: "0.75rem" }}>{action}</div> : null}
+      {action ? <div style={{ marginTop: "0.85rem" }}>{action}</div> : null}
     </div>
   );
 }

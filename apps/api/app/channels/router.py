@@ -43,7 +43,14 @@ def list_channels(
     )
 
 
-@router.post("/preview", response_model=PreviewChannelResponse)
+@router.post(
+    "/preview",
+    response_model=PreviewChannelResponse,
+    responses={
+        422: {"description": "Expected preview discovery failure."},
+        503: {"description": "Transport or dependency failure while fetching preview data."},
+    },
+)
 def preview_channel(
     payload: PreviewChannelRequest,
     settings: Settings = Depends(get_settings),

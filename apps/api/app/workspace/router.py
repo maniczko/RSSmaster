@@ -37,6 +37,8 @@ from .models import (
     UpdateChannelControlRequest,
     UpdateReaderProfileRequest,
     WorkspaceExportResponse,
+    WorkspaceContinuityImportRequest,
+    WorkspaceContinuityImportResponse,
 )
 from .repository import WorkspaceRepository
 from .service import WorkspaceService
@@ -230,3 +232,11 @@ def capture_url(
 @router.get("/export", response_model=WorkspaceExportResponse)
 def export_workspace(service: WorkspaceService = Depends(get_workspace_service)) -> WorkspaceExportResponse:
     return WorkspaceExportResponse.model_validate(service.export_workspace())
+
+
+@router.post("/continuity/import", response_model=WorkspaceContinuityImportResponse)
+def import_continuity_bundle(
+    payload: WorkspaceContinuityImportRequest,
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> WorkspaceContinuityImportResponse:
+    return WorkspaceContinuityImportResponse.model_validate(service.import_continuity_bundle(payload.model_dump(exclude_none=True)))

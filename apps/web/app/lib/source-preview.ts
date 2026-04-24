@@ -1,6 +1,8 @@
 import { getDomainLabel } from "@/app/lib/editorial-support";
 
 export type SourcePreviewMode = "website" | "web_feed";
+export type SourcePreviewRequestKind = "homepage" | "feed";
+export type SourcePreviewFailureKind = "discovery" | "transport";
 
 export type SourcePreviewItem = {
   title: string;
@@ -34,6 +36,28 @@ export type SourcePreviewUiState =
   | "already_followed"
   | "error";
 
+export type SourcePreviewRequestClassification = {
+  mode: SourcePreviewMode;
+  kind: SourcePreviewRequestKind | "invalid";
+  normalizedValue: string;
+  autoPreviewable: boolean;
+  requestKey: string | null;
+};
+
+export type SourcePreviewFailureClassification = {
+  failureKind: SourcePreviewFailureKind | null;
+  httpStatus: number | null;
+  errorCode: string | null;
+  isExpectedPreviewFailure: boolean;
+};
+
+type PreviewAnnouncementInput = {
+  uiState: SourcePreviewUiState;
+  resultCount?: number;
+  feedbackTitle?: string | null;
+  feedbackLines?: readonly string[];
+};
+
 type PreviewStateInput = {
   previewBusy: boolean;
   preview: SourcePreviewPayloadInput | null;
@@ -59,6 +83,72 @@ type MetricInput = {
   languageLabel?: string | null;
 };
 
+type FailureInput = {
+  httpStatus?: number | null;
+  errorCode?: string | null;
+  previewFailureKind?: string | null;
+};
+
+function normalizeSourcePreviewValue(value: string) {
+  return value.trim();
+}
+
+export function isExpectedSourcePreviewFailureStatus(httpStatus: number | null | undefined) {
+  return httpStatus === 422 || httpStatus === 503;
+}
+
+export function classifySourcePreviewRequest(mode: SourcePreviewMode, value: string): SourcePreviewRequestClassification {
+  const normalizedValue = normalizeSourcePreviewValue(value);
+  const autoPreviewable = canAutoPreviewSourceInput(mode, normalizedValue);
+
+  return {
+    mode,
+    kind: !autoPreviewable ? "invalid" : mode === "website" ? "homepage" : "feed",
+    normalizedValue,
+    autoPreviewable,
+    requestKey: autoPreviewable ? `${mode}:${normalizedValue.toLowerCase()}` : null,
+  };
+}
+
+export function classifySourcePreviewFailure({
+  httpStatus = null,
+  errorCode = null,
+  previewFailureKind = null,
+}: FailureInput): SourcePreviewFailureClassification {
+  const normalizedFailureKind =
+    previewFailureKind === "discovery" || previewFailureKind === "transport" ? previewFailureKind : null;
+  const isExpectedPreviewFailure = normalizedFailureKind !== null || isExpectedSourcePreviewFailureStatus(httpStatus);
+
+  return {
+    failureKind: normalizedFailureKind,
+    httpStatus,
+    errorCode,
+    isExpectedPreviewFailure,
+  };
+}
+
+export function getSourcePreviewFailureLabel(classification: SourcePreviewFailureClassification) {
+  if (classification.failureKind === "discovery") {
+    return "Nie udalo sie wykryc feedu";
+  }
+  if (classification.failureKind === "transport") {
+    return "Feed jest chwilowo niedostepny";
+  }
+  return classification.isExpectedPreviewFailure ? "Preview nie mogl zostac potwierdzony" : "Nieoczekiwany blad preview";
+}
+
+export function getSourcePreviewFailureDescription(classification: SourcePreviewFailureClassification) {
+  if (classification.failureKind === "discovery") {
+    return "Nie udalo sie wykryc poprawnego feedu dla podanego adresu.";
+  }
+  if (classification.failureKind === "transport") {
+    return "Nie udalo sie polaczyc z podanym zrodlem. Sprobuj ponownie za chwile albo sprawdz adres.";
+  }
+  return classification.isExpectedPreviewFailure
+    ? "Preview nie mogl zostac przygotowany dla podanego adresu."
+    : "Wystapil nieoczekiwany blad podczas przygotowywania preview.";
+}
+
 export function getSourcePreviewUiState({
   previewBusy,
   preview,
@@ -83,7 +173,7 @@ export function getSourcePreviewUiState({
 }
 
 export function canAutoPreviewSourceInput(mode: SourcePreviewMode, value: string) {
-  const trimmed = value.trim();
+  const trimmed = normalizeSourcePreviewValue(value);
   if (trimmed.length < 4) {
     return false;
   }
@@ -94,11 +184,7 @@ export function canAutoPreviewSourceInput(mode: SourcePreviewMode, value: string
 }
 
 export function buildSourcePreviewRequestKey(mode: SourcePreviewMode, value: string) {
-  const trimmed = value.trim();
-  if (!canAutoPreviewSourceInput(mode, trimmed)) {
-    return null;
-  }
-  return `${mode}:${trimmed.toLowerCase()}`;
+  return classifySourcePreviewRequest(mode, value).requestKey;
 }
 
 export function buildSourcePreviewTopics({
@@ -149,6 +235,43 @@ export function buildSourcePreviewTopics({
   }
 
   return ordered.slice(0, 8);
+}
+
+export function getSourcePreviewStatusLabel(status: SourcePreviewPayloadInput["status"]) {
+  if (status === "already_subscribed") {
+    return "Juz dodane";
+  }
+  if (status === "multiple_candidates") {
+    return "Wiele kandydatow";
+  }
+  return "Gotowy podglad";
+}
+
+export function getSourcePreviewAnnouncement({
+  uiState,
+  resultCount = 0,
+  feedbackTitle = null,
+  feedbackLines = [],
+}: PreviewAnnouncementInput) {
+  if (uiState === "loading") {
+    return "Trwa sprawdzanie adresu i wykrywanie feedu.";
+  }
+  if (uiState === "single_match") {
+    return "Wynik gotowy. Wykryto jeden feed do obserwowania.";
+  }
+  if (uiState === "already_followed") {
+    return "Wynik gotowy. To zrodlo jest juz w bibliotece.";
+  }
+  if (uiState === "multiple_candidates") {
+    return resultCount > 0
+      ? `Wynik gotowy. Znaleziono ${resultCount} ${resultCount === 1 ? "kandydata" : "kandydatow"}.`
+      : "Wynik gotowy. Wykryto wiele kandydatow.";
+  }
+  if (uiState === "error") {
+    const lead = feedbackLines[0]?.trim();
+    return [feedbackTitle?.trim(), lead].filter(Boolean).join(". ") || "Preview nie zostal przygotowany.";
+  }
+  return "Wklej adres strony albo feedu, aby zobaczyc preview.";
 }
 
 export function buildSourcePreviewMetrics({

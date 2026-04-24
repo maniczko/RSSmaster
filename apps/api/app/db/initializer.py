@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextvars import ContextVar, Token
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -29,9 +30,27 @@ REQUIRED_TABLES = {
     "tags",
 }
 
+_database_path_override: ContextVar[str | None] = ContextVar("rssmaster_database_path_override", default=None)
+
+
+def push_database_path_override(database_path: Path) -> Token[str | None]:
+    return _database_path_override.set(str(database_path.resolve()))
+
+
+def pop_database_path_override(token: Token[str | None]) -> None:
+    _database_path_override.reset(token)
+
+
+def resolve_database_path(database_path: Path) -> Path:
+    override = _database_path_override.get()
+    if override:
+        return Path(override)
+    return database_path
+
 
 def connect(database_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database_path)
+    resolved_path = resolve_database_path(database_path)
+    connection = sqlite3.connect(resolved_path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON;")
     connection.execute("PRAGMA journal_mode = WAL;")

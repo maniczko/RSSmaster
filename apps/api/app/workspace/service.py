@@ -496,13 +496,18 @@ class WorkspaceService:
                 details={"url": normalized_url},
                 retryable=False,
             )
+        capture_note = normalize_optional_text(payload.get("note"))
         with httpx.Client(
             follow_redirects=True,
             headers={"User-Agent": "rssmaster/0.1.0 (+capture)"},
             timeout=self.settings.fetch_timeout_seconds,
         ) as client:
             response = client.get(normalized_url)
-        document = prepare_document(html_source=response.text, fallback_text=payload.get("title"))
+        document = prepare_document(
+            html_source=response.text,
+            fallback_text=payload.get("title"),
+            base_url=normalized_url,
+        )
         if document.content_text is None:
             raise ApiError(
                 status_code=422,
@@ -522,8 +527,10 @@ class WorkspaceService:
             raw_html=response.text,
             cleaned_html=document.cleaned_html,
             content_text=document.content_text,
-            note=normalize_optional_text(payload.get("note")),
+            note=capture_note,
         )
+        if capture_note is not None:
+            self.repository.ensure_item_note_annotation(item_id=item_id, note_text=capture_note)
         item = self.item_repository.get_by_id(item_id)
         if item is None:
             raise RuntimeError("Captured item could not be reloaded.")
@@ -549,6 +556,256 @@ class WorkspaceService:
             ],
             "item_tags": snapshot["item_tags"],
             "collection_items": snapshot["collection_items"],
+        }
+
+    def import_continuity_bundle(self, payload: dict[str, object]) -> dict[str, object]:
+        raw_sources_opml = normalize_optional_text(payload.get("sources_opml"))
+        raw_continuity_items = payload.get("continuity_items")
+        raw_annotations = payload.get("annotations")
+        raw_tags = payload.get("tags")
+        raw_collections = payload.get("collections")
+        raw_saved_searches = payload.get("saved_searches")
+        raw_item_tags = payload.get("item_tags")
+        raw_collection_items = payload.get("collection_items")
+
+        opml_summary = {
+            "imported_count": 0,
+            "duplicate_count": 0,
+        }
+        if raw_sources_opml is not None:
+            imported = self.import_opml({"opml": raw_sources_opml})
+            opml_summary = {
+                "imported_count": int(imported["imported_count"]),
+                "duplicate_count": int(imported["duplicate_count"]),
+            }
+
+        continuity_rows = raw_continuity_items if isinstance(raw_continuity_items, list) else []
+        continuity_by_url: dict[str, dict[str, object]] = {}
+        original_source_url_by_normalized_url: dict[str, str] = {}
+        source_url_by_exported_item_id: dict[str, str] = {}
+        unmatched_source_urls: list[str] = []
+
+        for row in continuity_rows:
+            if not isinstance(row, dict):
+                continue
+            source_url = normalize_optional_text(row.get("source_url"))
+            exported_item_id = normalize_optional_text(row.get("item_id") or row.get("id"))
+            if source_url is None:
+                continue
+            try:
+                normalized_source_url = normalize_url(source_url)
+            except ApiError:
+                unmatched_source_urls.append(source_url)
+                continue
+            continuity_by_url[normalized_source_url] = {
+                "source_url": source_url,
+                "is_read": bool(row.get("is_read")),
+                "is_favorite": bool(row.get("is_favorite")),
+                "digest_candidate": bool(row.get("digest_candidate")),
+                "is_archived": bool(row.get("is_archived")),
+            }
+            original_source_url_by_normalized_url[normalized_source_url] = source_url
+            if exported_item_id is not None:
+                source_url_by_exported_item_id[exported_item_id] = source_url
+
+        matched_items: list[dict[str, object]] = []
+        primary_item_id_by_source_url: dict[str, str] = {}
+        restored_read_count = 0
+        restored_saved_count = 0
+        restored_digest_count = 0
+        restored_archive_count = 0
+
+        matched_rows = self.repository.list_items_by_normalized_source_urls(list(continuity_by_url.keys()))
+        matched_by_url: dict[str, list[dict[str, object]]] = defaultdict(list)
+        for row in matched_rows:
+            matched_by_url[str(row["normalized_source_url"])].append(row)
+
+        for normalized_source_url, snapshot in continuity_by_url.items():
+            matches = matched_by_url.get(normalized_source_url, [])
+            if not matches:
+                unmatched_source_urls.append(original_source_url_by_normalized_url[normalized_source_url])
+                continue
+
+            for match in matches:
+                self.item_repository.update_item_state(
+                    str(match["id"]),
+                    is_read=bool(snapshot["is_read"]),
+                    update_is_read=True,
+                    is_favorite=bool(snapshot["is_favorite"]),
+                    update_is_favorite=True,
+                    is_archived=bool(snapshot["is_archived"]),
+                    update_is_archived=True,
+                    digest_candidate=bool(snapshot["digest_candidate"]),
+                    update_digest_candidate=True,
+                )
+
+            primary_match = matches[0]
+            matched_items.append(
+                {
+                    "source_url": snapshot["source_url"],
+                    "item_id": str(primary_match["id"]),
+                    "title": str(primary_match["title"]),
+                    "matched_by": "normalized_source_url",
+                }
+            )
+            primary_item_id_by_source_url[str(snapshot["source_url"])] = str(primary_match["id"])
+            restored_read_count += int(bool(snapshot["is_read"]))
+            restored_saved_count += int(bool(snapshot["is_favorite"]))
+            restored_digest_count += int(bool(snapshot["digest_candidate"]))
+            restored_archive_count += int(bool(snapshot["is_archived"]))
+
+        local_tag_id_by_exported_tag_id: dict[str, str] = {}
+        restored_annotation_signatures: set[tuple[str, str, str, str, str]] = set()
+        restored_tag_assignment_signatures: set[tuple[str, str]] = set()
+        restored_collection_signatures: set[str] = set()
+        restored_collection_item_signatures: set[tuple[str, str]] = set()
+        restored_saved_search_signatures: set[tuple[str, str, str]] = set()
+
+        for row in raw_tags if isinstance(raw_tags, list) else []:
+            if not isinstance(row, dict):
+                continue
+            tag_name = normalize_optional_text(row.get("name"))
+            if tag_name is None:
+                continue
+            local_tag = self.repository.create_tag(
+                name=tag_name,
+                color=normalize_optional_text(row.get("color")),
+            )
+            exported_tag_id = normalize_optional_text(row.get("id"))
+            if exported_tag_id is not None:
+                local_tag_id_by_exported_tag_id[exported_tag_id] = str(local_tag["id"])
+
+        local_collection_id_by_exported_id: dict[str, str] = {}
+        for row in raw_collections if isinstance(raw_collections, list) else []:
+            if not isinstance(row, dict):
+                continue
+            collection_name = normalize_optional_text(row.get("name"))
+            if collection_name is None:
+                continue
+            collection = self.repository.ensure_collection(
+                name=collection_name,
+                description=normalize_optional_text(row.get("description")),
+            )
+            restored_collection_signatures.add(str(collection["id"]))
+            exported_collection_id = normalize_optional_text(row.get("id"))
+            if exported_collection_id is not None:
+                local_collection_id_by_exported_id[exported_collection_id] = str(collection["id"])
+
+        for row in raw_saved_searches if isinstance(raw_saved_searches, list) else []:
+            if not isinstance(row, dict):
+                continue
+            name = normalize_optional_text(row.get("name"))
+            query = normalize_optional_text(row.get("query"))
+            default_view = normalize_optional_text(row.get("default_view")) or "inbox"
+            if default_view not in {"inbox", "saved", "digest", "archive"}:
+                default_view = "inbox"
+            if name is None or query is None:
+                continue
+            self.repository.ensure_saved_search(name=name, query=query, default_view=default_view)
+            restored_saved_search_signatures.add((name.casefold(), query, default_view))
+
+        for row in raw_annotations if isinstance(raw_annotations, list) else []:
+            if not isinstance(row, dict):
+                continue
+            exported_item_id = normalize_optional_text(row.get("item_id"))
+            if exported_item_id is None:
+                continue
+            source_url = source_url_by_exported_item_id.get(exported_item_id)
+            if source_url is None:
+                continue
+            target_item_id = primary_item_id_by_source_url.get(source_url)
+            if target_item_id is None:
+                continue
+            kind = normalize_optional_text(row.get("kind"))
+            if kind not in {"note", "highlight"}:
+                continue
+            quote_text = normalize_optional_text(row.get("quote_text"))
+            note_text = normalize_optional_text(row.get("note_text"))
+            color = normalize_optional_text(row.get("color"))
+            if kind == "note" and note_text is None:
+                continue
+            if kind == "highlight" and quote_text is None:
+                continue
+            signature = (
+                target_item_id,
+                kind,
+                quote_text or "",
+                note_text or "",
+                color or "",
+            )
+            if signature in restored_annotation_signatures:
+                continue
+            self.repository.ensure_annotation_replay(
+                item_id=target_item_id,
+                kind=kind,
+                quote_text=quote_text,
+                note_text=note_text,
+                color=color,
+            )
+            restored_annotation_signatures.add(signature)
+
+        for row in raw_item_tags if isinstance(raw_item_tags, list) else []:
+            if not isinstance(row, dict):
+                continue
+            exported_item_id = normalize_optional_text(row.get("item_id"))
+            if exported_item_id is None:
+                continue
+            source_url = source_url_by_exported_item_id.get(exported_item_id)
+            if source_url is None:
+                continue
+            target_item_id = primary_item_id_by_source_url.get(source_url)
+            if target_item_id is None:
+                continue
+            exported_tag_id = normalize_optional_text(row.get("tag_id"))
+            local_tag_id = local_tag_id_by_exported_tag_id.get(exported_tag_id) if exported_tag_id else None
+            if local_tag_id is None:
+                tag_name = normalize_optional_text(row.get("tag_name"))
+                if tag_name is None:
+                    continue
+                local_tag_id = str(self.repository.create_tag(name=tag_name, color=None)["id"])
+            signature = (target_item_id, local_tag_id)
+            if signature in restored_tag_assignment_signatures:
+                continue
+            self.repository.add_item_tag(item_id=target_item_id, tag_id=local_tag_id)
+            restored_tag_assignment_signatures.add(signature)
+
+        for row in raw_collection_items if isinstance(raw_collection_items, list) else []:
+            if not isinstance(row, dict):
+                continue
+            exported_collection_id = normalize_optional_text(row.get("collection_id"))
+            exported_item_id = normalize_optional_text(row.get("item_id"))
+            if exported_collection_id is None or exported_item_id is None:
+                continue
+            local_collection_id = local_collection_id_by_exported_id.get(exported_collection_id)
+            source_url = source_url_by_exported_item_id.get(exported_item_id)
+            if local_collection_id is None or source_url is None:
+                continue
+            target_item_id = primary_item_id_by_source_url.get(source_url)
+            if target_item_id is None:
+                continue
+            signature = (local_collection_id, target_item_id)
+            if signature in restored_collection_item_signatures:
+                continue
+            self.repository.add_collection_item(collection_id=local_collection_id, item_id=target_item_id)
+            restored_collection_item_signatures.add(signature)
+
+        deduped_unmatched_source_urls = list(dict.fromkeys(unmatched_source_urls))
+        return {
+            "imported_source_count": opml_summary["imported_count"],
+            "duplicate_source_count": opml_summary["duplicate_count"],
+            "matched_item_count": len(matched_items),
+            "unmatched_item_count": len(deduped_unmatched_source_urls),
+            "restored_read_count": restored_read_count,
+            "restored_saved_count": restored_saved_count,
+            "restored_digest_count": restored_digest_count,
+            "restored_archive_count": restored_archive_count,
+            "restored_annotation_count": len(restored_annotation_signatures),
+            "restored_tag_assignment_count": len(restored_tag_assignment_signatures),
+            "restored_collection_count": len(restored_collection_signatures),
+            "restored_collection_item_count": len(restored_collection_item_signatures),
+            "restored_saved_search_count": len(restored_saved_search_signatures),
+            "matched_items": matched_items,
+            "unmatched_source_urls": deduped_unmatched_source_urls,
         }
 
     def _refresh_story_clusters_and_rank(

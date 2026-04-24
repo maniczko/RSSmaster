@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Local Manual Feed</title>
+    <link>__FIXTURE_ORIGIN__/site-single/</link>
+    <description>Local fixture for direct feed mode.</description>
+    <language>pl</language>
+    <item>
+      <title>Manual preview entry</title>
+      <link>__FIXTURE_ORIGIN__/site-single/articles/manual-1</link>
+      <guid>manual-1</guid>
+      <pubDate>Mon, 20 Apr 2026 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Manual preview entry second</title>
+      <link>__FIXTURE_ORIGIN__/site-single/articles/manual-2</link>
+      <guid>manual-2</guid>
+      <pubDate>Sun, 19 Apr 2026 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

@@ -29,18 +29,20 @@ describe("app route helpers", () => {
         sort: "oldest",
         q: "money.pl",
         item: "itm_123",
+        surface: "article",
       }),
-    ).toBe("/read/archive?scope=all&sort=oldest&q=money.pl&item=itm_123");
+    ).toBe("/read/archive?scope=all&sort=oldest&q=money.pl&item=itm_123&surface=article");
   });
 
   it("parses legacy root query params into a read route", () => {
-    expect(parseLegacyQueryPath("?view=digest&scope=unread&sort=newest&q=ai")).toEqual({
+    expect(parseLegacyQueryPath("?view=digest&scope=unread&sort=newest&q=ai&surface=article")).toEqual({
       section: "read",
       libraryView: "digest",
       scope: "unread",
       sort: "newest",
       q: "ai",
       item: undefined,
+      surface: "article",
     });
   });
 });

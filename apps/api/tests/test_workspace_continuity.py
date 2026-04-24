@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from app.channels.repository import ChannelRepository
+from app.config import Settings
+from app.db.initializer import connect, ensure_database
+from app.items.repository import ItemRepository
+from app.workspace.repository import WorkspaceRepository
+from app.workspace.service import WorkspaceService
+
+
+class WorkspaceContinuityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.database_path = Path(self.tempdir.name) / "rssmaster-test.db"
+        ensure_database(self.database_path)
+        self.settings = Settings(
+            **{
+                "RSSMASTER_ENV": "test",
+                "RSSMASTER_DATABASE_PATH": str(self.database_path),
+            }
+        )
+        self.workspace_repository = WorkspaceRepository(self.database_path)
+        self.item_repository = ItemRepository(self.database_path)
+        self.channel_repository = ChannelRepository(self.database_path)
+        self.service = WorkspaceService(self.settings, self.workspace_repository)
+
+    def tearDown(self) -> None:
+        self.service = None
+        self.item_repository = None
+        self.workspace_repository = None
+        self.channel_repository = None
+        self.tempdir.cleanup()
+
+    def capture_item(self, source_url: str, title: str) -> str:
+        channel_id = self.workspace_repository.ensure_capture_channel()
+        return self.workspace_repository.insert_captured_item(
+            channel_id=channel_id,
+            source_url=source_url,
+            normalized_source_url=source_url,
+            title=title,
+            excerpt=f"{title} excerpt",
+            raw_html="<html><body><article><p>Captured body for continuity restore tests.</p></article></body></html>",
+            cleaned_html="<article><p>Captured body for continuity restore tests.</p></article>",
+            content_text="Captured body for continuity restore tests.",
+            note=None,
+        )
+
+    def test_import_continuity_bundle_restores_item_state_by_source_url(self) -> None:
+        item_id = self.capture_item("https://example.com/articles/continuity-a", "Continuity A")
+
+        self.item_repository.update_item_state(
+            item_id,
+            is_read=False,
+            update_is_read=True,
+            is_favorite=True,
+            update_is_favorite=True,
+            is_archived=False,
+            update_is_archived=True,
+            digest_candidate=True,
+            update_digest_candidate=True,
+        )
+
+        payload = self.service.import_continuity_bundle(
+            {
+                "continuity_items": [
+                    {
+                        "source_url": "https://example.com/articles/continuity-a",
+                        "is_read": True,
+                        "is_favorite": False,
+                        "digest_candidate": False,
+                        "is_archived": True,
+                    },
+                    {
+                        "source_url": "https://example.com/articles/missing",
+                        "is_read": True,
+                        "is_favorite": True,
+                        "digest_candidate": False,
+                        "is_archived": False,
+                    },
+                ]
+            }
+        )
+
+        item = self.item_repository.get_by_id(item_id)
+        self.assertIsNotNone(item)
+        self.assertTrue(bool(item["is_read"]))
+        self.assertFalse(bool(item["is_favorite"]))
+        self.assertFalse(bool(item["digest_candidate"]))
+        self.assertTrue(bool(item["library"]["is_archived"]))
+
+        self.assertEqual(payload["matched_item_count"], 1)
+        self.assertEqual(payload["unmatched_item_count"], 1)
+        self.assertEqual(payload["restored_read_count"], 1)
+        self.assertEqual(payload["restored_saved_count"], 0)
+        self.assertEqual(payload["restored_digest_count"], 0)
+        self.assertEqual(payload["restored_archive_count"], 1)
+        self.assertEqual(payload["matched_items"][0]["item_id"], item_id)
+        self.assertEqual(payload["matched_items"][0]["source_url"], "https://example.com/articles/continuity-a")
+        self.assertEqual(payload["unmatched_source_urls"], ["https://example.com/articles/missing"])
+
+    def test_import_continuity_bundle_can_import_sources_opml_without_item_matches(self) -> None:
+        payload = self.service.import_continuity_bundle(
+            {
+                "sources_opml": """<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Imported Feed" title="Imported Feed" type="rss" xmlUrl="https://example.com/feed.xml" htmlUrl="https://example.com" />
+  </body>
+</opml>""",
+                "continuity_items": [],
+            }
+        )
+
+        imported_channel = self.channel_repository.get_by_normalized_feed_url("https://example.com/feed.xml")
+
+        self.assertIsNotNone(imported_channel)
+        self.assertEqual(payload["imported_source_count"], 1)
+        self.assertEqual(payload["duplicate_source_count"], 0)
+        self.assertEqual(payload["matched_item_count"], 0)
+        self.assertEqual(payload["unmatched_item_count"], 0)
+
+    def test_import_continuity_bundle_replays_annotations_tags_collections_and_saved_searches(self) -> None:
+        item_id = self.capture_item("https://example.com/articles/continuity-knowledge", "Continuity Knowledge")
+
+        self.service.create_annotation(
+            {
+                "item_id": item_id,
+                "kind": "note",
+                "note_text": "Remember this insight",
+            }
+        )
+        self.service.create_annotation(
+            {
+                "item_id": item_id,
+                "kind": "highlight",
+                "quote_text": "Captured body for continuity restore tests.",
+                "color": "amber",
+            }
+        )
+        self.service.set_item_tags(item_id, ["Continuity tag"])
+        self.service.create_collection(
+            {
+                "name": "Continuity collection",
+                "description": "Portable knowledge bucket",
+                "item_id": item_id,
+            }
+        )
+        self.service.create_saved_search(
+            {
+                "name": "Continuity search",
+                "query": "continuity knowledge",
+                "default_view": "saved",
+            }
+        )
+
+        export_payload = self.service.export_workspace()
+
+        with connect(self.database_path) as connection:
+            connection.execute("DELETE FROM annotations")
+            connection.execute("DELETE FROM item_tags")
+            connection.execute("DELETE FROM tags")
+            connection.execute("DELETE FROM collection_items")
+            connection.execute("DELETE FROM collections")
+            connection.execute("DELETE FROM saved_searches")
+            connection.commit()
+
+        payload = self.service.import_continuity_bundle(
+            {
+                "continuity_items": export_payload["continuity_items"],
+                "annotations": export_payload["annotations"],
+                "tags": export_payload["tags"],
+                "collections": export_payload["collections"],
+                "saved_searches": export_payload["saved_searches"],
+                "item_tags": export_payload["item_tags"],
+                "collection_items": export_payload["collection_items"],
+            }
+        )
+
+        annotations = self.workspace_repository.list_annotations(item_id=item_id, search=None, limit=10)
+        tags = self.workspace_repository.list_item_tags(item_id)
+        collections = self.workspace_repository.list_collections()
+        saved_searches = self.workspace_repository.list_saved_searches()
+
+        self.assertEqual(payload["matched_item_count"], 1)
+        self.assertEqual(payload["restored_annotation_count"], 2)
+        self.assertEqual(payload["restored_tag_assignment_count"], 1)
+        self.assertEqual(payload["restored_collection_count"], 1)
+        self.assertEqual(payload["restored_collection_item_count"], 1)
+        self.assertEqual(payload["restored_saved_search_count"], 1)
+        self.assertEqual({str(entry["kind"]) for entry in annotations}, {"note", "highlight"})
+        self.assertEqual([str(entry["name"]) for entry in tags], ["Continuity tag"])
+        self.assertEqual([str(entry["name"]) for entry in collections], ["Continuity collection"])
+        self.assertEqual(collections[0]["item_count"], 1)
+        self.assertEqual([str(entry["name"]) for entry in saved_searches], ["Continuity search"])
+
+
+if __name__ == "__main__":
+    unittest.main()

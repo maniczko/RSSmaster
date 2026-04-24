@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Local Single Feed</title>
+    <link>__FIXTURE_ORIGIN__/site-single/</link>
+    <description>Local fixture for Website mode.</description>
+    <language>pl</language>
+    <item>
+      <title>Pierwszy wpis</title>
+      <link>__FIXTURE_ORIGIN__/site-single/articles/1</link>
+      <guid>single-1</guid>
+      <pubDate>Mon, 20 Apr 2026 08:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Drugi wpis</title>
+      <link>__FIXTURE_ORIGIN__/site-single/articles/2</link>
+      <guid>single-2</guid>
+      <pubDate>Sun, 19 Apr 2026 08:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Trzeci wpis</title>
+      <link>__FIXTURE_ORIGIN__/site-single/articles/3</link>
+      <guid>single-3</guid>
+      <pubDate>Sat, 18 Apr 2026 08:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

@@ -1,6 +1,16 @@
 # Storage schema
 
-rssmaster uses a single local SQLite schema for the MVP runtime. The goal of schema v1 is to keep every critical workflow state in the database so ingest, reading, digest generation, and delivery can be reconstructed without relying on ad hoc files.
+rssmaster now uses a local account control database plus one SQLite workspace per local account. The goal stays the same: every critical workflow state should be reconstructable from durable SQLite state instead of ad hoc browser files.
+
+## Database layout
+
+- `data/rssmaster.db`
+  - the legacy pre-auth shared workspace
+  - the first local account may claim this database by cloning it into its own account workspace
+- `data/rssmaster_accounts.db`
+  - local account identities, password hashes, and revocable sessions
+- `data/accounts/*.db`
+  - per-account workspaces for channels, items, settings, digests, delivery logs, notes, tags, and collections
 
 ## Tables
 
@@ -65,4 +75,3 @@ Stores send attempts and outcomes for Kindle or other delivery targets.
 - Schema version is tracked in both `schema_migrations` and SQLite `user_version`
 - `scripts/init_db.py` is the entry point for initializing the local database
 - Later migrations should be additive and versioned rather than replacing this file in place
-

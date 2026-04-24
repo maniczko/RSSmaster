@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Beta Feed</title>
+    <link>__FIXTURE_ORIGIN__/site-multi/</link>
+    <description>Beta candidate</description>
+    <language>pl</language>
+    <item>
+      <title>Beta entry</title>
+      <link>__FIXTURE_ORIGIN__/site-multi/articles/beta</link>
+      <guid>beta-1</guid>
+      <pubDate>Mon, 20 Apr 2026 07:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

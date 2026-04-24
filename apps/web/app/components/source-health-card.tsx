@@ -13,6 +13,7 @@ import {
   WorkspaceMetricList,
   WorkspacePanel,
 } from "@/app/components/workspace-primitives";
+import { SourcesIcon, StatusIcon } from "@/app/components/ui-icons";
 
 export type SourceHealthCardProps = {
   source: SourceHealthCardModel;
@@ -40,7 +41,12 @@ export function SourceHealthCard({
       actions={actions}
       className={className}
       description={source.health.summary}
-      eyebrow="Stan zrodla"
+      eyebrow={
+        <span className="workspace-eyebrow-with-icon">
+          <StatusIcon className="app-icon app-icon-xs" />
+          Stan zrodla
+        </span>
+      }
       style={style}
       title={source.title}
       tone={healthMeta.tone}
@@ -79,7 +85,12 @@ export function SourceHealthCard({
 
       {visibleIndicators.length > 0 ? (
         <div style={{ display: "grid", gap: "0.45rem" }}>
-          <strong style={workspaceStyles.title}>Sygnaly na zywo</strong>
+          <strong style={workspaceStyles.title}>
+            <span className="workspace-inline-title-with-icon">
+              <SourcesIcon className="app-icon app-icon-xs" />
+              Sygnaly na zywo
+            </span>
+          </strong>
           <div
             style={{
               display: "flex",
@@ -102,7 +113,12 @@ export function SourceHealthCard({
             background: "rgba(255, 245, 243, 0.92)",
           })}
         >
-          <strong style={workspaceStyles.title}>Ostatni blad</strong>
+          <strong style={workspaceStyles.title}>
+            <span className="workspace-inline-title-with-icon">
+              <StatusIcon className="app-icon app-icon-xs" />
+              Ostatni blad
+            </span>
+          </strong>
           <p style={workspaceStyles.bodyText}>{source.health.lastErrorMessage}</p>
         </div>
       ) : null}
