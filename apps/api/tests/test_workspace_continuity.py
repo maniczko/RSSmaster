@@ -9,7 +9,7 @@ from app.config import Settings
 from app.db.initializer import connect, ensure_database
 from app.items.repository import ItemRepository
 from app.workspace.repository import WorkspaceRepository
-from app.workspace.service import WorkspaceService
+from app.workspace.service import WorkspaceService, summarize_source_warnings
 
 
 class WorkspaceContinuityTests(unittest.TestCase):
@@ -196,6 +196,52 @@ class WorkspaceContinuityTests(unittest.TestCase):
         self.assertEqual([str(entry["name"]) for entry in collections], ["Continuity collection"])
         self.assertEqual(collections[0]["item_count"], 1)
         self.assertEqual([str(entry["name"]) for entry in saved_searches], ["Continuity search"])
+
+    def test_briefing_summary_deduplicates_source_warnings(self) -> None:
+        source_health = [
+            {
+                "channel_id": "chn_local_single",
+                "title": "Local Single Feed",
+                "feed_url": "https://example.com/local-feed",
+                "category": "local",
+                "state": "active",
+                "unread_count": 0,
+                "health_status": "warning",
+                "health_summary": "Never fetched successfully yet.",
+                "group_name": "default",
+                "control": {"tier": "default", "group_name": "default", "custom_source_cap": None},
+            },
+            {
+                "channel_id": "chn_local_single_2",
+                "title": "Local Single Feed",
+                "feed_url": "https://example.com/local-feed-2",
+                "category": "local",
+                "state": "active",
+                "unread_count": 0,
+                "health_status": "warning",
+                "health_summary": "Never fetched successfully yet.",
+                "group_name": "default",
+                "control": {"tier": "default", "group_name": "default", "custom_source_cap": None},
+            },
+            {
+                "channel_id": "chn_news",
+                "title": "Inne zrodlo",
+                "feed_url": "https://example.com/news-feed",
+                "category": "news",
+                "state": "active",
+                "unread_count": 0,
+                "health_status": "warning",
+                "health_summary": "Sync error: 429 Too many requests.",
+                "group_name": "default",
+                "control": {"tier": "priority", "group_name": "default", "custom_source_cap": None},
+            },
+        ]
+
+        warnings = summarize_source_warnings(source_health, limit=4)
+
+        self.assertEqual(len(warnings), 2)
+        self.assertEqual(warnings[0], "Local Single Feed: Never fetched successfully yet.")
+        self.assertEqual(warnings[1], "Inne zrodlo: Sync error: 429 Too many requests.")
 
 
 if __name__ == "__main__":

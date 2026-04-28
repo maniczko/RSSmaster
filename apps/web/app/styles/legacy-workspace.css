@@ -1,0 +1,158 @@
+/* Inoreader-inspired shell refresh */
+
+:root {
+  --bg: #eef3f9;
+  --bg-panel: rgba(255, 255, 255, 0.92);
+  --bg-panel-strong: #ffffff;
+  --bg-accent: #0f62da;
+  --text: #172033;
+  --muted: #667085;
+  --line: rgba(148, 163, 184, 0.24);
+  --line-strong: rgba(100, 116, 139, 0.34);
+  --accent: #1d6fe9;
+  --accent-strong: #1256b2;
+  --accent-soft: rgba(29, 111, 233, 0.12);
+  --ok: #167d5f;
+  --ok-soft: rgba(22, 125, 95, 0.12);
+  --warn: #c2412d;
+  --warn-soft: rgba(194, 65, 45, 0.12);
+  --shadow: 0 20px 46px rgba(15, 23, 42, 0.08);
+  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.86)),
+    linear-gradient(180deg, #edf2f8 0%, #e7edf6 100%);
+}
+
+body {
+  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+.workspace-shell.workspace-shell-app {
+  width: calc(100% - 1rem);
+  max-width: none;
+  padding: 0.75rem 0.5rem 1rem;
+}
+
+.workspace-appbar {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 0.85rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.workspace-appbar-brand,
+.workspace-appbar-status,
+.nav-pane-header,
+.nav-brand,
+.nav-source-button,
+.nav-source-meta,
+.nav-section-header {
+  display: flex;
+}
+
+.workspace-appbar-brand {
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.workspace-appbar-brand strong {
+  display: block;
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.workspace-appbar-brand span:last-child,
+.workspace-runtime-copy {
+  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.workspace-appbar-mark,
+.nav-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-appbar-mark {
+  width: 2.25rem;
+  height: 2.25rem;
+  background: linear-gradient(135deg, #0f62da, #4d95ff);
+  color: white;
+}
+
+.workspace-appbar-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: center;
+}
+
+.workspace-appbar-links a {
+  padding: 0.45rem 0.72rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(247, 250, 253, 0.92);
+  color: var(--muted);
+  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.workspace-appbar-status {
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.panel-badge,
+.workspace-kicker {
+  border-radius: 999px;
+  background: rgba(244, 247, 252, 0.94);
+  color: #516079;
+  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.runtime-pill {
+  border-radius: 999px;
+  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+}
+
+.desk-layout {
+  grid-template-columns: 280px minmax(0, 1fr) 340px;
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.desk-layout-focused {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.desk-layout-focused .nav-pane,
+.desk-layout-focused .ops-pane {
+  display: none;
+}

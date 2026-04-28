@@ -34,6 +34,19 @@ describe("app route helpers", () => {
     ).toBe("/read/archive?scope=all&sort=oldest&q=money.pl&item=itm_123&surface=article");
   });
 
+  it("does not leak reader query params into non-read sections", () => {
+    expect(
+      buildAppHref({
+        section: "discover",
+        scope: "all",
+        sort: "oldest",
+        q: "money.pl",
+        item: "itm_123",
+        surface: "article",
+      }),
+    ).toBe("/discover");
+  });
+
   it("parses legacy root query params into a read route", () => {
     expect(parseLegacyQueryPath("?view=digest&scope=unread&sort=newest&q=ai&surface=article")).toEqual({
       section: "read",

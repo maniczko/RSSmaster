@@ -100,8 +100,13 @@ async def attach_request_context(request: Request, call_next):
         log_event(app_logger, logging.INFO, "request_started", event="request_started")
 
         request_path = request.url.path
-        auth_required = request_path.startswith("/api/v1") and not request_path.startswith("/api/v1/auth")
-        auth_optional = request_path.startswith("/api/v1/auth")
+        is_cors_preflight = request.method == "OPTIONS"
+        auth_required = (
+            request_path.startswith("/api/v1")
+            and not request_path.startswith("/api/v1/auth")
+            and not is_cors_preflight
+        )
+        auth_optional = request_path.startswith("/api/v1/auth") and not is_cors_preflight
         resolved_account = None
 
         if auth_required or auth_optional:
@@ -117,7 +122,7 @@ async def attach_request_context(request: Request, call_next):
                 status_code=401,
                 content=build_error_payload(
                     code="auth_required",
-                    message="Zaloguj sie, aby otworzyc swoja biblioteke RSSmaster.",
+                    message="Zaloguj się, aby otworzyć swoją bibliotekę RSSmaster.",
                     details={"auth_required": True},
                     retryable=False,
                     request=request,

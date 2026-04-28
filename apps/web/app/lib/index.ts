@@ -5,6 +5,7 @@ export * from "@/app/lib/feed-browser-tree";
 export * from "@/app/lib/feed-icon";
 export * from "@/app/lib/feed-stream-copy";
 export * from "@/app/lib/reader-cleanup";
+export * from "@/app/lib/reader-decision";
 export * from "@/app/lib/reader-html";
 export * from "@/app/lib/reader-continuity";
 export * from "@/app/lib/source-preview";

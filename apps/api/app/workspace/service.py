@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from html import escape
 import json
+import time
 from typing import Iterable
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -94,6 +95,29 @@ LEARNED_TOPIC_LIMIT = 6
 LEARNED_SOURCE_LIMIT = 3
 SIGNAL_ROW_LIMIT = 240
 SEMANTIC_CLUSTER_KEYWORD_LIMIT = 6
+RANKING_REFRESH_TTL_SECONDS = 15.0
+_ranking_refresh_cache: dict[str, dict[str, object]] = {}
+
+
+
+
+def summarize_source_warnings(source_health: Iterable[dict[str, object]], *, limit: int = 4) -> list[str]:
+    warnings: list[str] = []
+    seen: set[str] = set()
+    for entry in source_health:
+        if str(entry.get("health_status")) not in {"warning", "error"}:
+            continue
+
+        warning = f"{entry['title']}: {entry['health_summary']}"
+        if warning in seen:
+            continue
+
+        warnings.append(warning)
+        seen.add(warning)
+        if len(warnings) >= limit:
+            break
+
+    return warnings
 
 
 class WorkspaceService:
@@ -151,14 +175,13 @@ class WorkspaceService:
         digest = self.item_repository.list_items(
             self._filters(view=None, digest_candidate=True, limit=200)
         ).items
-        story_rows = self.list_story_clusters(limit=4)["items"]
+        story_rows = build_story_cluster_response_items(
+            self.repository.list_story_cluster_rows(limit=4),
+            limit=4,
+        )
         source_health = self.list_source_health()["items"]
         resume_item = next((item["item"] for item in recommended if not item["item"]["is_read"]), None)
-        warning_lines = [
-            f"{entry['title']}: {entry['health_summary']}"
-            for entry in source_health
-            if entry["health_status"] in {"warning", "error"}
-        ][:4]
+        warning_lines = summarize_source_warnings(source_health=source_health)
         summary_lines = [
             f"{len(recommended)} ranked candidates are ready now.",
             f"{len(saved)} saved article(s) remain in the active library.",
@@ -816,9 +839,19 @@ class WorkspaceService:
     ) -> dict[str, object]:
         base_window_hours = max(1, int(profile["candidate_window_hours"]))
         recommendation_target = max(1, int(target_count or profile.get("daily_reading_goal") or 1))
+        database_file = getattr(getattr(self, "settings", None), "database_file", f"repository:{id(self.repository)}")
+        cache_key = build_ranking_refresh_cache_key(database_file, profile)
+        cached_refresh = _ranking_refresh_cache.get(cache_key)
+        if cached_refresh:
+            cached_at = float(cached_refresh.get("monotonic_at") or 0)
+            cached_eligible_count = int(cached_refresh.get("eligible_count") or 0)
+            if time.monotonic() - cached_at <= RANKING_REFRESH_TTL_SECONDS and cached_eligible_count >= recommendation_target:
+                return {"generated_at": str(cached_refresh["generated_at"])}
+
         candidate_rows: list[dict[str, object]] = []
         clusters: list[dict[str, object]] = []
         states: list[dict[str, object]] = []
+        eligible_count = 0
 
         window_plan: list[int] = []
         for candidate_window_hours in (base_window_hours, *FALLBACK_WINDOW_HOURS):
@@ -846,6 +879,11 @@ class WorkspaceService:
         for state in states:
             state["ranked_at"] = generated_at
         self.repository.upsert_ranking_state(states)
+        _ranking_refresh_cache[cache_key] = {
+            "generated_at": generated_at,
+            "eligible_count": eligible_count,
+            "monotonic_at": time.monotonic(),
+        }
         return {"generated_at": generated_at}
 
     def _build_profile(self) -> dict[str, object]:
@@ -879,6 +917,19 @@ class WorkspaceService:
             cursor=None,
             limit=limit,
         )
+
+
+def build_ranking_refresh_cache_key(database_file: object, profile: dict[str, object]) -> str:
+    profile_fingerprint = {
+        "database_file": str(database_file),
+        "candidate_window_hours": profile.get("candidate_window_hours"),
+        "default_source_cap": profile.get("default_source_cap"),
+        "priority_source_cap": profile.get("priority_source_cap"),
+        "emergency_source_cap": profile.get("emergency_source_cap"),
+        "daily_reading_goal": profile.get("daily_reading_goal"),
+        "effective_interests": profile.get("effective_interests") or profile.get("interests") or [],
+    }
+    return json.dumps(profile_fingerprint, sort_keys=True, default=str, separators=(",", ":"))
 
 
 def build_story_clusters(rows: list[dict[str, object]]) -> list[dict[str, object]]:

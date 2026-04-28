@@ -17,6 +17,9 @@ reexec_with_venv(SCRIPT_PATH)
 
 TEMP_DIR = Path(tempfile.mkdtemp(prefix="rssmaster-api-check-"))
 os.environ["RSSMASTER_DATABASE_PATH"] = str(TEMP_DIR / "rssmaster-check.db")
+os.environ["RSSMASTER_ACCOUNTS_DATABASE_PATH"] = str(TEMP_DIR / "rssmaster-accounts-check.db")
+os.environ["RSSMASTER_ACCOUNTS_WORKSPACE_DIR"] = str(TEMP_DIR / "accounts")
+os.environ["RSSMASTER_ACCOUNTS_COOKIE_NAME"] = "rssmaster_api_check_session"
 os.environ["RSSMASTER_FETCH_TIMEOUT_SECONDS"] = "5"
 
 sys.path.insert(0, str(ROOT_DIR / "apps" / "api"))

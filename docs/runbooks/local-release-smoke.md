@@ -21,15 +21,16 @@ Prove that the currently implemented product loop still works:
 3. Run `npm run dev` if you want a manual runtime session, or let the QA harnesses boot their own runtimes.
 4. Run `npm run check`.
 5. If the change touched `/sources`, run `npm run qa:sources` or follow `docs/runbooks/sources-test-plan.md`.
-6. If the change touched `/capture`, bookmarklet/share-target behavior, or outside-app read-later handoff, run `npm run check:capture` or follow `docs/runbooks/capture-test-plan.md`.
-7. If the change touched continuity bundles, manual portability, or saved-reader restore, run `npm run check:continuity` or follow `docs/runbooks/continuity-test-plan.md`.
-8. If the change touched extraction, capture, or in-app reading, run `npm run qa:reader` or follow `docs/runbooks/reader-test-plan.md`.
-9. If you want one aggregated report for the app slice covered today, run `npm run qa:app`.
-10. Open `http://127.0.0.1:3000/` or the fallback runtime URL under test.
-11. Add a test feed from the UI and trigger a manual sync.
-12. Confirm imported items appear and can be triaged.
-13. Use the digest section to preview and build an EPUB.
-14. Use the delivery section to save SMTP/Kindle settings and run a dry-run send.
+6. If the change touched local auth, account-scoped storage, login/logout, or protected API guards, run `npm run check:auth`.
+7. If the change touched `/capture`, bookmarklet/share-target behavior, or outside-app read-later handoff, run `npm run check:capture` or follow `docs/runbooks/capture-test-plan.md`.
+8. If the change touched continuity bundles, manual portability, or saved-reader restore, run `npm run check:continuity` or follow `docs/runbooks/continuity-test-plan.md`.
+9. If the change touched extraction, capture, or in-app reading, run `npm run qa:reader` or follow `docs/runbooks/reader-test-plan.md`.
+10. If you want one aggregated report for the app slice covered today, run `npm run qa:app`.
+11. Open `http://127.0.0.1:3000/` or the fallback runtime URL under test.
+12. Add a test feed from the UI and trigger a manual sync.
+13. Confirm imported items appear and can be triaged.
+14. Use the digest section to preview and build an EPUB.
+15. Use the delivery section to save SMTP/Kindle settings and run a dry-run send.
 
 ## What the commands mean
 
@@ -42,6 +43,10 @@ Prove that the currently implemented product loop still works:
 - `npm run qa:reader`
   - proves the cleaned reader flow against a healthy local runtime, including fallback ports when needed
   - does not prove a canonical cold boot
+- `npm run check:auth`
+  - proves the local auth MVP flow against an isolated runtime: no-account first registration, protected app open, logout, login, invalid password feedback, and 401 auth-required guard
+  - writes all auth control DBs and per-account workspace DBs under `output/playwright/auth-smoke/`
+  - does not prove canonical cold boot, multi-account migration, password manager integration, or long-lived session expiry
 - `npm run check:capture`
   - proves the outside-app capture flow against a healthy local runtime, including prefilled `/capture`, bookmarklet readiness, manifest share target, saved-reader handoff, and note persistence
   - does not prove a canonical cold boot
@@ -66,6 +71,7 @@ Prove that the currently implemented product loop still works:
 - item API supports detail reads, search, category/channel filters, unread/saved baseline library views, and time-window filters
 - saved, unsaved, read, and archived-history flows reconcile correctly on the current filter-based library model
 - list responses keep returning a stable page envelope so cursor pagination can land without rewriting the smoke harness from scratch
+- local auth has a covered MVP browser path without touching real operator data under `data/`
 - settings, digest, and delivery endpoints persist state and logs
 - dry-run delivery proves the end-to-end local loop without needing a live SMTP server
 

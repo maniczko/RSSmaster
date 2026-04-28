@@ -76,7 +76,7 @@ Use this table to map a task to its primary code surface before editing.
 
 | Product surface | Primary implementation areas | Docs that usually need review | Default verification bias |
 | --- | --- | --- | --- |
-| product shell, routes, layout, responsive behavior | `apps/web/app/[[...slug]]/page.tsx`, `apps/web/app/channel-lab.tsx`, `apps/web/app/components/*`, `apps/web/app/lib/app-routes.ts`, `apps/web/app/globals.css` | `docs/prd.md`, `docs/architecture.md`, `docs/api-contract.md` when URL semantics change | browser verification required |
+| product shell, routes, layout, responsive behavior | `apps/web/app/[[...slug]]/page.tsx`, `apps/web/app/channel-lab.tsx`, `apps/web/app/components/*`, `apps/web/app/lib/app-routes.ts`, `apps/web/app/globals.css`, `apps/web/app/styles/*` | `docs/prd.md`, `docs/architecture.md`, `docs/api-contract.md` when URL semantics change | browser verification required |
 | feed browsing, source lists, source controls | `apps/api/app/channels/*`, `apps/api/app/source_management/*`, `apps/api/app/sync/*`, related web feed/source components | `docs/api-contract.md`, `docs/storage-schema.md`, `docs/local-development.md` when boot or sync flow changes | API verification required; browser verification required if user-facing |
 | library states, triage, search, item lists | `apps/api/app/items/*`, `apps/api/app/library/*`, `apps/api/app/workspace/*`, related queue/list UI | `docs/api-contract.md`, `docs/storage-schema.md` | cross-layer verification required; browser verification usually required |
 | annotations, notes, tags, collections, retrieval | `apps/api/app/annotations/*`, `apps/web/app/components/annotation-panel.tsx`, related reader surfaces | `docs/api-contract.md`, `docs/storage-schema.md`, relevant product docs | cross-layer verification required; browser verification required |
@@ -113,6 +113,29 @@ Rule of thumb:
 - discovery work that changes roadmap or sequencing: Linear + Confluence even if code did not change
 
 If Linear or Confluence should be updated but are unavailable in the current session, call that out explicitly in the final report.
+
+### 3.4 External Systems Policy: Linear, Confluence, GitHub
+
+Use external systems deliberately and report what changed.
+
+Read-only lookup is allowed without asking when it materially improves context:
+
+- Linear issue lookup, status inspection, project context
+- Confluence/page/spec lookup
+- GitHub issue, PR, CI, branch, or review-comment inspection
+
+Mutating external systems requires a clear trigger:
+
+- the user explicitly asks for the action
+- the user provides a ticket/spec/PR/comment to update
+- the current implementation directly satisfies an existing tracked item and status sync is part of the request
+
+Do not stage, commit, push, create PRs, move Linear issues, comment in GitHub, or update Confluence pages just because work was completed. When external sync happens, report:
+
+- system updated
+- object id or link
+- exact action taken
+- anything intentionally not updated and why
 
 ## 4. Non-Negotiable Guardrails
 
@@ -158,6 +181,26 @@ Changes in these areas require wider verification than usual:
 - `scripts/check_api.py` and `scripts/test_api_unit.py` - regression harness and release confidence
 
 When touching any of these, prefer at least one extra verification layer beyond the narrow local fix.
+
+### 4.5 Dirty Worktree Rule
+
+This repo is often edited by multiple agents and by the user.
+
+Before editing a file that is already modified, run or inspect:
+
+```powershell
+git diff -- <file>
+```
+
+Continue only when the existing changes are compatible with the requested task. If local changes conflict with the requested work, stop and ask how to proceed. Never reset, checkout, or discard unrelated changes unless the user explicitly asks for that.
+
+### 4.6 Encoding Guardrail
+
+Treat repo docs, `.codex/config.toml`, and product copy as UTF-8.
+
+- Do not persist incorrectly encoded Polish text.
+- The required final heading is exactly `## Co jeszcze nie działa`.
+- Prefer `Get-Content -Encoding UTF8` when diagnosing Polish text on Windows.
 
 ## 5. How To Boot The Project
 
@@ -394,6 +437,28 @@ Use this map when deciding what must move together for a feature-complete change
 
 If a change touches a feature row and one of the listed docs/tests/smoke paths is skipped, explain that gap explicitly in the final report.
 
+### 8.5 Fast Gate, Full Gate, Cold Boot, And Flaky Aggregate Policy
+
+Use the right confidence level for the task.
+
+| Gate | Use when | Commands |
+| --- | --- | --- |
+| fast gate | normal focused implementation and docs/config changes | smallest matching commands from sections 8.1-8.4 |
+| UI fast gate | visible frontend changes | `npm run build`, `npm run test:unit:web`, then targeted `npm run check:layout`, `npm run check:sources`, `npm run check:reader`, `npm run check:capture`, or `npm run check:continuity` |
+| API fast gate | endpoint/repository/contract changes | `python scripts/test_api_unit.py`, `python scripts/check_api.py` |
+| full gate | cross-app release confidence | `npm run check`, `npm run health`, sequential browser checks, plus `npm run qa:sources` or `npm run qa:reader` when relevant |
+| cold boot gate | claiming canonical `3000/8000` clean-start confidence | `npm run qa:sources -- --cold-start` |
+| real queue reader gate | extraction cleanup/backfill risk on operator-local data | `npm run check:reader:real-queue -- --phase before`, re-extract only if requested, then `npm run check:reader:real-queue -- --phase after` |
+
+`npm run qa:app` is an aggregate release-confidence report, not the default fast loop. It may timeout or flake even when component gates pass sequentially.
+
+If `npm run qa:app` fails by timeout or suspected harness flake:
+
+- inspect `output/playwright/app-qa.json` when present
+- run/report the relevant component gates sequentially
+- distinguish harness instability from confirmed product regression
+- do not loop on `qa:app` without a new hypothesis
+
 ## 9. Final Response Standard
 
 Every task must end with a final report using exactly these sections and exactly these section titles:
@@ -524,18 +589,28 @@ To improve work quality, prefer evidence-rich execution:
 
 ## 14. Skill Usage Guidance
 
-When relevant skills are available, prefer them deliberately:
+When relevant skills are available, prefer them deliberately. For large tasks, use the smallest combination that covers the risk.
 
-- use `rssmaster-reader-ux` for reader, feed, search, triage, and layout work
-- use `rssmaster-debug-playbook` for runtime failures, render loops, startup issues, and browser/API mismatches
-- use `rssmaster-api-contract-guardian` for endpoint, payload, filter, or query semantic changes
-- use `rssmaster-playwright-e2e` or browser automation for UI regression verification
-- use `rssmaster-release-qa` before calling work release-ready
-- use `rssmaster-product-backlog` when shaping scope, priorities, or tradeoffs
-- use `rssmaster-semantic-ranking-v4` for ranking, novelty, dedupe, reranking, and feedback-driven recommendation work
-- use `rssmaster-feed-ops-and-health` for source onboarding, feed health, autodiscovery, and noisy-feed operational work
-- use `rssmaster-design-system-polish` for spacing, states, responsive polish, and visual QA
-- use `rssmaster-localization-pl` for Polish UI copy, terminology, validation, and product-language consistency
-- use `rssmaster-release-incident-response` for release regressions, smoke failures, rollback judgment, and incident triage
+| Task type | Primary skill | Pair with | Verification bias |
+| --- | --- | --- | --- |
+| reader, feed queue, search, triage, reading continuity | `rssmaster-reader-ux` | `rssmaster-playwright-e2e`, `rssmaster-api-contract-guardian` when cross-layer | browser verification required |
+| runtime failures, render loops, startup issues, browser/API mismatch | `rssmaster-debug-playbook` | `rssmaster-release-incident-response` for release regressions | reproduce first, then targeted fix |
+| API endpoints, payloads, filters, envelopes, query semantics | `rssmaster-api-contract-guardian` | feature skill for the product area | API contract tests required |
+| UI regression verification and browser smoke | `rssmaster-playwright-e2e` | `rssmaster-design-system-polish` for layout work | Playwright/browser evidence required |
+| release confidence and handoff | `rssmaster-release-qa` | `rssmaster-release-incident-response` when failures appear | full gate or targeted release gate |
+| scope, backlog, prioritization, acceptance criteria | `rssmaster-product-backlog` | `rssmaster-linear-confluence` when external planning sync matters | docs/Linear/Confluence alignment |
+| ranking, novelty, dedupe, reranking, feedback | `rssmaster-semantic-ranking-v4` | `rssmaster-api-contract-guardian` | API tests plus ranking smoke |
+| source onboarding, autodiscovery, OPML, source health | `rssmaster-feed-ops-and-health` | `rssmaster-playwright-e2e` for `/sources` UI | API and browser verification |
+| spacing, responsive layout, focus/hover states, visual polish | `rssmaster-design-system-polish` | `rssmaster-reader-ux` for reader surfaces | layout/browser verification |
+| Polish UI copy, terminology, validation text | `rssmaster-localization-pl` | surface-specific skill | text review plus affected UI smoke |
+| release regression, smoke failure, rollback judgment | `rssmaster-release-incident-response` | `rssmaster-release-qa` | failure evidence and recovery plan |
+| EPUB, Kindle compatibility, digest artifact quality | `rssmaster-epub-kindle-quality` | `rssmaster-api-contract-guardian` if endpoints change | digest/build artifact verification |
+| highlights, notes, tags, collections, retrieval | `rssmaster-knowledge-capture-retrieval` | `rssmaster-reader-ux` and API contract when reader-visible | cross-layer verification |
+| saved searches, monitored searches, routing rules, automation | `rssmaster-rules-monitored-searches` | `rssmaster-api-contract-guardian` | rules tests and user-flow smoke |
+| Linear/Confluence alignment, ticket/spec sync | `rssmaster-linear-confluence` | `rssmaster-product-backlog` | external sync report required when mutated |
 
-If a relevant skill is not used, state why briefly in your working notes or final review when it matters to decision quality.
+Skill freshness check:
+
+- When auditing or changing operating instructions, compare available `C:\Users\user\.codex\skills\rssmaster-*` directories against this section.
+- If a relevant skill exists but is missing from this matrix, update this section and `.codex/config.toml` together.
+- If a relevant skill is not used, state why briefly in working notes or the final review when it matters to decision quality.

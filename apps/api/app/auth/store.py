@@ -6,7 +6,7 @@ import shutil
 import sqlite3
 from uuid import uuid4
 
-from app.db.initializer import ensure_database
+from app.db.initializer import REQUIRED_TABLES, SCHEMA_FILE, SCHEMA_NAME, SCHEMA_VERSION
 from app.errors import ApiError
 
 from .security import create_session_token, hash_password, hash_session_token, normalize_username, verify_password
@@ -109,7 +109,7 @@ class AccountsStore:
                 if is_first_account and claim_legacy_workspace:
                     self._clone_legacy_workspace(workspace_database_path)
                 else:
-                    ensure_database(workspace_database_path)
+                    self._ensure_workspace_database(workspace_database_path)
 
                 connection.execute(
                     """
@@ -299,7 +299,7 @@ class AccountsStore:
     def _clone_legacy_workspace(self, target_path: Path) -> None:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.legacy_workspace_path.exists():
-            ensure_database(target_path)
+            self._ensure_workspace_database(target_path)
             return
 
         if target_path.exists():
@@ -320,3 +320,32 @@ class AccountsStore:
             target_sidecar = Path(f"{target_path}{suffix}")
             if legacy_sidecar.exists() and not target_sidecar.exists():
                 shutil.copy2(legacy_sidecar, target_sidecar)
+
+    def _ensure_workspace_database(self, database_path: Path) -> None:
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with sqlite3.connect(database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON;")
+            connection.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO schema_migrations (version, name)
+                VALUES (?, ?)
+                """,
+                (SCHEMA_VERSION, SCHEMA_NAME),
+            )
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
+            connection.commit()
+            rows = connection.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                """
+            ).fetchall()
+
+        tables = {row["name"] for row in rows}
+        missing_tables = sorted(REQUIRED_TABLES - tables)
+        if missing_tables:
+            raise RuntimeError(f"SQLite schema initialization is incomplete. Missing tables: {missing_tables}")

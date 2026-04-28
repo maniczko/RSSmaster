@@ -14,6 +14,22 @@ rssmaster now uses a local account control database plus one SQLite workspace pe
 
 ## Tables
 
+### `accounts`
+
+Stores local operator identities in `data/rssmaster_accounts.db` by default.
+
+- Needed for: local auth, first-account workspace claim, account-scoped workspace routing
+- Important fields: `normalized_username`, `password_hash`, `workspace_database_path`, `last_login_at`
+- Key guarantee: passwords are stored as derived hashes, and each account points at exactly one local workspace database
+
+### `sessions`
+
+Stores revocable login sessions in the local account control database.
+
+- Needed for: cookie-backed local sessions and logout
+- Important fields: `account_id`, `token_hash`, `expires_at`, `revoked_at`
+- Key guarantee: raw session tokens stay in the browser cookie only; SQLite stores token hashes and revocation state
+
 ### `channels`
 
 Stores subscribed sources and operational feed metadata.
@@ -75,3 +91,9 @@ Stores send attempts and outcomes for Kindle or other delivery targets.
 - Schema version is tracked in both `schema_migrations` and SQLite `user_version`
 - `scripts/init_db.py` is the entry point for initializing the local database
 - Later migrations should be additive and versioned rather than replacing this file in place
+
+## Auth smoke isolation
+
+- `npm run check:auth` creates temporary auth databases only under `output/playwright/auth-smoke/`.
+- The smoke overrides `RSSMASTER_DATABASE_PATH`, `RSSMASTER_ACCOUNTS_DATABASE_PATH`, and `RSSMASTER_ACCOUNTS_WORKSPACE_DIR`.
+- The smoke must not read from or write to real operator data under `data/`.

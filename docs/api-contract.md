@@ -44,6 +44,7 @@ All non-2xx responses return the same shape:
 - Authentication is local-only and cookie-based.
 - Before any local account exists, the runtime remains open for the legacy single-workspace flow.
 - After the first local account is created, `/api/v1/*` requires a valid local session except `/api/v1/auth/*`.
+- Browser `OPTIONS` preflight requests remain unauthenticated so cookie-backed cross-origin localhost calls can reach the real guarded request.
 - Health and startup diagnostics stay unauthenticated.
 
 ### `GET /api/v1/auth/session`

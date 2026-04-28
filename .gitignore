@@ -13,6 +13,7 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.sqlite3
+data/accounts/
 data/digests/
 output/
 dist/

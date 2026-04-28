@@ -24,6 +24,7 @@ READER_QA_PATH = LOG_DIR / "reader-qa.json"
 READER_SMOKE_PATH = LOG_DIR / "reader-rich-smoke.json"
 CAPTURE_SMOKE_PATH = LOG_DIR / "capture-smoke.json"
 CONTINUITY_SMOKE_PATH = LOG_DIR / "continuity-smoke.json"
+LAYOUT_QA_PATH = LOG_DIR / "layout-qa.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -110,6 +111,7 @@ def collect_evidence() -> dict[str, Any]:
         "reader_smoke": collect_json_artifact(READER_SMOKE_PATH),
         "capture_smoke": collect_json_artifact(CAPTURE_SMOKE_PATH),
         "continuity_smoke": collect_json_artifact(CONTINUITY_SMOKE_PATH),
+        "layout_qa": collect_json_artifact(LAYOUT_QA_PATH),
     }
 
 
@@ -131,6 +133,7 @@ def validate_artifacts(evidence: dict[str, Any], flow_statuses: dict[str, str]) 
     add_check("check:contract flow", flow_statuses.get("contract") == "passed", {"status": flow_statuses.get("contract")})
     add_check("qa:sources flow", flow_statuses.get("sources") == "passed", {"status": flow_statuses.get("sources")})
     add_check("qa:reader flow", flow_statuses.get("reader") == "passed", {"status": flow_statuses.get("reader")})
+    add_check("check:layout flow", flow_statuses.get("layout") == "passed", {"status": flow_statuses.get("layout")})
     add_check("check:capture flow", flow_statuses.get("capture") == "passed", {"status": flow_statuses.get("capture")})
     add_check("check:continuity flow", flow_statuses.get("continuity") == "passed", {"status": flow_statuses.get("continuity")})
 
@@ -185,6 +188,23 @@ def validate_artifacts(evidence: dict[str, Any], flow_statuses: dict[str, str]) 
         )
     else:
         add_check("reader browser smoke evidence", False, {"evidence": str(READER_SMOKE_PATH)})
+
+    layout_qa = evidence.get("layout_qa")
+    if not _is_artifact_missing(layout_qa):
+        release_signal = layout_qa.get("releaseSignal")
+        add_check(
+            "layout responsive QA evidence",
+            isinstance(release_signal, dict)
+            and bool(release_signal.get("browserSweepGreen"))
+            and bool(release_signal.get("visualProofGreen"))
+            and bool(release_signal.get("clickthroughGreen"))
+            and not layout_qa.get("problemRoutes")
+            and not layout_qa.get("problemStates")
+            and not layout_qa.get("failedClicks"),
+            {"evidence": str(LAYOUT_QA_PATH)},
+        )
+    else:
+        add_check("layout responsive QA evidence", False, {"evidence": str(LAYOUT_QA_PATH)})
 
     sources_qa = evidence.get("sources_qa")
     if not _is_artifact_missing(sources_qa):
@@ -261,6 +281,7 @@ def build_confidence_levels(evidence: dict[str, Any], flow_statuses: dict[str, s
     fallback_runtime_green = (
         flow_statuses.get("sources") == "passed"
         and flow_statuses.get("reader") == "passed"
+        and flow_statuses.get("layout") == "passed"
         and flow_statuses.get("capture") == "passed"
         and flow_statuses.get("continuity") == "passed"
     )
@@ -285,6 +306,7 @@ def build_confidence_levels(evidence: dict[str, Any], flow_statuses: dict[str, s
     return {
         "contract_green": contract_green,
         "fallback_runtime_green": fallback_runtime_green,
+        "layout_green": flow_statuses.get("layout") == "passed",
         "canonical_cold_boot_green": False,
         "canonical_cold_boot_reason": "qa:app does not run qa:sources -- --cold-start; use that command separately",
         "canonical_ports_clear": canonical_ports_clear,
@@ -296,8 +318,13 @@ def coverage_map() -> list[dict[str, Any]]:
     return [
         {
             "flow": "boot runtime",
-            "covered_by": ["check:ports", "qa:sources", "qa:reader"],
+            "covered_by": ["check:ports", "qa:sources", "qa:reader", "check:layout"],
             "notes": "qa:sources and qa:reader prove fallback runtime boot; canonical cold boot still needs qa:sources -- --cold-start",
+        },
+        {
+            "flow": "responsive shell and primary navigation",
+            "covered_by": ["check:layout"],
+            "notes": "desktop, tablet, mobile representative routes, mobile drawer states, and primary nav clickthrough are verified in scripts/check_layout_ui.mjs",
         },
         {
             "flow": "add source and sync",
@@ -351,6 +378,7 @@ def main() -> int:
     try:
         flows["ports"] = run_flow("check:ports", [npm_bin, "run", "check:ports"], env)
         flows["contract"] = run_flow("check:contract", [npm_bin, "run", "check:contract"], env)
+        flows["layout"] = run_flow("check:layout", [npm_bin, "run", "check:layout"], env)
         flows["sources"] = run_flow("qa:sources", [sys.executable, str(ROOT_DIR / "scripts" / "run_sources_qa.py")], env)
         flows["reader"] = run_flow("qa:reader", [sys.executable, str(ROOT_DIR / "scripts" / "run_reader_qa.py")], env)
         capture_env = resolve_runtime_urls(env, args.web_port, args.api_port)
@@ -365,6 +393,7 @@ def main() -> int:
             if flows["contract"]["status"] == "passed"
             and flows["sources"]["status"] == "passed"
             and flows["reader"]["status"] == "passed"
+            and flows["layout"]["status"] == "passed"
             and flows["capture"]["status"] == "passed"
             and flows["continuity"]["status"] == "passed"
             and validations["status"] == "passed"
@@ -387,6 +416,7 @@ def main() -> int:
                 "reader_smoke": str(READER_SMOKE_PATH),
                 "capture_smoke": str(CAPTURE_SMOKE_PATH),
                 "continuity_smoke": str(CONTINUITY_SMOKE_PATH),
+                "layout_qa": str(LAYOUT_QA_PATH),
             },
         }
         write_json(APP_EVIDENCE_PATH, summary)
@@ -408,6 +438,8 @@ def main() -> int:
                 "reader_qa": str(READER_QA_PATH),
                 "reader_smoke": str(READER_SMOKE_PATH),
                 "capture_smoke": str(CAPTURE_SMOKE_PATH),
+                "continuity_smoke": str(CONTINUITY_SMOKE_PATH),
+                "layout_qa": str(LAYOUT_QA_PATH),
             },
         }
         write_json(APP_EVIDENCE_PATH, summary)

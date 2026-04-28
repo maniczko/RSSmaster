@@ -1,37 +1,112 @@
 model = "gpt-5.4"
 model_reasoning_effort = "xhigh"
 approval_policy = "never"
+sandbox_mode = "workspace-write"
 project_doc_fallback_filenames = ["AGENTS.md"]
 project_root_markers = [".git", "package.json", "AGENTS.md"]
 
 developer_instructions = """
 RSSmaster project defaults:
 
-- Preferred verification commands:
-  - UI, layout, reader, search: `npm run build`, `npm run test:unit:web`, then browser verification
-  - API, contract, ranking, source ops: `python scripts/test_api_unit.py`, `python scripts/check_api.py`
-  - Startup, diagnostics, config: `python scripts/check_health.py`
-  - Release confidence: `npm run check`, `npm run health`
-- Prefer RSSmaster skills when relevant:
-  - `rssmaster-reader-ux`
-  - `rssmaster-debug-playbook`
-  - `rssmaster-api-contract-guardian`
-  - `rssmaster-playwright-e2e`
-  - `rssmaster-release-qa`
-  - `rssmaster-semantic-ranking-v4`
-  - `rssmaster-feed-ops-and-health`
-  - `rssmaster-design-system-polish`
-  - `rssmaster-localization-pl`
-  - `rssmaster-release-incident-response`
-- Do not edit SQLite files under `data/` by hand.
-- Do not commit runtime artifacts, logs, `.next/`, `output/`, or generated build junk.
-- Keep the default local ports at `127.0.0.1:3000` and `127.0.0.1:8000` unless the task explicitly changes runtime docs and verification.
-- Update docs when API, orchestration, storage, startup, or operator behavior changes.
+1. Operating contract
+- Treat `AGENTS.md` as the repo-local operating guide and read the smallest relevant docs before non-trivial changes.
+- Work from the repository root `C:/Users/user/Desktop/RSSmaster` unless a command explicitly needs another working directory.
+- Prefer small, reviewable vertical slices. Do not mix unrelated UI polish, API changes, migrations, and dependency upgrades in one change.
+- Protect user work: inspect `git status --short` before edits, never revert unrelated local changes, and call out dirty-worktree risks.
+- Before editing a file that is already modified, inspect `git diff -- <file>` and stop if the local changes conflict with the task.
+- Do not create isolated fixes that bypass the documented API, storage, orchestration, or local-first architecture.
+- Treat repo docs and config as UTF-8. Do not persist mojibake in Polish headings or final report text.
+
+2. Product priorities
+- Optimize the product for reader-first RSS workflows: add source -> sync -> read cleaned article -> save/archive/digest -> retrieve later.
+- Preserve the local-first model, deterministic digest semantics, observable sync/delivery history, and stable `/api/v1` envelopes.
+- Keep `Sources / Add` task-focused and lightweight; move operator/backoffice source controls to manage/backoffice surfaces.
+- Keep the UI calm, flat, responsive, accessible, and keyboard-friendly. Visible layout changes require browser verification.
+
+3. Preferred verification commands
+- Docs-only: direct doc review against current scripts and repo behavior.
+- Fast verification should prefer targeted, shorter gates over the long aggregate harness.
+- Frontend UI/layout/reader/search: `npm run build`, `npm run test:unit:web`, then the relevant browser smoke (`npm run check:layout`, `npm run check:sources`, `npm run check:reader`, or manual browser verification).
+- API/contract/ranking/source ops: `python scripts/test_api_unit.py`, `python scripts/check_api.py`.
+- Startup/diagnostics/config/runtime ports: `python scripts/check_health.py`, `npm run check:ports`.
+- Capture/continuity flows: `npm run check:capture`, `npm run check:continuity`.
+- Full release confidence: `npm run check`, `npm run health`, sequential browser checks (`npm run check:layout`, `npm run check:sources`, `npm run check:reader`, `npm run check:capture`, `npm run check:continuity`), plus `npm run qa:sources`, `npm run qa:reader`, or `npm run qa:sources -- --cold-start` when source, reader, or canonical boot confidence is claimed.
+- `npm run qa:app` is an aggregate release-confidence report, not the default fast loop. It may timeout or flake even when component checks pass sequentially.
+- If `npm run qa:app` fails by timeout or flakiness, inspect `output/playwright/app-qa.json`, run/report component gates sequentially, and distinguish harness instability from confirmed product regressions.
+- If a relevant verification is skipped, final reports must state exactly why.
+
+4. Skill policy
+- Treat `AGENTS.md` as the full task type -> skill -> docs -> tests -> smoke -> external sync matrix.
+- Use `rssmaster-reader-ux` for reader, feed, search, triage, route state, and layout work.
+- Use `rssmaster-debug-playbook` for render loops, runtime failures, dev-server issues, browser/API mismatches, and console errors.
+- Use `rssmaster-api-contract-guardian` for endpoint, payload, filter, query, envelope, or frontend-backend contract changes.
+- Use `rssmaster-playwright-e2e` or browser automation for user-visible flow verification.
+- Use `rssmaster-release-qa` before calling work release-ready.
+- Use `rssmaster-product-backlog` when shaping scope, sequencing, acceptance criteria, or tradeoffs.
+- Use `rssmaster-semantic-ranking-v4` for ranking, novelty, dedupe, reranking, and feedback-driven recommendations.
+- Use `rssmaster-feed-ops-and-health` for source onboarding, feed discovery, OPML, source health, and noisy-feed operations.
+- Use `rssmaster-epub-kindle-quality` for digest EPUB output, Kindle compatibility, cleaned markup, typography, and delivery artifacts.
+- Use `rssmaster-knowledge-capture-retrieval` for highlights, notes, tags, collections, review queues, and retrieval over captured knowledge.
+- Use `rssmaster-rules-monitored-searches` for saved searches, monitored searches, routing rules, and auditable automation.
+- Use `rssmaster-linear-confluence` when scope, acceptance criteria, roadmap, Confluence specs, Linear tickets, or external delivery status must stay aligned.
+- Use `rssmaster-design-system-polish` for spacing, responsive polish, hover/focus states, button rhythm, and visual QA.
+- Use `rssmaster-localization-pl` for Polish UI copy, terminology, validation, and product-language consistency.
+- Use `rssmaster-release-incident-response` for release regressions, smoke failures, rollback judgment, and incident triage.
+
+5. Guardrails
+- Do not edit `.env`, real secrets, `.venv/`, `node_modules/`, `.next/`, `output/`, generated artifacts, or SQLite files under `data/` by hand.
+- Do not commit runtime logs such as `.codex-web.stdout.log`, `.codex-web.stderr.log`, Playwright evidence, build caches, or local DB files.
+- Keep default ports at `127.0.0.1:3000` and `127.0.0.1:8000` unless the task explicitly changes runtime docs and verification.
+- Do not change `/api/v1` shape, error envelopes, schema-sensitive persistence, or orchestration states without docs and contract tests.
+- For destructive or data-risky actions, stop and ask the user.
+
+6. Documentation policy
+- Update docs in the same change when API contract, storage, orchestration, startup, release gates, or operator workflow changes.
+- Update Linear/Confluence when scope, acceptance criteria, roadmap, rollout order, or tracked delivery status changes and connectors are available.
+- Use read-only Linear/Confluence/GitHub lookup without asking when it materially improves context. Create, update, move, comment, stage, commit, push, or open PRs only when the user asked for that action, supplied a tracked ticket/spec, or the current change explicitly implements an existing tracked item.
+- When external systems are updated, report the target, action, link or id, and anything intentionally left untouched.
+- If docs and code disagree, do not guess. Either align them in the same change or report the conflict clearly.
+
+7. Browser and UI verification
+- For visible UI changes, verify the affected route in a real browser or Playwright harness.
+- Check console/page errors, overflow, focus-visible states, hover/pointer affordances, mobile/tablet behavior, and route continuity.
+- For visually important changes, prefer screenshots under `output/` as local evidence, but never commit that evidence unless explicitly requested.
+
+8. Final reporting
+- End every task with the exact sections required by `AGENTS.md`: Diagnoza, Root cause, Plan, Zmienione pliki, Testy, Ryzyka, Co jeszcze nie działa.
+- Distinguish verified facts, strong inferences, and assumptions.
+- List every modified file and every command executed with passed/failed status.
+- Never invent verification, hide failed commands, or claim a root cause is confirmed when it is only suspected.
 """
 
 [mcp_servers.playwright]
 command = "npx"
-args = ["@playwright/mcp@latest"]
+args = ["@playwright/mcp@0.0.70"]
+cwd = "C:/Users/user/Desktop/RSSmaster"
 
 [features]
 multi_agent = true
+
+[profiles.fast]
+model = "gpt-5.4-mini"
+model_reasoning_effort = "medium"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
+[profiles.release]
+model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
+[profiles.readonly_audit]
+model = "gpt-5.4"
+model_reasoning_effort = "medium"
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+[profiles.safe_interactive]
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"

@@ -120,6 +120,80 @@ async function assertWebReachable(url) {
   }
 }
 
+async function waitForAppReady(page, routePath) {
+  const isCaptureRoute = routePath === "/capture";
+  const probeReady = (timeout) =>
+    page
+      .waitForFunction(
+        ({ isCaptureRoute }) => {
+          const bodyText = document.body?.textContent ?? "";
+          const isSessionLoading =
+            bodyText.includes("Sprawdzam lokalna sesje") ||
+            bodyText.includes("Otwieram odpowiednia baze");
+
+          if (isSessionLoading) {
+            return false;
+          }
+
+          if (isCaptureRoute) {
+            return Boolean(document.querySelector(".capture-page") || document.querySelector("h1"));
+          }
+
+          return Boolean(document.querySelector(".app-shell") && document.querySelector("main"));
+        },
+        { isCaptureRoute },
+        { timeout },
+      )
+      .then(() => true)
+      .catch(() => false);
+
+  let isReady = await probeReady(8000);
+  if (!isReady) {
+    await page
+      .reload({
+        timeout: 60000,
+        waitUntil: "domcontentloaded",
+      })
+      .catch(() => {});
+    isReady = await probeReady(12000);
+  }
+
+  if (!isReady) {
+    await page
+      .goto(page.url(), {
+        timeout: 60000,
+        waitUntil: "domcontentloaded",
+      })
+      .catch(() => {});
+    isReady = await probeReady(20000);
+  }
+
+  await page.waitForTimeout(300);
+  if (isReady) {
+    return true;
+  }
+
+  return page.evaluate(
+    ({ isCaptureRoute: isCaptureRouteForFinalCheck }) => {
+      const bodyText = document.body?.textContent ?? "";
+      const isSessionLoading =
+        bodyText.includes("Sprawdzam lokalna sesje") ||
+        bodyText.includes("Otwieram odpowiednia baze");
+
+      if (isSessionLoading) {
+        return false;
+      }
+
+      if (isCaptureRouteForFinalCheck) {
+        return Boolean(document.querySelector(".capture-page") || document.querySelector("h1"));
+      }
+
+      return Boolean(document.querySelector(".app-shell") && document.querySelector("main"));
+    },
+    { isCaptureRoute },
+  );
+}
+
 async function collectRouteMetrics(page) {
   return page.evaluate(() => {
     const h1 = document.querySelector("h1")?.textContent?.trim() || null;
@@ -158,6 +232,26 @@ async function collectRouteMetrics(page) {
   });
 }
 
+async function prepareForScreenshot(page) {
+  await page.evaluate(() => {
+    const activeElement = document.activeElement;
+
+    if (
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement ||
+      activeElement instanceof HTMLSelectElement
+    ) {
+      activeElement.blur();
+      return;
+    }
+
+    if (activeElement instanceof HTMLElement && activeElement.isContentEditable) {
+      activeElement.blur();
+    }
+  });
+  await page.waitForTimeout(50);
+}
+
 async function scanRoute(page, route, viewportId, baseUrl, consoleBucket, pageErrorBucket) {
   const beforeConsole = consoleBucket.length;
   const beforePageErrors = pageErrorBucket.length;
@@ -166,10 +260,11 @@ async function scanRoute(page, route, viewportId, baseUrl, consoleBucket, pageEr
     timeout: 60000,
     waitUntil: "domcontentloaded",
   });
-  await page.waitForTimeout(1200);
+  const ready = await waitForAppReady(page, route.path);
   const metrics = await collectRouteMetrics(page);
 
   const screenshotPath = path.join(OUTPUT_DIR, `page-audit-${route.id}-${viewportId}.png`);
+  await prepareForScreenshot(page);
   await page.screenshot({ path: screenshotPath, fullPage: true });
 
   return {
@@ -177,6 +272,7 @@ async function scanRoute(page, route, viewportId, baseUrl, consoleBucket, pageEr
     route: route.path,
     viewport: viewportId,
     finalUrl: page.url(),
+    ready,
     screenshot: screenshotPath,
     consoleErrors: consoleBucket.slice(beforeConsole),
     pageErrors: pageErrorBucket.slice(beforePageErrors),
@@ -192,11 +288,11 @@ async function captureRepresentativeState(page, proof, baseUrl, consoleBucket, p
     timeout: 60000,
     waitUntil: "domcontentloaded",
   });
-  await page.waitForTimeout(1200);
+  const ready = await waitForAppReady(page, proof.route);
 
-  let interactionStatus = "missing";
+  let interactionStatus = ready ? "missing" : "not-ready";
   const button = page.locator("button").filter({ hasText: proof.toggleText }).first();
-  if (await button.count()) {
+  if (ready && (await button.count())) {
     try {
       await button.click({ timeout: 5000 });
       await page.waitForTimeout(900);
@@ -208,6 +304,7 @@ async function captureRepresentativeState(page, proof, baseUrl, consoleBucket, p
 
   const metrics = await collectRouteMetrics(page);
   const screenshotPath = path.join(OUTPUT_DIR, `page-audit-${proof.id}.png`);
+  await prepareForScreenshot(page);
   await page.screenshot({ path: screenshotPath, fullPage: true });
 
   return {
@@ -215,6 +312,7 @@ async function captureRepresentativeState(page, proof, baseUrl, consoleBucket, p
     route: proof.route,
     viewport: proof.viewport.id,
     finalUrl: page.url(),
+    ready,
     screenshot: screenshotPath,
     interactionLabel: proof.interactionLabel,
     interactionTarget: proof.toggleText,
@@ -252,18 +350,20 @@ async function runClickthrough(page, baseUrl) {
 
   for (const target of clickTargets) {
     let status = "missing";
+    const startRoute = target.text === "Czytaj" ? "/discover" : "/read/inbox";
 
     try {
-      await page.goto(`${baseUrl}/read/inbox`, {
+      await page.goto(`${baseUrl}${startRoute}`, {
         timeout: 60000,
         waitUntil: "domcontentloaded",
       });
-      await page.waitForTimeout(1200);
+      await waitForAppReady(page, startRoute);
 
       const button = await findVisibleButton(page, target.text);
       if (button) {
         await button.click({ timeout: 5000 });
-        await page.waitForTimeout(900);
+        await page.waitForURL((url) => url.pathname.includes(target.expect), { timeout: 5000 }).catch(() => {});
+        await waitForAppReady(page, new URL(page.url()).pathname);
         status = page.url().includes(target.expect) ? "passed" : `unexpected:${page.url()}`;
       }
     } catch (error) {
@@ -396,10 +496,11 @@ async function main() {
 
   const allRoutes = [...desktopRoutes, ...responsiveRoutes];
   const problemRoutes = allRoutes.filter(
-    (route) => route.overflow || route.consoleErrors.length > 0 || route.pageErrors.length > 0,
+    (route) => !route.ready || route.overflow || route.consoleErrors.length > 0 || route.pageErrors.length > 0,
   );
   const problemStates = representativeStates.filter(
     (state) =>
+      !state.ready ||
       state.interactionStatus !== "passed" ||
       state.overflow ||
       state.consoleErrors.length > 0 ||

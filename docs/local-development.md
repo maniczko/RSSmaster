@@ -26,6 +26,7 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - The first created account can claim the current shared workspace by cloning `data/rssmaster.db` into a per-account database under `data/accounts/`.
 - In the open no-account mode, the UI entrypoint for that flow lives under `Ustawienia -> Sesja operatora -> Utworz pierwsze konto`.
 - The accounts control database lives at `data/rssmaster_accounts.db` by default.
+- `npm run check:auth` boots an isolated browser smoke with account and workspace paths under `output/playwright/auth-smoke/`; it must not touch real `data/`.
 - Relevant overrides:
   - `RSSMASTER_ACCOUNTS_DATABASE_PATH`
   - `RSSMASTER_ACCOUNTS_WORKSPACE_DIR`
@@ -61,7 +62,8 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 ## Fast QA paths
 
 - Run `npm run check:ports` first when you suspect a stale or foreign process is blocking `3000` or `8000`.
-- Run `npm run check:contract` when you want to prove the API contract and core happy-path semantics without relying on a live runtime.
+- Run `npm run check:contract` when you want to prove the API contract and core happy-path semantics without relying on a live runtime; it uses isolated workspace and account databases under a temporary directory.
+- Run `npm run check:auth` after changes to local account creation, login, logout, session cookies, auth-required guards, or account-scoped storage routing.
 - Run `npm run qa:sources -- --cold-start` to prove a clean boot on the default local ports (`127.0.0.1:3000` and `127.0.0.1:8000`) and then run API smoke, health smoke, and browser smoke in one pass.
 - The cold-start harness stops only recognized RSSmaster runtimes from this repo on canonical and fallback ports such as `3000/3100` and `8000/8100`; if another process owns a default port, it fails instead of switching to a fallback port.
 - `npm run qa:sources` without `--cold-start` is the fallback-runtime gate for `/sources`; it can reuse a healthy runtime on fallback ports if the default ports are blocked.
@@ -78,6 +80,7 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - The fallback `/sources` harness writes its summary to `output/playwright/sources-qa.json`.
 - The cold-start harness writes canonical boot evidence to `output/playwright/sources-cold-boot.json`.
 - The browser smoke evidence lives in `output/playwright/sources-a11y-smoke.json`.
+- The auth browser smoke writes isolated DBs, runtime logs, JSON evidence, and a screenshot under `output/playwright/auth-smoke/`.
 - The capture browser smoke writes evidence to `output/playwright/capture-smoke.json` and `output/playwright/capture-smoke.png`.
 - The continuity browser smoke writes evidence to `output/playwright/continuity-smoke.json` and `output/playwright/continuity-smoke.png`.
 - The reader browser smoke writes evidence to `output/playwright/reader-rich-smoke.json` and `output/playwright/reader-rich-smoke.png`.
@@ -96,9 +99,11 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - Check `.env` first when ports or URLs do not match the expected local runtime.
 - If `npm run health` times out on `http://127.0.0.1:8000/health`, run `npm run check:ports` before blaming the API code. Treat `blocked_non_rssmaster`, `stale_rssmaster`, `refused`, and `timeout` as different operator actions.
 - When a change touches `/sources`, run `npm run check:sources` after the normal build/unit checks to cover keyboard reachability, preview race guards, calm expected preview failures, multiple candidates, and backoffice focus continuity.
-- When a change touches `/capture`, manifest share-target behavior, bookmarklet capture, or outside-app read-later handoff, run `npm run check:capture` after the normal build/unit checks.
+- When a change touches local auth, run `npm run check:auth` after the normal build/unit checks to cover first-account registration, protected app open, logout, login, invalid password feedback, and the 401 auth-required guard.
+- When a change touches `/capture`, manifest share-target behavior, bookmarklet capture, or outside-app read-later handoff, run `npm run check:capture` after the normal build/unit checks; if the current runtime requires auth and no session is available, the smoke boots an isolated test runtime instead of mutating real `data/`.
 - When a change touches continuity bundles, manual portability, or reader session restore across runtimes, run `npm run check:continuity` after the normal build/unit checks.
 - When a change touches extraction, capture, or in-app reading, run `npm run check:reader` after the normal build/unit checks.
+- When a change touches the reader decision loop, run `npm run check:reader:interaction`; it also falls back to an isolated test runtime when the current runtime is auth-guarded.
 - When a change touches shell layout, spacing, responsive behavior, or page-level visual polish, run `npm run check:layout` after the normal build/unit checks.
 - When a change touches extraction, capture, or in-app reading and you want a single regression gate, run `npm run qa:reader`.
 - If `127.0.0.1:3000` refuses the connection during `/sources` work, prefer `npm run check:ports` first, then either `npm run qa:sources -- --cold-start` for canonical proof or `python scripts/run_sources_qa.py --keep-running` for a fallback-runtime session.

@@ -34,6 +34,12 @@ type CaptureErrorEnvelope = {
   };
 };
 
+type CaptureAuthSessionPayload = {
+  has_accounts: boolean;
+  auth_required: boolean;
+  session: unknown | null;
+};
+
 export function CaptureStudio({
   apiBaseUrl,
   initialNote = "",
@@ -42,10 +48,12 @@ export function CaptureStudio({
 }: CaptureStudioProps) {
   const router = useRouter();
   const bookmarkletLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [url, setUrl] = useState(initialUrl);
   const [title, setTitle] = useState(initialTitle);
   const [note, setNote] = useState(initialNote);
   const [busy, setBusy] = useState(false);
+  const [authState, setAuthState] = useState<"checking" | "ready" | "auth-required">("checking");
   const [captureResult, setCaptureResult] = useState<{ itemId: string; title: string } | null>(null);
   const [feedback, setFeedback] = useState<{ tone: "idle" | "success" | "error"; title: string; detail: string } | null>(null);
 
@@ -56,9 +64,57 @@ export function CaptureStudio({
     bookmarkletLinkRef.current.setAttribute("href", buildCaptureBookmarklet(window.location.origin));
   }, []);
 
+  useEffect(() => {
+    if (initialUrl.trim()) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      urlInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [initialUrl]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadCaptureAuthState() {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/v1/auth/session`, {
+          credentials: "include",
+          headers: {
+            Accept: "application/json",
+          },
+        });
+        const payload = (await response.json()) as CaptureAuthSessionPayload;
+        if (!active) {
+          return;
+        }
+        setAuthState(payload.auth_required && !payload.session ? "auth-required" : "ready");
+      } catch {
+        if (active) {
+          setAuthState("ready");
+        }
+      }
+    }
+
+    void loadCaptureAuthState();
+    return () => {
+      active = false;
+    };
+  }, [apiBaseUrl]);
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!url.trim()) {
+      return;
+    }
+
+    if (authState === "auth-required") {
+      setFeedback({
+        tone: "error",
+        title: "Najpierw zaloguj się do RSSmastera",
+        detail: "Capture zapisuje linki do Twojej lokalnej biblioteki. Otwórz logowanie w głównej aplikacji, a potem wróć do tego formularza.",
+      });
       return;
     }
 
@@ -82,26 +138,27 @@ export function CaptureStudio({
       const payload = ((await response.json()) as CapturePayload | CaptureErrorEnvelope) ?? {};
       if (!response.ok || !("item" in payload) || !payload.item) {
         if (response.status === 401) {
-          throw new Error("Zaloguj sie w glownej aplikacji RSSmaster, aby zapisac artykul do swojej biblioteki.");
+          setAuthState("auth-required");
+          throw new Error("Zaloguj się w głównej aplikacji RSSmaster, aby zapisać artykuł do swojej biblioteki.");
         }
         const message = "error" in payload ? payload.error?.message : undefined;
-        throw new Error(message ?? "Nie udalo sie zapisac artykulu do biblioteki.");
+        throw new Error(message ?? "Nie udało się zapisać artykułu do biblioteki.");
       }
 
       setCaptureResult({ itemId: payload.item.id, title: payload.item.title });
       setFeedback({
         tone: "success",
-        title: "Artykul jest juz w RSSmasterze",
+        title: "Artykuł jest już w RSSmasterze",
         detail: note.trim()
-          ? "Link trafil do zapisanej biblioteki, a notatka zostala zapisana przy artykule."
-          : "Link trafil do zapisanej biblioteki i jest gotowy do czytania w czystym widoku.",
+          ? "Link trafił do zapisanej biblioteki, a notatka została zapisana przy artykule."
+          : "Link trafił do zapisanej biblioteki i jest gotowy do czytania w czystym widoku.",
       });
     } catch (error) {
       setCaptureResult(null);
       setFeedback({
         tone: "error",
-        title: "Capture nie udal sie",
-        detail: error instanceof Error ? error.message : "Przegladarka nie dostala poprawnej odpowiedzi z API.",
+        title: "Capture nie udał się",
+        detail: error instanceof Error ? error.message : "Przeglądarka nie dostała poprawnej odpowiedzi z API.",
       });
     } finally {
       setBusy(false);
@@ -124,10 +181,10 @@ export function CaptureStudio({
             <CaptureIcon className="app-icon app-icon-xs" />
             Capture
           </span>
-          <h1>Zapisz artykul z dowolnej strony</h1>
+          <h1>Zapisz artykuł z dowolnej strony</h1>
           <p>
-            Wklej link i jednym ruchem wrzuc go do zapisanej biblioteki. Ten ekran jest tez gotowy pod bookmarklet i systemowe
-            udostepnianie.
+            Wklej link i jednym ruchem wrzuć go do zapisanej biblioteki. Ten ekran jest też gotowy pod bookmarklet i systemowe
+            udostępnianie.
           </p>
         </div>
 
@@ -136,24 +193,37 @@ export function CaptureStudio({
             <div className="capture-card-header">
               <div>
                 <strong>Szybki zapis</strong>
-                <span>Najkrotsza droga od strony w przegladarce do czystego czytnika RSSmastera.</span>
+                <span>Najkrótsza droga od strony w przeglądarce do czystego czytnika RSSmastera.</span>
               </div>
               <Link className="secondary-button" href="/sources">
                 <span className="button-with-icon">
                   <SourcesIcon className="app-icon button-inline-icon" />
-                  Dodawanie zrodel
+                  Dodawanie źródeł
                 </span>
               </Link>
             </div>
 
+            {authState === "auth-required" ? (
+              <div className="capture-feedback capture-feedback-error" role="status">
+                <strong>Logowanie jest wymagane</strong>
+                <p>Ten formularz zapisuje linki do Twojej lokalnej biblioteki. Zaloguj się w głównej aplikacji, a potem wróć do Capture.</p>
+                <div className="capture-feedback-actions">
+                  <Link className="action-button compact-button" href="/">
+                    Przejdź do logowania
+                  </Link>
+                </div>
+              </div>
+            ) : null}
+
             <form className="capture-form" onSubmit={handleSubmit}>
               <label className="capture-field">
-                <span>Adres artykulu</span>
+                <span>Adres artykułu</span>
                 <input
                   autoComplete="off"
-                  autoFocus
+                  name="captureUrl"
                   onChange={(event) => setUrl(event.target.value)}
                   placeholder="https://example.com/artykul"
+                  ref={urlInputRef}
                   required
                   value={url}
                 />
@@ -161,17 +231,29 @@ export function CaptureStudio({
 
               <div className="capture-field-grid">
                 <label className="capture-field">
-                  <span>Tytul opcjonalny</span>
-                  <input onChange={(event) => setTitle(event.target.value)} placeholder="Nadpisz tytul tylko, jesli potrzebujesz" value={title} />
+                  <span>Tytuł opcjonalny</span>
+                  <input
+                    autoComplete="off"
+                    name="captureTitle"
+                    onChange={(event) => setTitle(event.target.value)}
+                    placeholder="Nadpisz tytuł tylko, jeśli potrzebujesz"
+                    value={title}
+                  />
                 </label>
                 <label className="capture-field">
                   <span>Notatka opcjonalna</span>
-                  <input onChange={(event) => setNote(event.target.value)} placeholder="Dlaczego warto do tego wrocic" value={note} />
+                  <input
+                    autoComplete="off"
+                    name="captureNote"
+                    onChange={(event) => setNote(event.target.value)}
+                    placeholder="Dlaczego warto do tego wrócić"
+                    value={note}
+                  />
                 </label>
               </div>
 
               <div className="capture-actions">
-                <button className="action-button" disabled={!url.trim() || busy} type="submit">
+                <button className="action-button" disabled={!url.trim() || busy || authState === "auth-required"} type="submit">
                   <span className="button-with-icon">
                     <BookmarkIcon className="app-icon button-inline-icon" />
                     {busy ? "Zapisywanie..." : "Zapisz do biblioteki"}
@@ -208,7 +290,7 @@ export function CaptureStudio({
                     >
                       <span className="button-with-icon">
                         <ReaderIcon className="app-icon button-inline-icon" />
-                        Otworz zapisany artykul
+                        Otwórz zapisany artykuł
                       </span>
                     </button>
                     <button className="secondary-button" onClick={resetForm} type="button">
@@ -227,7 +309,7 @@ export function CaptureStudio({
             <div className="capture-card-header">
               <div>
                 <strong>Wejscia z zewnatrz</strong>
-                <span>To jest ten sam flow, ale gotowy na codzienny use-case poza glownym workspace.</span>
+                <span>To jest ten sam flow, ale gotowy na codzienny use-case poza głównym workspace.</span>
               </div>
             </div>
 
@@ -252,8 +334,8 @@ export function CaptureStudio({
                   <CaptureIcon className="app-icon app-icon-xs" />
                   Share target
                 </span>
-                <strong>Udostepnianie z telefonu lub przegladarki</strong>
-                <p>Po instalacji aplikacji system moze kierowac udostepniony link bezposrednio tutaj, z prefillowanym adresem i tytulem.</p>
+                <strong>Udostępnianie z telefonu lub przeglądarki</strong>
+                <p>Po instalacji aplikacji system może kierować udostępniony link bezpośrednio tutaj, z prefillowanym adresem i tytułem.</p>
               </div>
 
               <div className="capture-hint-card">
@@ -261,7 +343,7 @@ export function CaptureStudio({
                   <ReaderIcon className="app-icon app-icon-xs" />
                   Po zapisie
                 </span>
-                <strong>Artykul trafia prosto do zapisanych</strong>
+                <strong>Artykuł trafia prosto do zapisanych</strong>
                 <p>Capture ustawia wpis jako zapisany i gotowy do dalszego czytania, digestu albo anotacji.</p>
               </div>
             </div>

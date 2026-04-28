@@ -1,0 +1,324 @@
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--surface-base);
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-elevated);
+}
+
+.app-sidebar-backdrop {
+  display: none;
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: calc(100vh - 72px);
+}
+
+.app-shell-with-nav-rail .app-body {
+  grid-template-columns: 72px 268px minmax(0, 1fr);
+}
+
+.app-nav-rail {
+  position: sticky;
+  top: 73px;
+  align-self: start;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 1rem;
+  min-height: calc(100vh - 73px);
+  padding: 0.8rem 0.45rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: #174d96;
+  color: white;
+}
+
+.workspace-nav-rail {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 1rem;
+}
+
+.workspace-nav-rail-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #174d96;
+  font-weight: 900;
+}
+
+.workspace-nav-rail-brand-icon {
+  width: 1.02rem;
+  height: 1.02rem;
+}
+
+.workspace-nav-rail-links {
+  display: grid;
+  gap: 0.45rem;
+  align-content: start;
+}
+
+.workspace-nav-rail-link {
+  display: grid;
+  justify-items: center;
+  gap: 0.28rem;
+  width: 100%;
+  padding: 0.65rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  text-align: center;
+}
+
+.workspace-nav-rail-link:hover,
+.workspace-nav-rail-link-active {
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+}
+
+.workspace-nav-rail-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.workspace-nav-rail-glyph {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.workspace-nav-rail-text {
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.workspace-nav-rail-link strong {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.app-sidebar {
+  position: sticky;
+  top: 73px;
+  align-self: start;
+  display: grid;
+  gap: 0;
+  max-height: calc(100vh - 80px);
+  padding: 0;
+  border-right: 1px solid var(--line);
+  background: var(--surface-elevated);
+  overflow: auto;
+}
+
+.app-workspace {
+  min-width: 0;
+  padding: var(--shell-page-gap);
+}
+
+.workspace-appbar-shell {
+  display: grid;
+  gap: var(--surface-gap-tight);
+  padding: 0.75rem 1rem;
+}
+
+.workspace-appbar-flat {
+  display: grid;
+  grid-template-columns: auto minmax(320px, 1fr) auto;
+  gap: 0.9rem;
+  align-items: center;
+  padding: 0;
+}
+
+.workspace-appbar-feed-mode {
+  grid-template-columns: auto 1fr auto;
+}
+
+.workspace-appbar-leading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.workspace-source-skip-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 0.84rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workspace-source-skip-button:hover {
+  background: var(--surface-elevated);
+}
+
+.workspace-appbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.workspace-appbar-brand > div {
+  min-width: 0;
+}
+
+.app-shell-menu-button {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.7rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-elevated);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.workspace-appbar-mark,
+.app-sidebar-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 12px;
+  background: var(--accent);
+  color: white;
+  font-weight: 800;
+}
+
+.workspace-appbar-mark .app-icon {
+  width: 1.08rem;
+  height: 1.08rem;
+}
+
+.workspace-appbar-brand strong,
+.app-sidebar-brand strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.workspace-appbar-brand span,
+.app-sidebar-brand span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.workspace-appbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  justify-content: flex-end;
+}
+
+.account-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.account-status-compact {
+  justify-content: flex-end;
+}
+
+.account-status-compact .runtime-pill {
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-section-nav {
+  display: flex;
+  gap: 0.65rem;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+  scrollbar-width: none;
+}
+
+.workspace-section-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-section-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  min-width: 9rem;
+  min-height: 3rem;
+  padding: 0.72rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  text-align: left;
+}
+
+.workspace-section-link span {
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.workspace-section-link strong {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.workspace-section-link-active,
+.workspace-section-link:hover {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.app-header-search {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.app-header-search-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.app-header-search span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

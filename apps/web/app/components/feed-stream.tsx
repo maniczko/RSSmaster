@@ -21,11 +21,16 @@ type FeedStreamItem = {
 
 type FeedStreamProps = {
   items: FeedStreamItem[];
+  isLoading?: boolean;
   channelTitles: Record<string, string>;
   channelSiteUrls: Record<string, string | null>;
   activeItemId: string | null;
   busyItemId: string | null;
+  emptyActionLabel?: string | null;
+  emptyDescription?: string;
+  emptyTitle?: string;
   formatTimestamp: (value: string | null, fallback: string) => string;
+  onEmptyAction?: (() => void) | null;
   onSelect: (itemId: string) => void;
   onOpen: (itemId: string) => void;
   onToggleRead: (itemId: string) => void;
@@ -62,22 +67,46 @@ function FeedSourceMark({
 
 export function FeedStream({
   items,
+  isLoading = false,
   channelTitles,
   channelSiteUrls,
   activeItemId,
   busyItemId,
+  emptyActionLabel = null,
+  emptyDescription = "Zmien filtr, wyszukiwanie albo odswiez kolejke, aby zobaczyc nowe materialy do czytania.",
+  emptyTitle = "Brak artykulow w tym widoku",
   formatTimestamp,
+  onEmptyAction = null,
   onSelect,
   onOpen,
   onToggleRead,
   onToggleDigest,
   onToggleFavorite,
 }: FeedStreamProps) {
+  if (isLoading && items.length === 0) {
+    return (
+      <div className="reader-state-card">
+        <strong>Ladowanie kolejki czytnika</strong>
+        <p>Pobieram artykuly z biezacymi filtrami.</p>
+        <div className="reader-skeleton-list">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div className="reader-skeleton-row" key={index} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (items.length === 0) {
     return (
       <div className="feed-stream-empty">
-        <strong>Brak artykulow w tym widoku</strong>
-        <p>Zmien filtr, wyszukiwanie albo odswiez kolejke, aby zobaczyc nowe materialy do czytania.</p>
+        <strong>{emptyTitle}</strong>
+        <p>{emptyDescription}</p>
+        {emptyActionLabel && onEmptyAction ? (
+          <button className="mini-button mini-button-accent" onClick={onEmptyAction} type="button">
+            {emptyActionLabel}
+          </button>
+        ) : null}
       </div>
     );
   }
