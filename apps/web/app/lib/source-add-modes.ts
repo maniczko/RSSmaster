@@ -22,31 +22,31 @@ export const sourceAddModes: SourceAddModeDefinition[] = [
   {
     id: "website",
     label: "Strona",
-    description: "Wykryj RSS ze strony glownej albo domeny.",
+    description: "Wykryj RSS ze strony głównej albo domeny.",
     enabled: true,
   },
   {
     id: "web_feed",
     label: "RSS / Atom",
-    description: "Wklej bezposredni adres feedu.",
+    description: "Wklej bezpośredni adres feedu.",
     enabled: true,
   },
   {
     id: "track_changes",
-    label: "Sledzenie zmian",
+    label: "Śledzenie zmian",
     description: "Monitorowanie zmian poza klasycznym RSS.",
     enabled: false,
   },
   {
     id: "google_news",
     label: "Google News",
-    description: "Tematyczne feedy z agregatora wiadomosci.",
+    description: "Tematyczne feedy z agregatora wiadomości.",
     enabled: false,
   },
   {
     id: "bluesky",
     label: "Bluesky",
-    description: "Strumienie spolecznosciowe i custom feeds.",
+    description: "Strumienie społecznościowe i custom feeds.",
     enabled: false,
   },
   {
@@ -58,25 +58,25 @@ export const sourceAddModes: SourceAddModeDefinition[] = [
   {
     id: "telegram",
     label: "Telegram",
-    description: "Kanaly i wiadomosci spoza zwyklego feeda.",
+    description: "Kanały i wiadomości spoza zwykłego feeda.",
     enabled: false,
   },
   {
     id: "newsletter",
     label: "Newsletter",
-    description: "Zrodla email i digesty.",
+    description: "Źródła email i digesty.",
     enabled: false,
   },
   {
     id: "import_feeds",
     label: "Import OPML",
-    description: "Przenies feedy z OPML albo innego czytnika.",
+    description: "Przenieś feedy z OPML albo innego czytnika.",
     enabled: true,
   },
   {
     id: "monitoring",
     label: "Monitoring",
-    description: "Query-driven feedy i monitoring slow kluczowych.",
+    description: "Query-driven feedy i monitoring słów kluczowych.",
     enabled: false,
   },
   {

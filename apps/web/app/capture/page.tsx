@@ -14,26 +14,30 @@ export default async function CapturePage({ searchParams }: CapturePageProps) {
   const diagnostics = getWebStartupDiagnostics();
   const params = await searchParams;
 
-  return (
-    <main className="workspace-root">
-      {diagnostics.valid && diagnostics.config ? (
-        <CaptureStudio
-          apiBaseUrl={diagnostics.config.apiBaseUrl}
-          initialNote={normalizeCaptureQueryValue(params.note)}
-          initialTitle={normalizeCaptureQueryValue(params.title)}
-          initialUrl={normalizeCaptureQueryValue(params.url)}
-        />
-      ) : (
+  if (!diagnostics.valid || !diagnostics.config) {
+    return (
+      <main aria-labelledby="capture-runtime-blocker-title" className="workspace-root">
         <section className="workspace-runtime-blocker">
           <div className="panel-badge">Problem z konfiguracja</div>
-          <h2>Frontend wymaga poprawki konfiguracji, zanim capture wystartuje.</h2>
+          <h1 id="capture-runtime-blocker-title">Frontend wymaga poprawki konfiguracji, zanim capture wystartuje.</h1>
           <ul className="error-list">
             {diagnostics.errors.map((error) => (
               <li key={error}>{error}</li>
             ))}
           </ul>
         </section>
-      )}
-    </main>
+      </main>
+    );
+  }
+
+  return (
+    <div className="workspace-root">
+      <CaptureStudio
+        apiBaseUrl={diagnostics.config.apiBaseUrl}
+        initialNote={normalizeCaptureQueryValue(params.note)}
+        initialTitle={normalizeCaptureQueryValue(params.title)}
+        initialUrl={normalizeCaptureQueryValue(params.url)}
+      />
+    </div>
   );
 }

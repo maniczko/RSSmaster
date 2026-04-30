@@ -11,6 +11,8 @@ from .models import (
     ItemListResponse,
     ItemModel,
     ItemMutationResponse,
+    ReextractItemRequest,
+    ReextractItemResponse,
     UpdateItemStateRequest,
 )
 from .repository import ItemRepository
@@ -21,7 +23,7 @@ router = APIRouter(prefix="/api/v1/items", tags=["items"])
 
 def get_item_service(settings: Settings = Depends(get_settings)) -> ItemService:
     repository = ItemRepository(settings.database_file)
-    return ItemService(repository)
+    return ItemService(settings, repository)
 
 
 @router.get("", response_model=ItemListResponse)
@@ -93,3 +95,13 @@ def update_item_state(
         library_action=payload.library_action,
     )
     return ItemMutationResponse(item=ItemModel.model_validate(item))
+
+
+@router.post("/{item_id}/reextract", response_model=ReextractItemResponse)
+def reextract_item(
+    item_id: str,
+    payload: ReextractItemRequest,
+    service: ItemService = Depends(get_item_service),
+) -> ReextractItemResponse:
+    result = service.reextract_item(item_id, mode=payload.mode)
+    return ReextractItemResponse.model_validate(result)

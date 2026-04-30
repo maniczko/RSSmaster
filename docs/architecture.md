@@ -21,6 +21,7 @@
 3. Each local account gets its own SQLite workspace under `data/accounts/`.
 4. The first account can claim the legacy shared workspace by cloning `data/rssmaster.db`.
 5. Product endpoints under `/api/v1/*` require an authenticated account only after at least one local account exists.
+6. Background work captures the resolved workspace database path at request time and re-enters that workspace explicitly, so sync/extract updates and generated digest artifacts stay account-scoped after request middleware has completed.
 
 ## Why this shape
 
@@ -28,3 +29,11 @@
 - FastAPI keeps ingestion, orchestration, extraction, and delivery concerns isolated from the UI.
 - SQLite remains local and simple while leaving room for future repositories and migration tooling.
 - Shared scripts reduce setup drift on a new machine and give Codex a stable entry point.
+
+## Code ownership boundary
+
+`docs/code-ownership.md` is the repo-local contract for mechanism ownership and cleanup sequencing.
+
+- Frontend shell code should move toward feature owners for reader, sources, digest, capture, and settings instead of growing `channel-lab.tsx`.
+- Backend workspace routes should remain compatibility and aggregation facades; domain logic belongs to auth, channels/source management, library, annotations, ranking/stories, digests/delivery, and storage owners.
+- QA ownership lives in scripts and release docs, with `npm run check:ownership` guarding that each mechanism has an owner, boundary, verification gate, and target score.

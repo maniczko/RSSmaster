@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import {
   formatRelativeDate,
   getDomainLabel,
+  getSourceReadingReadinessMeta,
   getSourceHealthFacts,
   getSourceHealthStatusMeta,
   getSourceStateMeta,
@@ -31,6 +32,7 @@ export function SourceHealthCard({
   indicatorLimit = 4,
 }: SourceHealthCardProps) {
   const healthMeta = getSourceHealthStatusMeta(source.health.status);
+  const readingMeta = getSourceReadingReadinessMeta(source.health.readingReadiness ?? "unknown");
   const stateMeta = source.state ? getSourceStateMeta(source.state) : null;
   const facts = getSourceHealthFacts(source);
   const domain = getDomainLabel(source.siteUrl ?? source.feedUrl);
@@ -62,6 +64,9 @@ export function SourceHealthCard({
         <WorkspaceChip active tone={healthMeta.tone}>
           {healthMeta.label}
         </WorkspaceChip>
+        <WorkspaceChip active tone={readingMeta.tone}>
+          Czytelność: {readingMeta.label}
+        </WorkspaceChip>
         {stateMeta ? (
           <WorkspaceChip active={source.state === "active"} tone={stateMeta.tone}>
             {stateMeta.label}
@@ -82,6 +87,19 @@ export function SourceHealthCard({
       </div>
 
       <WorkspaceMetricList columns={Math.min(4, Math.max(facts.length, 1))} items={facts} />
+
+      {source.health.readingSummary ? (
+        <div
+          style={mergeStyles(workspaceStyles.panelMuted, {
+            padding: "0.75rem 0.85rem",
+            borderColor: "rgba(37, 99, 235, 0.16)",
+            background: "rgba(239, 246, 255, 0.72)",
+          })}
+        >
+          <strong style={workspaceStyles.title}>Czytelność feedu</strong>
+          <p style={workspaceStyles.bodyText}>{source.health.readingSummary}</p>
+        </div>
+      ) : null}
 
       {visibleIndicators.length > 0 ? (
         <div style={{ display: "grid", gap: "0.45rem" }}>

@@ -264,6 +264,7 @@
   margin-bottom: 0;
 }
 
+.reader-pane-header h1,
 .reader-pane-header h2 {
   margin: 0.25rem 0 0.35rem;
   font-size: 1.55rem;
@@ -989,6 +990,8 @@
 
 .ops-section h3,
 .reader-preview-panel h3,
+.workspace-redirect-shell h1,
+.workspace-runtime-blocker h1,
 .runtime-fallback h2 {
   font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
 }

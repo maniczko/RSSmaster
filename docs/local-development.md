@@ -27,6 +27,8 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - In the open no-account mode, the UI entrypoint for that flow lives under `Ustawienia -> Sesja operatora -> Utworz pierwsze konto`.
 - The accounts control database lives at `data/rssmaster_accounts.db` by default.
 - `npm run check:auth` boots an isolated browser smoke with account and workspace paths under `output/playwright/auth-smoke/`; it must not touch real `data/`.
+- `npm run check:sources` boots an isolated `/sources` browser smoke with account and workspace paths under `output/playwright/sources-a11y-smoke/`; it must not touch real `data/` or depend on an existing login session.
+- `npm run check:feed-reading` boots an isolated runtime under `output/playwright/feed-reading/`, adds fixture feeds, runs sync, checks reader fallback labels, source readability, the item-level re-extract action, and the empty-state recovery actions.
 - Relevant overrides:
   - `RSSMASTER_ACCOUNTS_DATABASE_PATH`
   - `RSSMASTER_ACCOUNTS_WORKSPACE_DIR`
@@ -37,11 +39,12 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 
 - `GET /api/health` exposes frontend runtime health.
 - `GET /api/diagnostics/startup` exposes frontend configuration diagnostics.
-- `GET /health` exposes backend runtime health.
-- `GET /diagnostics/startup` exposes backend configuration, route, and startup metadata.
-- `python scripts/check_health.py` checks both health and startup diagnostics on the default local ports.
+- `GET /health` exposes backend runtime health, including `schema_version` and `migration_status`.
+- `GET /diagnostics/startup` exposes backend configuration, route, schema, migration, and startup metadata.
+- `python scripts/check_health.py` checks both health and startup diagnostics on the default local ports, including `migration_status.status: ready`.
 - `python scripts/check_api.py` is an in-process contract smoke. It does not prove a healthy live runtime on `3000/8000`.
 - `npm run check:ports` audits the canonical local ports and records whether they are free, healthy RSSmaster listeners, stale RSSmaster listeners, blocked by another process, or stuck in a refusing/timeout state.
+- `npm run check:ownership` validates `docs/code-ownership.json` and `docs/code-ownership.md` so cleanup work keeps explicit mechanism owners, boundaries, and verification gates.
 
 ## Verification levels
 
@@ -70,6 +73,7 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - Run `npm run check:capture` after changes to `/capture`, bookmarklet/share-target behavior, or outside-app read-later handoff.
 - Run `npm run check:continuity` after changes to workspace portability, saved-reader restore, reader continuity, or manual cross-device handoff.
 - Run `npm run check:reader` after extraction or reader UI changes to verify rich `cleaned_html` rendering with images, captions, lists, quotes, and absolutized links.
+- Run `npm run check:feed-reading` after changes to feed ingestion, extraction status projection, item-level re-extract, reader empty states, source-health readability, or the “why is this list empty?” UX.
 - Run `npm run check:reader:real-queue -- --phase before`, then `python scripts/reextract_items.py --manifest output/playwright/reader-real-queue-manifest.json --write`, then `npm run check:reader:real-queue -- --phase after` when the change touches publisher-specific extraction cleanup or sampled reader backfill.
 - Run `npm run check:layout` after shell, spacing, responsive, or button/layout polish changes to sweep the main app pages in a real browser and capture screenshots.
 - Run `npm run qa:reader` when you want the full fallback-runtime gate for the reader: unit tests, build, runtime health, and browser smoke in one pass.
@@ -79,8 +83,9 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - Run `docs/runbooks/a11y-screen-reader-signoff.md` after browser automation if the change needs manual NVDA or VoiceOver sign-off.
 - The fallback `/sources` harness writes its summary to `output/playwright/sources-qa.json`.
 - The cold-start harness writes canonical boot evidence to `output/playwright/sources-cold-boot.json`.
-- The browser smoke evidence lives in `output/playwright/sources-a11y-smoke.json`.
+- The browser smoke evidence lives in `output/playwright/sources-a11y-smoke.json`, with isolated runtime logs and DBs under `output/playwright/sources-a11y-smoke/`.
 - The auth browser smoke writes isolated DBs, runtime logs, JSON evidence, and a screenshot under `output/playwright/auth-smoke/`.
+- The feed-reading browser smoke writes isolated DBs, runtime logs, JSON evidence, and a screenshot under `output/playwright/feed-reading/`.
 - The capture browser smoke writes evidence to `output/playwright/capture-smoke.json` and `output/playwright/capture-smoke.png`.
 - The continuity browser smoke writes evidence to `output/playwright/continuity-smoke.json` and `output/playwright/continuity-smoke.png`.
 - The reader browser smoke writes evidence to `output/playwright/reader-rich-smoke.json` and `output/playwright/reader-rich-smoke.png`.
@@ -98,11 +103,13 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - Delete `apps/web/.next` if the frontend cache gets stale.
 - Check `.env` first when ports or URLs do not match the expected local runtime.
 - If `npm run health` times out on `http://127.0.0.1:8000/health`, run `npm run check:ports` before blaming the API code. Treat `blocked_non_rssmaster`, `stale_rssmaster`, `refused`, and `timeout` as different operator actions.
-- When a change touches `/sources`, run `npm run check:sources` after the normal build/unit checks to cover keyboard reachability, preview race guards, calm expected preview failures, multiple candidates, and backoffice focus continuity.
+- If backend health or startup diagnostics report migrations not ready, stop the runtime, back up the affected `data/*.db` and `data/accounts/*.db`, then inspect `schema_migrations`, `PRAGMA user_version`, and `/diagnostics/startup` before rerunning `python scripts/init_db.py` or restoring from backup.
+- When a change touches `/sources`, run `npm run check:sources` after the normal build/unit checks to cover keyboard reachability, preview race guards, calm expected preview failures, multiple candidates, and backoffice focus continuity without requiring a current operator session.
 - When a change touches local auth, run `npm run check:auth` after the normal build/unit checks to cover first-account registration, protected app open, logout, login, invalid password feedback, and the 401 auth-required guard.
 - When a change touches `/capture`, manifest share-target behavior, bookmarklet capture, or outside-app read-later handoff, run `npm run check:capture` after the normal build/unit checks; if the current runtime requires auth and no session is available, the smoke boots an isolated test runtime instead of mutating real `data/`.
 - When a change touches continuity bundles, manual portability, or reader session restore across runtimes, run `npm run check:continuity` after the normal build/unit checks.
 - When a change touches extraction, capture, or in-app reading, run `npm run check:reader` after the normal build/unit checks.
+- When a change touches whether feed items can be understood and opened end-to-end, run `npm run check:feed-reading`; it covers healthy, empty, extraction-failed fixture feeds, and the visible `Ponów ekstrakcję` recovery action without mutating real `data/`.
 - When a change touches the reader decision loop, run `npm run check:reader:interaction`; it also falls back to an isolated test runtime when the current runtime is auth-guarded.
 - When a change touches shell layout, spacing, responsive behavior, or page-level visual polish, run `npm run check:layout` after the normal build/unit checks.
 - When a change touches extraction, capture, or in-app reading and you want a single regression gate, run `npm run qa:reader`.

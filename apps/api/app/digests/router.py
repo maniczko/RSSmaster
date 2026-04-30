@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Query, status
 
 from app.config import Settings, get_settings
+from app.db.initializer import resolve_database_path
 
 from .models import (
     BuildDigestRequest,
@@ -18,9 +21,19 @@ from .service import DigestService
 router = APIRouter(prefix="/api/v1/digests", tags=["digests"])
 
 
+def resolve_digest_artifact_root(workspace_database_path: Path, *, default_database_path: Path) -> Path:
+    if workspace_database_path.resolve() == default_database_path.resolve():
+        return default_database_path.parent / "digests"
+    return workspace_database_path.with_suffix("") / "digests"
+
+
 def get_digest_service(settings: Settings = Depends(get_settings)) -> DigestService:
-    repository = DigestRepository(settings.database_file)
-    artifact_root = settings.database_file.parent / "digests"
+    workspace_database_path = resolve_database_path(settings.database_file)
+    repository = DigestRepository(workspace_database_path)
+    artifact_root = resolve_digest_artifact_root(
+        workspace_database_path,
+        default_database_path=settings.database_file,
+    )
     return DigestService(
         repository,
         artifact_root=artifact_root,

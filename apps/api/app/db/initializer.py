@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Iterator
 
 SCHEMA_VERSION = 1
 SCHEMA_NAME = "rssmaster_schema_v1"
@@ -33,12 +36,37 @@ REQUIRED_TABLES = {
 _database_path_override: ContextVar[str | None] = ContextVar("rssmaster_database_path_override", default=None)
 
 
+@dataclass(frozen=True)
+class SchemaMigration:
+    version: int
+    name: str
+    apply: Callable[[sqlite3.Connection], None]
+
+
+def apply_schema_v1(connection: sqlite3.Connection) -> None:
+    connection.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+
+
+MIGRATIONS: tuple[SchemaMigration, ...] = (
+    SchemaMigration(version=SCHEMA_VERSION, name=SCHEMA_NAME, apply=apply_schema_v1),
+)
+
+
 def push_database_path_override(database_path: Path) -> Token[str | None]:
     return _database_path_override.set(str(database_path.resolve()))
 
 
 def pop_database_path_override(token: Token[str | None]) -> None:
     _database_path_override.reset(token)
+
+
+@contextmanager
+def database_path_override(database_path: Path) -> Iterator[None]:
+    token = push_database_path_override(database_path)
+    try:
+        yield
+    finally:
+        pop_database_path_override(token)
 
 
 def resolve_database_path(database_path: Path) -> Path:
@@ -58,20 +86,89 @@ def connect(database_path: Path) -> sqlite3.Connection:
     return connection
 
 
-def ensure_database(database_path: Path) -> dict[str, object]:
-    database_path.parent.mkdir(parents=True, exist_ok=True)
+def ensure_migration_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
 
-    with connect(database_path) as connection:
-        schema_sql = SCHEMA_FILE.read_text(encoding="utf-8")
-        connection.executescript(schema_sql)
+
+def read_user_version(connection: sqlite3.Connection) -> int:
+    return int(connection.execute("PRAGMA user_version").fetchone()[0])
+
+
+def read_applied_migrations(connection: sqlite3.Connection) -> list[dict[str, object]]:
+    ensure_migration_table(connection)
+    rows = connection.execute(
+        """
+        SELECT version, name, applied_at
+        FROM schema_migrations
+        ORDER BY version
+        """
+    ).fetchall()
+    return [
+        {
+            "version": int(row["version"]),
+            "name": str(row["name"]),
+            "applied_at": row["applied_at"],
+        }
+        for row in rows
+    ]
+
+
+def apply_pending_migrations(connection: sqlite3.Connection) -> dict[str, object]:
+    ensure_migration_table(connection)
+    before_user_version = read_user_version(connection)
+    applied_before = read_applied_migrations(connection)
+    applied_versions = {int(row["version"]) for row in applied_before}
+    applied_this_run: list[dict[str, object]] = []
+
+    for migration in MIGRATIONS:
+        if migration.version in applied_versions:
+            continue
+        migration.apply(connection)
+        ensure_migration_table(connection)
         connection.execute(
             """
             INSERT OR IGNORE INTO schema_migrations (version, name)
             VALUES (?, ?)
             """,
-            (SCHEMA_VERSION, SCHEMA_NAME),
+            (migration.version, migration.name),
         )
-        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
+        applied_this_run.append({"version": migration.version, "name": migration.name})
+        applied_versions.add(migration.version)
+
+    latest_version = max(migration.version for migration in MIGRATIONS)
+    connection.execute(f"PRAGMA user_version = {latest_version};")
+    applied_after = read_applied_migrations(connection)
+    applied_after_versions = {int(row["version"]) for row in applied_after}
+    pending_versions = [
+        migration.version
+        for migration in MIGRATIONS
+        if migration.version not in applied_after_versions
+    ]
+    after_user_version = read_user_version(connection)
+    return {
+        "applied": applied_after,
+        "applied_this_run": applied_this_run,
+        "before_user_version": before_user_version,
+        "current_version": after_user_version,
+        "latest_version": latest_version,
+        "pending_versions": pending_versions,
+        "status": "ready" if not pending_versions and after_user_version == latest_version else "needs_migration",
+    }
+
+
+def ensure_database(database_path: Path) -> dict[str, object]:
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with connect(database_path) as connection:
+        migration_status = apply_pending_migrations(connection)
         connection.commit()
 
         rows = connection.execute(
@@ -90,6 +187,7 @@ def ensure_database(database_path: Path) -> dict[str, object]:
 
     return {
         "database_path": str(database_path),
+        "migration_status": migration_status,
         "missing_tables": missing_tables,
         "schema_version": SCHEMA_VERSION,
         "table_count": len(tables),

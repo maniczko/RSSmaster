@@ -221,7 +221,16 @@
     grid-template-columns: 1fr;
   }
 
+  .discover-guide-grid {
+    grid-template-columns: 1fr;
+  }
+
   .source-follow-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .source-flow-steps,
+  .source-discovery-steps {
     grid-template-columns: 1fr;
   }
 
@@ -321,9 +330,21 @@
   }
 
   .feed-browse-toolbar {
-    flex-direction: column;
+    grid-template-columns: 1fr;
     align-items: stretch;
     gap: 0.65rem;
+  }
+
+  .feed-browse-toolbar-left {
+    width: 100%;
+  }
+
+  .feed-browse-toolbar-left .segmented-control {
+    width: 100%;
+  }
+
+  .feed-browse-toolbar-left .segmented-control button {
+    flex: 1 1 0;
   }
 
   .feed-browse-toolbar-actions {
@@ -432,6 +453,37 @@
     align-self: flex-start;
   }
 
+  .feed-browse-toolbar-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .feed-browse-search,
+  .feed-browse-toolbar-actions .segmented-control,
+  .feed-browse-toolbar-actions > .mini-button {
+    width: 100%;
+  }
+
+  .feed-browse-toolbar-actions .segmented-control button {
+    flex: 1 1 0;
+  }
+
+  .feed-browse-toolbar-actions > .mini-button {
+    justify-content: center;
+    min-height: 2.55rem;
+  }
+
+  .feed-stream-empty-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .feed-stream-empty-actions > .mini-button {
+    justify-content: center;
+    width: 100%;
+  }
+
   .feed-reader-card {
     padding: 1.1rem;
   }
@@ -515,6 +567,11 @@
     font-size: 1.8rem;
   }
 
+  .source-flow-steps,
+  .source-discovery-steps {
+    grid-template-columns: 1fr;
+  }
+
   .source-search-field {
     min-height: 3.25rem;
     padding-inline: 0.8rem;
@@ -566,6 +623,7 @@
     gap: 0.8rem;
   }
 
+  .section-screen-header h1,
   .section-screen-header h2 {
     margin: 0.1rem 0 0.25rem;
     font-size: clamp(1.35rem, 8vw, 1.9rem);
@@ -581,12 +639,13 @@
     width: 100%;
   }
 
+  .feed-browse-title-wrap h1,
   .feed-browse-title-wrap h2 {
     font-size: clamp(1.55rem, 8vw, 1.95rem);
   }
 
   .feed-browse-toolbar-stream {
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.65rem;
   }
 
   .feed-stream,
@@ -595,7 +654,7 @@
   }
 
   .feed-stream-empty {
-    padding: 1rem 1.05rem;
+    padding: 0.95rem 1rem;
   }
 
   .reader-preview-topline,

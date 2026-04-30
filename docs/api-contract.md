@@ -11,6 +11,20 @@ This document is the canonical contract between the Next.js frontend and the Fas
 - Pagination: cursor-based for lists
 - Default sort for article lists: `published_at desc`, then `id desc`
 
+## Route manifest
+
+The exact FastAPI route inventory lives in `docs/api-route-manifest.json` and is validated by `python scripts/check_api.py` against the live `app.routes` surface. Any new route must be added there with method, path, surface, and stability before the contract check can pass.
+
+Stability values:
+
+- `stable`: canonical product contract used by the current RSSmaster UI or supported operator workflow.
+- `experimental`: backend-supported module surface that may still evolve; document intentionally before relying on it from core UI.
+- `compatibility`: backward-compatible alias or older surface kept for existing callers.
+- `diagnostic`: runtime health/startup endpoint for local operations.
+- `internal`: generated FastAPI/OpenAPI documentation endpoint, not a product API.
+
+Canonical `/api/v1` product surfaces are `auth`, `channels`, `items`, `sync`, `digests`, `delivery`, `settings`, and `workspace`. Current module/experimental surfaces are `annotations`, `library`, `profiles`, `ranking`, and `source-management`.
+
 ## Error envelope
 
 All non-2xx responses return the same shape:
@@ -315,6 +329,14 @@ Behavior:
   "extraction_status": "completed",
   "has_cleaned_content": true,
   "has_raw_content": true,
+  "reader_status": {
+    "mode": "cleaned",
+    "quality": "ready",
+    "label": "Pełny tekst",
+    "summary": "Oczyszczony widok jest gotowy do czytania w aplikacji.",
+    "primary_action": "read_in_app",
+    "diagnostic_reason": null
+  },
   "channel": {
     "id": "chn_123",
     "title": "Example Feed",
@@ -330,6 +352,15 @@ Behavior:
   }
 }
 ```
+
+`reader_status` is additive and is derived from existing item columns, not from a separate table.
+
+- `mode`: `cleaned`, `text_fallback`, `excerpt`, or `source_only`.
+- `quality`: `ready`, `degraded`, `blocked`, or `loading`.
+- `label`: short UI label such as `Pełny tekst`, `Tekst z feedu`, `Tylko skrót`, or `Źródło`.
+- `summary`: user-facing explanation of what can be read locally and why.
+- `primary_action`: `read_in_app`, `open_source`, `wait_for_sync`, or `inspect_source`.
+- `diagnostic_reason`: present on the model and normally `null` in list responses; detail responses may include a sanitized extraction reason. It must not expose raw stack traces.
 
 ### `GET /api/v1/items`
 
@@ -373,6 +404,74 @@ Response:
     "is_read": true,
     "is_favorite": true,
     "digest_candidate": false
+  }
+}
+```
+
+### `POST /api/v1/items/{item_id}/reextract`
+
+Runs a bounded, user-initiated re-extraction for one article. This is the safe runtime alternative to a feed-wide backfill: it never edits other items and defaults to preview-only mode.
+
+Request:
+
+```json
+{
+  "mode": "dry_run"
+}
+```
+
+Rules:
+
+- `mode` is `dry_run` or `write`; omitted mode is `dry_run`.
+- `dry_run` fetches and classifies the new extraction result without writing to SQLite.
+- `write` persists the new extraction result for the selected item only.
+- `stop_reasons` are diagnostics/warnings for the attempted result, not raw stack traces.
+- The endpoint returns the current `item`; in `dry_run` it is unchanged, in `write` it is reloaded after persistence.
+
+Response:
+
+```json
+{
+  "item_id": "itm_123",
+  "mode": "write",
+  "write_applied": true,
+  "before": {
+    "extraction_status": "failed",
+    "reader_status": {
+      "mode": "excerpt",
+      "quality": "degraded",
+      "label": "Tylko skrót",
+      "summary": "Pełny tekst nie jest gotowy, ale skrót z feedu można przeczytać w aplikacji.",
+      "primary_action": "read_in_app",
+      "diagnostic_reason": "Source article returned HTTP 500."
+    },
+    "has_cleaned_content": false,
+    "has_content_text": false,
+    "has_excerpt": true,
+    "cleaned_html_word_count_approx": 0,
+    "content_preview": "Short article summary.",
+    "diagnostic_reason": "Source article returned HTTP 500."
+  },
+  "after": {
+    "extraction_status": "completed",
+    "reader_status": {
+      "mode": "cleaned",
+      "quality": "ready",
+      "label": "Pełny tekst",
+      "summary": "Oczyszczony widok jest gotowy do czytania w aplikacji.",
+      "primary_action": "read_in_app",
+      "diagnostic_reason": null
+    },
+    "has_cleaned_content": true,
+    "has_content_text": true,
+    "has_excerpt": true,
+    "cleaned_html_word_count_approx": 420,
+    "content_preview": "Clean article preview.",
+    "diagnostic_reason": null
+  },
+  "stop_reasons": [],
+  "item": {
+    "id": "itm_123"
   }
 }
 ```
@@ -441,6 +540,7 @@ Response:
 Implementation note:
 
 - the current local runtime returns `202 Accepted` and performs the sync work in a background task after the run row is persisted
+- when local accounts are enabled, the background task uses the workspace database path captured at run creation time; it must not fall back to the legacy shared database after request middleware exits
 - repeated polls should converge on `completed`, `partial_success`, or `failed`
 
 ### `GET /api/v1/sync/runs/{run_id}`
@@ -466,9 +566,17 @@ Request:
 
 ```json
 {
-  "item_ids": ["itm_123", "itm_456"]
+  "digest_candidates_only": true,
+  "include_read": true,
+  "favorites_only": false,
+  "limit": 25,
+  "title": "rssmaster digest 2026-04-28"
 }
 ```
+
+When `item_ids` is omitted, the backend selects persisted `items.digest_candidate = true` rows. This is the canonical UI path for `/digest`: reader route, search, sort, and visible queue state must not change the digest candidate set. The selection is still capped by the configured digest item limit.
+
+Explicit `item_ids` remain supported for tests and future bulk-selection flows. Explicit mode ignores digest-candidate filtering and returns `selection_mode = "explicit"`.
 
 Response includes:
 
@@ -477,6 +585,7 @@ Response includes:
 - `stats.article_count`
 - `stats.word_count`
 - `stats.estimated_read_minutes`
+- `selection_snapshot`
 - `category_summary`
 
 ### `POST /api/v1/digests/build`
@@ -485,9 +594,15 @@ Request:
 
 ```json
 {
-  "item_ids": ["itm_123", "itm_456"]
+  "digest_candidates_only": true,
+  "include_read": true,
+  "favorites_only": false,
+  "limit": 25,
+  "title": "rssmaster digest 2026-04-28"
 }
 ```
+
+Build uses the same persisted-candidate semantics as preview when `item_ids` is omitted. The persisted `selection_snapshot` in history is the auditable source of truth for which articles were packaged.
 
 Response returns the persisted digest history row:
 
@@ -499,12 +614,14 @@ Response returns the persisted digest history row:
     "title": "Daily Digest",
     "article_count": 2,
     "artifact": {
-      "path": "C:/.../data/digests/dgt_123.epub",
+      "path": "C:/.../data/accounts/mateusz-abc123/digests/dgt_123.epub",
       "sha256": "abc123"
     }
   }
 }
 ```
+
+For local accounts, digest artifacts are stored under a directory derived from the owning workspace database. The legacy pre-auth workspace keeps the older `data/digests/` artifact root for compatibility.
 
 ### `GET /api/v1/digests/history`
 
@@ -557,6 +674,72 @@ Response includes:
 Returns persisted delivery log rows, optionally filtered by `digest_id`.
 
 ## Workspace
+
+### `GET /api/v1/workspace/source-health`
+
+Returns source operational health plus a separate reading-readiness axis. `health_status` remains the sync/source-health axis; `reading_readiness` must not be used to reinterpret it.
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "channel_id": "chn_123",
+      "title": "Example Feed",
+      "feed_url": "https://example.com/feed.xml",
+      "category": "engineering",
+      "state": "active",
+      "unread_count": 3,
+      "health_status": "healthy",
+      "health_summary": "Last successful sync 2026-04-28T08:00:00Z.",
+      "health_indicators": [],
+      "health_stale": false,
+      "health_noisy": false,
+      "last_fetch_at": "2026-04-28T08:00:00Z",
+      "last_successful_fetch_at": "2026-04-28T08:00:00Z",
+      "last_error_at": null,
+      "last_error_code": null,
+      "last_error_message": null,
+      "consecutive_failures": 0,
+      "items_last_24h": 1,
+      "items_last_7d": 4,
+      "total_items": 20,
+      "latest_item_at": "2026-04-28T08:00:00Z",
+      "readable_items_7d": 4,
+      "local_readable_items_7d": 4,
+      "excerpt_fallback_items_7d": 0,
+      "source_only_items_7d": 0,
+      "extraction_failed_items_7d": 0,
+      "reading_readiness": "ready",
+      "reading_summary": "4 artykuły z lokalnym tekstem z ostatnich 7 dni.",
+      "group_name": null,
+      "control": {
+        "channel_id": "chn_123",
+        "group_id": null,
+        "tier": "default",
+        "custom_source_cap": null,
+        "paused_until": null,
+        "snoozed_until": null,
+        "notes": null,
+        "group_name": null
+      }
+    }
+  ]
+}
+```
+
+Rules:
+
+- `reading_readiness` is one of `ready`, `degraded`, `blocked`, or `unknown`.
+- `readable_items_7d` is kept for compatibility and counts recent items that can open some local reading surface: cleaned HTML, content text, or feed excerpt.
+- `local_readable_items_7d` counts recent items with local article text: cleaned HTML or `content_text`.
+- `excerpt_fallback_items_7d` counts recent items where the only local reading surface is `excerpt`.
+- `source_only_items_7d` counts recent items without cleaned HTML, content text, or excerpt; these require opening the source URL.
+- `extraction_failed_items_7d` counts recent items whose extraction ended as `failed`.
+- `reading_readiness = ready` requires at least one `local_readable_items_7d` item and no excerpt-only, source-only, or failed-extraction items in the same 7-day window.
+- Excerpt-only feeds are `degraded`, not `ready`, even when `readable_items_7d` is greater than zero.
+- These fields are projections from `items` and `channels`; no migration is required.
 
 ### `POST /api/v1/workspace/capture`
 

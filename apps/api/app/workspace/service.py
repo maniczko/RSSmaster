@@ -183,17 +183,17 @@ class WorkspaceService:
         resume_item = next((item["item"] for item in recommended if not item["item"]["is_read"]), None)
         warning_lines = summarize_source_warnings(source_health=source_health)
         summary_lines = [
-            f"{len(recommended)} ranked candidates are ready now.",
-            f"{len(saved)} saved article(s) remain in the active library.",
-            f"{len(story_rows)} clustered story group(s) are available for de-duplicated reading.",
+            f"{format_polish_article_count(len(recommended))} w rankingu jest gotowych do sprawdzenia teraz.",
+            f"{format_polish_article_count(len(saved))} pozostaje w zapisanej bibliotece.",
+            f"{format_polish_story_cluster_count(len(story_rows))} {polish_story_cluster_availability(len(story_rows))} do porównania źródeł.",
         ]
         if profile.get("learned_interests"):
             learned_preview = ", ".join(
                 str(interest["label"]) for interest in list(profile["learned_interests"])[:3]
             )
-            summary_lines.append(f"Learned interests steering the queue: {learned_preview}.")
+            summary_lines.append(f"Ranking uwzględnia zapamiętane zainteresowania: {learned_preview}.")
         if warning_lines:
-            summary_lines.append("Source watchlist: " + " | ".join(warning_lines))
+            summary_lines.append("Źródła do sprawdzenia: " + " | ".join(warning_lines))
         return {
             "generated_at": ranking["generated_at"],
             "stats": {
@@ -397,10 +397,14 @@ class WorkspaceService:
 
     def list_source_health(self) -> dict[str, object]:
         controls = self.repository.list_channel_controls()
+        reading_stats = self.repository.list_source_reading_stats()
         channels = self.channel_repository.list_channels(state=None, category=None, limit=500)
         items = []
         for channel in channels:
             control = normalize_control(channel["id"], controls.get(str(channel["id"])))
+            source_reading_stats = reading_stats.get(str(channel["id"]), {})
+            reading_readiness, reading_summary = build_source_reading_readiness(source_reading_stats)
+            health = channel["health"]
             items.append(
                 {
                     "channel_id": channel["id"],
@@ -409,8 +413,28 @@ class WorkspaceService:
                     "category": channel["category"],
                     "state": channel["state"],
                     "unread_count": channel["unread_count"],
-                    "health_status": channel["health"]["status"],
-                    "health_summary": channel["health"]["summary"],
+                    "health_status": health["status"],
+                    "health_summary": health["summary"],
+                    "health_indicators": health["indicators"],
+                    "health_stale": health["stale"],
+                    "health_noisy": health["noisy"],
+                    "last_fetch_at": health["last_fetch_at"],
+                    "last_successful_fetch_at": health["last_successful_fetch_at"],
+                    "last_error_at": health["last_error_at"],
+                    "last_error_code": health["last_error_code"],
+                    "last_error_message": health["last_error_message"],
+                    "consecutive_failures": health["consecutive_failures"],
+                    "items_last_24h": health["items_last_24h"],
+                    "items_last_7d": health["items_last_7d"],
+                    "total_items": health["total_items"],
+                    "latest_item_at": health["latest_item_at"],
+                    "readable_items_7d": int(source_reading_stats.get("readable_items_7d", 0)),
+                    "local_readable_items_7d": int(source_reading_stats.get("local_readable_items_7d", 0)),
+                    "excerpt_fallback_items_7d": int(source_reading_stats.get("excerpt_fallback_items_7d", 0)),
+                    "source_only_items_7d": int(source_reading_stats.get("source_only_items_7d", 0)),
+                    "extraction_failed_items_7d": int(source_reading_stats.get("extraction_failed_items_7d", 0)),
+                    "reading_readiness": reading_readiness,
+                    "reading_summary": reading_summary,
                     "group_name": control["group_name"],
                     "control": control,
                 }
@@ -1535,6 +1559,74 @@ def normalize_control(channel_id: str, control: dict[str, object] | None) -> dic
         "notes": control.get("notes") if control else None,
         "group_name": control.get("group_name") if control else None,
     }
+
+
+def build_source_reading_readiness(stats: dict[str, object]) -> tuple[str, str]:
+    total_items_7d = int(stats.get("total_items_7d") or 0)
+    readable_items_7d = int(stats.get("readable_items_7d") or 0)
+    local_readable_items_7d = int(stats.get("local_readable_items_7d") or 0)
+    excerpt_fallback_items_7d = int(stats.get("excerpt_fallback_items_7d") or 0)
+    source_only_items_7d = int(stats.get("source_only_items_7d") or 0)
+    extraction_failed_items_7d = int(stats.get("extraction_failed_items_7d") or 0)
+
+    if total_items_7d == 0:
+        return "unknown", "Brak nowych artykułów z ostatnich 7 dni. Uruchom sync albo sprawdź źródło."
+
+    if (
+        local_readable_items_7d > 0
+        and excerpt_fallback_items_7d == 0
+        and source_only_items_7d == 0
+        and extraction_failed_items_7d == 0
+    ):
+        return "ready", f"{format_polish_article_count(local_readable_items_7d)} z lokalnym tekstem z ostatnich 7 dni."
+
+    if local_readable_items_7d > 0:
+        summary_parts = [f"{local_readable_items_7d} z lokalnym tekstem"]
+        if excerpt_fallback_items_7d:
+            summary_parts.append(f"{excerpt_fallback_items_7d} tylko jako skrót")
+        if source_only_items_7d:
+            summary_parts.append(f"{source_only_items_7d} tylko w źródle")
+        if extraction_failed_items_7d:
+            summary_parts.append(f"{extraction_failed_items_7d} z błędem ekstrakcji")
+        return "degraded", ", ".join(summary_parts) + " w ostatnich 7 dniach."
+
+    if excerpt_fallback_items_7d > 0:
+        return (
+            "degraded",
+            f"{format_polish_article_count(excerpt_fallback_items_7d)} {polish_article_verb(excerpt_fallback_items_7d)} tylko skrót z feedu; pełny tekst wymaga otwarcia źródła.",
+        )
+
+    if extraction_failed_items_7d > 0:
+        return "blocked", "Artykuły są, ale ekstrakcja nie dostarczyła czytelnego tekstu."
+
+    if readable_items_7d > 0:
+        return "degraded", f"{format_polish_article_count(readable_items_7d)} {polish_article_verb(readable_items_7d)} ograniczony fallback do czytania."
+
+    return "blocked", "Artykuły są zapisane, ale nie mają lokalnej treści do czytania."
+
+
+def format_polish_article_count(count: int) -> str:
+    if count == 1:
+        return "1 artykuł"
+    if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14}:
+        return f"{count} artykuły"
+    return f"{count} artykułów"
+
+
+def polish_article_verb(count: int) -> str:
+    return "ma" if count == 1 else "mają"
+
+
+def format_polish_story_cluster_count(count: int) -> str:
+    if count == 1:
+        return "1 klaster historii"
+    if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14}:
+        return f"{count} klastry historii"
+    return f"{count} klastrów historii"
+
+
+def polish_story_cluster_availability(count: int) -> str:
+    return "jest dostępny" if count == 1 else "są dostępne"
 
 
 def age_in_hours(row: dict[str, object]) -> float:

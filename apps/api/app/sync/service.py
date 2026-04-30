@@ -412,7 +412,7 @@ class SyncService:
 
         service = ExtractionService(
             settings=self.settings,
-            repository=ExtractionRepository(self.settings.database_file),
+            repository=ExtractionRepository(self.repository.database_path),
         )
         return service.extract_pending_for_entries(channel_id=channel_id, dedupe_keys=dedupe_keys)
 

@@ -7,6 +7,7 @@ __pycache__/
 .env
 .codex-runtime/
 .playwright-cli/
+.playwright-mcp/
 .codex-web.stdout.log
 .codex-web.stderr.log
 data/*.db

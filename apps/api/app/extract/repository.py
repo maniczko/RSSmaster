@@ -48,6 +48,29 @@ class ExtractionRepository:
 
         return [self._serialize_candidate(row) for row in rows]
 
+    def get_candidate_by_item_id(self, item_id: str) -> ExtractionCandidate | None:
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    id,
+                    channel_id,
+                    dedupe_key,
+                    source_url,
+                    title,
+                    excerpt,
+                    raw_html
+                FROM items
+                WHERE id = ?
+                """,
+                [item_id],
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return self._serialize_candidate(row)
+
     def mark_running(self, item_id: str) -> None:
         with connect(self.database_path) as connection:
             connection.execute(

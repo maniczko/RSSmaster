@@ -25,12 +25,14 @@ Prove that the currently implemented product loop still works:
 7. If the change touched `/capture`, bookmarklet/share-target behavior, or outside-app read-later handoff, run `npm run check:capture` or follow `docs/runbooks/capture-test-plan.md`.
 8. If the change touched continuity bundles, manual portability, or saved-reader restore, run `npm run check:continuity` or follow `docs/runbooks/continuity-test-plan.md`.
 9. If the change touched extraction, capture, or in-app reading, run `npm run qa:reader` or follow `docs/runbooks/reader-test-plan.md`.
-10. If you want one aggregated report for the app slice covered today, run `npm run qa:app`.
-11. Open `http://127.0.0.1:3000/` or the fallback runtime URL under test.
-12. Add a test feed from the UI and trigger a manual sync.
-13. Confirm imported items appear and can be triaged.
-14. Use the digest section to preview and build an EPUB.
-15. Use the delivery section to save SMTP/Kindle settings and run a dry-run send.
+10. If the change touched digest candidate selection or EPUB build from `/digest`, run `npm run check:digest`.
+11. If you want one aggregated report for the app slice covered today, run `npm run qa:app`.
+12. If you need one timestamped 9/10 release evidence bundle, run `npm run release:evidence`.
+13. Open `http://127.0.0.1:3000/` or the fallback runtime URL under test.
+14. Add a test feed from the UI and trigger a manual sync.
+15. Confirm imported items appear and can be triaged.
+16. Use the digest section to preview and build an EPUB.
+17. Use the delivery section to save SMTP/Kindle settings and run a dry-run send.
 
 ## What the commands mean
 
@@ -55,7 +57,25 @@ Prove that the currently implemented product loop still works:
   - does not prove a canonical cold boot or automatic multi-device sync
 - `npm run qa:app`
   - aggregates contract green plus the `/sources`, reader, capture, and continuity gates into one summary
+  - writes per-flow timeout metadata and artifact freshness to `output/playwright/app-qa.json`
+  - treats a harness timeout as `status: timeout`, separate from a product/gate failure
   - does not replace `npm run qa:sources -- --cold-start`
+- `npm run check:layout`
+  - verifies desktop/tablet/mobile layout, one clear `h1` per main route, main/header/nav landmarks, skip-link wiring, primary navigation clickthrough, and a short keyboard Tab reachability probe
+  - records raw console noise and blocking console errors separately in `output/playwright/layout-qa.json`
+  - still requires manual screen-reader spoken sign-off for release-grade accessibility claims
+- `npm run check:digest`
+  - starts an isolated runtime, creates a fixture feed, marks one persisted digest candidate, opens `/digest` with an active search filter, previews, builds EPUB, and verifies digest history
+  - writes `output/playwright/digest-smoke/digest-smoke.json` and `output/playwright/digest-smoke/digest-smoke.png`
+  - does not prove live SMTP/Kindle acceptance
+- `npm run release:evidence`
+  - runs the 9/10 confidence bundle: ports, health, build, unit tests, API contract, auth-aware browser checks, perf checks, stale artifact review, and known unverified external checks
+  - writes timestamped JSON and Markdown under `output/release-evidence/`
+  - supports `-- --reuse-fresh` when the relevant component gates were just run and you only need a fresh summary wrapper
+- `npm run check:perf:browser` and `npm run check:perf:workspace`
+  - default to isolated, logged-in local accounts so performance evidence stays auth-aware without mutating the operator library
+  - record cold and warm browser route-ready p95/p99 plus authenticated workspace API p95/p99
+  - append historical trend lines under `output/playwright/perf-history/`
 - `npm run qa:sources -- --cold-start`
   - is the canonical local boot proof for `127.0.0.1:3000` and `127.0.0.1:8000`
   - safely stops recognized RSSmaster runtimes from this repo on canonical and fallback ports before booting
@@ -100,6 +120,14 @@ Prove that the currently implemented product loop still works:
 - Confirm `http://127.0.0.1:3000/api/health` returns `status: ok`.
 - Confirm the homepage is talking to `http://127.0.0.1:8000`.
 - Refresh after a completed sync because item state is only visible once backend persistence succeeds.
+
+### Aggregate QA looks green but evidence is suspect
+
+- Open `output/playwright/app-qa.json`.
+- Confirm `overall_status` is `passed`.
+- Confirm every `flows.*.status` is `passed`, not `timeout`.
+- Confirm `artifact_freshness.all_required_fresh` is `true`.
+- If a flow timed out, use its `next_diagnostic_command` and rerun that component gate directly before judging the product.
 
 ## Known non-covered areas
 

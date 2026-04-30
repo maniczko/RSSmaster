@@ -3,6 +3,11 @@ export type FeedStreamCopyItem = {
   excerpt: string | null;
   has_cleaned_content: boolean;
   has_raw_content: boolean;
+  reader_status?: {
+    mode?: "cleaned" | "text_fallback" | "excerpt" | "source_only";
+    label?: string | null;
+    summary?: string | null;
+  } | null;
 };
 
 function normalizeWhitespace(value: string) {
@@ -57,15 +62,20 @@ function isBoilerplatePart(part: string) {
 }
 
 export function getFeedCardSurfaceLabel(item: FeedStreamCopyItem) {
+  const readerLabel = item.reader_status?.label?.trim();
+  if (readerLabel) {
+    return readerLabel;
+  }
+
   if (item.has_cleaned_content) {
-    return "Pelny tekst";
+    return "Pełny tekst";
   }
 
   if (item.has_raw_content) {
-    return "Tekst zastepczy";
+    return "Tylko skrót";
   }
 
-  return "Skrot";
+  return "Źródło";
 }
 
 export function buildFeedCardMetaLine(author: string | null, timestampLabel: string) {
@@ -75,7 +85,7 @@ export function buildFeedCardMetaLine(author: string | null, timestampLabel: str
 export function buildFeedCardExcerpt(item: FeedStreamCopyItem) {
   const excerpt = item.excerpt?.trim();
   if (!excerpt) {
-    return "Brak skrotu. Otworz artykul w czytniku, aby przejsc do oczyszczonego widoku albo tekstu zastepczego.";
+    return item.reader_status?.summary?.trim() || "Brak skrótu. Otwórz artykuł w czytniku, aby zobaczyć najlepszy dostępny widok.";
   }
 
   const normalizedExcerpt = normalizeWhitespace(excerpt);
@@ -96,7 +106,7 @@ export function buildFeedCardExcerpt(item: FeedStreamCopyItem) {
 
   const finalExcerpt = normalizeWhitespace(cleanedExcerpt);
   if (!finalExcerpt) {
-    return "Otworz artykul, aby zobaczyc oczyszczony widok czytania.";
+    return item.reader_status?.summary?.trim() || "Otwórz artykuł, aby zobaczyć najlepszy dostępny widok czytania.";
   }
 
   if (finalExcerpt.length <= 260) {

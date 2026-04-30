@@ -40,6 +40,7 @@ export type RankingPreferenceSummary = {
 
 export type SourceHealthStatus = "healthy" | "warning" | "error" | "unknown";
 export type SourceState = "active" | "inactive" | "archived";
+export type SourceReadingReadiness = "ready" | "degraded" | "blocked" | "unknown";
 
 export type SourceHealthSnapshot = {
   status: SourceHealthStatus;
@@ -57,6 +58,13 @@ export type SourceHealthSnapshot = {
   itemsLast7d?: number;
   totalItems?: number;
   latestItemAt?: string | null;
+  readableItems7d?: number;
+  localReadableItems7d?: number;
+  excerptFallbackItems7d?: number;
+  sourceOnlyItems7d?: number;
+  extractionFailedItems7d?: number;
+  readingReadiness?: SourceReadingReadiness;
+  readingSummary?: string | null;
 };
 
 export type SourceHealthCardModel = {
@@ -198,6 +206,25 @@ const sourceStateMetaMap = {
     tone: "danger",
   },
 } satisfies Record<SourceState, StatusMeta>;
+
+const sourceReadingReadinessMetaMap = {
+  ready: {
+    label: "Czytelne",
+    tone: "success",
+  },
+  degraded: {
+    label: "Częściowe",
+    tone: "warning",
+  },
+  blocked: {
+    label: "Problem z czytaniem",
+    tone: "danger",
+  },
+  unknown: {
+    label: "Brak danych",
+    tone: "muted",
+  },
+} satisfies Record<SourceReadingReadiness, StatusMeta>;
 
 const clusterMomentumMetaMap = {
   emerging: {
@@ -447,6 +474,10 @@ export function getSourceStateMeta(state: SourceState): StatusMeta {
   return sourceStateMetaMap[state];
 }
 
+export function getSourceReadingReadinessMeta(readiness: SourceReadingReadiness): StatusMeta {
+  return sourceReadingReadinessMetaMap[readiness];
+}
+
 export function getSourceHealthFacts(
   source: SourceHealthCardModel,
 ): Array<{ label: string; value: string }> {
@@ -473,16 +504,44 @@ export function getSourceHealthFacts(
     });
   }
 
+  if (typeof source.health.localReadableItems7d === "number") {
+    facts.push({
+      label: "Lokalny tekst 7d",
+      value: formatCompactNumber(source.health.localReadableItems7d),
+    });
+  }
+
+  if (typeof source.health.excerptFallbackItems7d === "number") {
+    facts.push({
+      label: "Skrót 7d",
+      value: formatCompactNumber(source.health.excerptFallbackItems7d),
+    });
+  }
+
+  if (typeof source.health.sourceOnlyItems7d === "number") {
+    facts.push({
+      label: "Źródło 7d",
+      value: formatCompactNumber(source.health.sourceOnlyItems7d),
+    });
+  }
+
+  if (typeof source.health.extractionFailedItems7d === "number") {
+    facts.push({
+      label: "Błędy ekstr.",
+      value: formatCompactNumber(source.health.extractionFailedItems7d),
+    });
+  }
+
   if (typeof source.health.totalItems === "number") {
     facts.push({
-      label: "Lacznie",
+      label: "Łącznie",
       value: formatCompactNumber(source.health.totalItems),
     });
   }
 
   if (typeof source.health.consecutiveFailures === "number") {
     facts.push({
-      label: "Bledy",
+      label: "Błędy syncu",
       value: formatCompactNumber(source.health.consecutiveFailures),
     });
   }

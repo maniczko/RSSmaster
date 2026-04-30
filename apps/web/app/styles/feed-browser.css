@@ -412,6 +412,7 @@
   min-width: 0;
 }
 
+.section-screen-header h1,
 .section-screen-header h2 {
   margin: 0.2rem 0 0.35rem;
   font-size: clamp(1.5rem, 2vw, 2rem);
@@ -438,6 +439,55 @@
   display: grid;
   gap: var(--surface-gap);
   min-width: 0;
+}
+
+.discover-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.discover-guide-card {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 0.9rem;
+}
+
+.discover-guide-card-primary {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.94), rgba(255, 255, 255, 0.88));
+}
+
+.discover-guide-card > span {
+  display: inline-grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 900;
+}
+
+.discover-guide-card strong {
+  font-size: 1rem;
+}
+
+.discover-guide-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.discover-guide-card .mini-button {
+  justify-self: start;
 }
 
 .section-grid {

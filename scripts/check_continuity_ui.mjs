@@ -7,13 +7,20 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { prepareSmokeRuntime } from "./lib/local-runtime.mjs";
+import {
+  attachPlaywrightArtifact,
+  collectScreenshotEvidence,
+} from "./lib/playwright-artifact-schema.mjs";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
 const OUTPUT_DIR = path.join(ROOT_DIR, "output", "playwright");
 const OUTPUT_JSON = path.join(OUTPUT_DIR, "continuity-smoke.json");
 const OUTPUT_SCREENSHOT = path.join(OUTPUT_DIR, "continuity-smoke.png");
-const DATABASE_PATH = path.join(ROOT_DIR, "data", "rssmaster.db");
+const DEFAULT_DATABASE_PATH = path.join(ROOT_DIR, "data", "rssmaster.db");
+const RUN_STARTED_AT = new Date();
 
 const READER_CONTINUITY_KEY = "rssmaster.reader.continuity";
 const READER_PROGRESS_KEY = "rssmaster.reader.progress";
@@ -42,6 +49,64 @@ function markContinuityStep(step, page = null) {
     }
   }
   console.log(`[check:continuity] step: ${step}`);
+}
+
+function withStandardArtifact(results) {
+  const screenshots = collectScreenshotEvidence([OUTPUT_SCREENSHOT], {
+    rootDir: ROOT_DIR,
+    runStartedAt: RUN_STARTED_AT,
+  });
+  return attachPlaywrightArtifact(results, {
+    actions: [
+      { id: "continuity-export", label: "Export continuity bundle", route: "/sources", status: results.exportDownloaded ? "passed" : "failed" },
+      { id: "continuity-import", label: "Import continuity bundle", route: "/sources", status: results.restoredRoute ? "passed" : "failed" },
+      { id: "continuity-reader-restore", label: "Restore saved reader route and progress", route: "/read/saved", status: results.restoredReaderScroll && results.restoredLocalProgress ? "passed" : "failed" },
+      { id: "continuity-knowledge-restore", label: "Restore notes/tags/collections/searches", route: "/read/saved", status: results.restoredKnowledgeLayer ? "passed" : "failed" },
+    ],
+    checkName: "check:continuity",
+    errors: {
+      console: results.consoleErrors ?? [],
+      page: results.pageErrors ?? [],
+      harness: results.error ? [{ message: String(results.error), step: results.step ?? lastContinuityStep }] : [],
+    },
+    metadata: {
+      item_id: results.itemId ?? null,
+      bundle_path: results.bundlePath ?? null,
+      restored_annotation_count: results.restoredAnnotationCount ?? null,
+      restored_tag_assignment_count: results.restoredTagAssignmentCount ?? null,
+      diagnostics: results.diagnostics ?? null,
+    },
+    routes: [
+      {
+        id: "continuity-sources",
+        route: "/sources",
+        viewport: "desktop",
+        status: results.exportDownloaded && results.importResponseObserved ? "passed" : "failed",
+        screenshot: OUTPUT_SCREENSHOT,
+        ready: results.exportDownloaded,
+        overflow: null,
+        consoleErrorCount: results.consoleErrors?.length ?? 0,
+        pageErrorCount: results.pageErrors?.length ?? 0,
+      },
+      {
+        id: "continuity-saved-reader",
+        route: "/read/saved",
+        viewport: "desktop",
+        status: results.restoredRoute && results.restoredReaderScroll ? "passed" : "failed",
+        screenshot: OUTPUT_SCREENSHOT,
+        ready: results.restoredRoute,
+        overflow: null,
+      },
+    ],
+    runtime: results.runtime,
+    screenshots,
+    startedAt: RUN_STARTED_AT,
+    status: results.status ?? "failed",
+    targetUrls: {
+      apiUrl: results.runtime?.apiUrl ?? null,
+      webUrl: results.runtime?.webUrl ?? null,
+    },
+  });
 }
 
 function loadPlaywright() {
@@ -320,6 +385,7 @@ async function readSavedSearches(apiUrl) {
 }
 
 function purgeContinuityKnowledgeArtifacts({
+  databasePath,
   itemId,
   noteText,
   highlightQuote,
@@ -380,7 +446,7 @@ with sqlite3.connect(db_path) as conn:
     [
       "-c",
       script,
-      DATABASE_PATH,
+      databasePath,
       itemId,
       noteText,
       highlightQuote,
@@ -412,6 +478,13 @@ async function ensureReaderArticleOpen(page, title) {
   }
   if (openButton) {
     await openButton.click({ timeout: 8000 });
+  } else {
+    const readerButton = page.getByRole("button", {
+      name: /^Czytaj$|Czytaj (artykul|artykuł|pełny tekst|tekst z feedu|oczyszczony|fallback|skrot|skrót)/i,
+    }).first();
+    if ((await readerButton.count()) > 0 && (await readerButton.isVisible())) {
+      await readerButton.click({ timeout: 8000 });
+    }
   }
 
   await page.waitForSelector(".reader-reading-surface", { timeout: 30000 });
@@ -568,6 +641,7 @@ async function revealSourcesBackoffice(page, requiredButtonText = "Eksportuj con
     return texts.some(
       (text) =>
         text === "Eksportuj continuity bundle" ||
+        text === "Odtwórz continuity bundle" ||
         text === "Odtworz continuity bundle" ||
         text.startsWith("Pokaz backoffice") ||
         text.startsWith("Ukryj backoffice"),
@@ -634,11 +708,22 @@ async function main() {
   await ensureOutputDir();
 
   const { chromium } = loadPlaywright();
-  const webUrl = (process.env.RSSMASTER_WEB_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
-  const apiUrl = (process.env.RSSMASTER_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+  const requestedWebUrl = (process.env.RSSMASTER_WEB_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
+  const requestedApiUrl = (process.env.RSSMASTER_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+  const runtime = await prepareSmokeRuntime({
+    apiUrl: requestedApiUrl,
+    forceExistingRuntime: process.env.RSSMASTER_USE_EXISTING_RUNTIME === "1",
+    label: "continuity-smoke",
+    outputDir: OUTPUT_DIR,
+    webUrl: requestedWebUrl,
+  });
+  const webUrl = runtime.webUrl;
+  const apiUrl = runtime.apiUrl;
+  const databasePath = runtime.databasePath ?? DEFAULT_DATABASE_PATH;
 
-  await assertWebReachable(`${webUrl}/sources`);
-  await assertJsonHealth("api", `${apiUrl}/health`);
+  try {
+    await assertWebReachable(`${webUrl}/sources`);
+    await assertJsonHealth("api", `${apiUrl}/health`);
 
   const fixtureServer = await createFixtureServer();
   const fixtureId = `${Date.now()}`;
@@ -725,6 +810,7 @@ async function main() {
   });
 
   const results = {
+    status: "running",
     articleUrl,
     articleTitle,
     exportDownloaded: false,
@@ -754,6 +840,14 @@ async function main() {
       pageErrors,
       screenshot: OUTPUT_SCREENSHOT,
       manualScreenReaderSignOff: "pending",
+      runtime: {
+        apiUrl,
+        authMode: runtime.authMode,
+        databasePath,
+        isolated: runtime.isolated,
+        runDir: runtime.runDir,
+        webUrl,
+      },
     };
     lastContinuityResults = results;
 
@@ -858,6 +952,7 @@ async function main() {
         [READER_CONTINUITY_KEY, READER_PROGRESS_KEY],
       );
       purgeContinuityKnowledgeArtifacts({
+        databasePath,
         itemId,
         noteText: continuityNoteText,
         highlightQuote: continuityHighlightQuote,
@@ -868,7 +963,7 @@ async function main() {
       });
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
     markContinuityStep("reveal continuity import controls", page);
-    await revealSourcesBackoffice(page, "Odtworz continuity bundle");
+    await revealSourcesBackoffice(page, "Odtwórz continuity bundle");
 
     const importInput = page.locator("input[type=\"file\"]").first();
     markContinuityStep("import continuity bundle", page);
@@ -1035,7 +1130,10 @@ async function main() {
       `Continuity smoke logged browser console issues: ${relevantConsoleErrors.map((entry) => entry.text).join(" | ")}`,
     );
     assert(pageErrors.length === 0, `Continuity smoke saw page errors: ${pageErrors.map((entry) => entry.message).join(" | ")}`);
+    results.status = "passed";
   } catch (error) {
+    results.status = "failed";
+    results.error = error instanceof Error ? error.stack ?? error.message : String(error);
     try {
       lastContinuityDiagnostics = await page.evaluate(([continuityKey, progressKey, navLogKey]) => {
         const parse = (raw) => {
@@ -1068,7 +1166,7 @@ async function main() {
     }
     throw error;
   } finally {
-    await writeFile(OUTPUT_JSON, `${JSON.stringify(results, null, 2)}\n`, "utf8");
+    await writeFile(OUTPUT_JSON, `${JSON.stringify(withStandardArtifact(results), null, 2)}\n`, "utf8");
     await browser.close();
     await fixtureServer.close();
     await rm(downloadsDir, { recursive: true, force: true });
@@ -1077,6 +1175,9 @@ async function main() {
   console.log("[check:continuity] PASS");
   console.log(`[check:continuity] manual UI target: ${webUrl}/sources`);
   console.log(`[check:continuity] evidence: ${OUTPUT_JSON}`);
+  } finally {
+    await runtime.close();
+  }
 }
 
 main().catch(async (error) => {
@@ -1093,7 +1194,7 @@ main().catch(async (error) => {
     manualScreenReaderSignOff: "pending",
   };
   await ensureOutputDir();
-  await writeFile(OUTPUT_JSON, `${JSON.stringify(failurePayload, null, 2)}\n`, "utf8");
+  await writeFile(OUTPUT_JSON, `${JSON.stringify(withStandardArtifact(failurePayload), null, 2)}\n`, "utf8");
   console.error(`[check:continuity] FAIL: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 });

@@ -239,12 +239,12 @@ export function buildSourcePreviewTopics({
 
 export function getSourcePreviewStatusLabel(status: SourcePreviewPayloadInput["status"]) {
   if (status === "already_subscribed") {
-    return "Juz dodane";
+    return "Już dodane";
   }
   if (status === "multiple_candidates") {
-    return "Wiele kandydatow";
+    return "Wiele kandydatów";
   }
-  return "Gotowy podglad";
+  return "Gotowy podgląd";
 }
 
 export function getSourcePreviewAnnouncement({
@@ -260,18 +260,18 @@ export function getSourcePreviewAnnouncement({
     return "Wynik gotowy. Wykryto jeden feed do obserwowania.";
   }
   if (uiState === "already_followed") {
-    return "Wynik gotowy. To zrodlo jest juz w bibliotece.";
+    return "Wynik gotowy. To źródło jest już w bibliotece.";
   }
   if (uiState === "multiple_candidates") {
     return resultCount > 0
-      ? `Wynik gotowy. Znaleziono ${resultCount} ${resultCount === 1 ? "kandydata" : "kandydatow"}.`
-      : "Wynik gotowy. Wykryto wiele kandydatow.";
+      ? `Wynik gotowy. Znaleziono ${resultCount} ${resultCount === 1 ? "kandydata" : "kandydatów"}.`
+      : "Wynik gotowy. Wykryto wiele kandydatów.";
   }
   if (uiState === "error") {
     const lead = feedbackLines[0]?.trim();
     return [feedbackTitle?.trim(), lead].filter(Boolean).join(". ") || "Preview nie zostal przygotowany.";
   }
-  return "Wklej adres strony albo feedu, aby zobaczyc preview.";
+  return "Wklej adres strony albo feedu, aby zobaczyć preview.";
 }
 
 export function buildSourcePreviewMetrics({

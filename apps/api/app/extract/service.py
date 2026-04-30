@@ -157,6 +157,23 @@ class ExtractionService:
 
         return ExtractionBatchSummary(processed=len(candidates), completed=completed, failed=failed)
 
+    def reextract_item(self, *, item_id: str, write: bool) -> ExtractionResult | None:
+        candidate = self.repository.get_candidate_by_item_id(item_id)
+        if candidate is None:
+            return None
+
+        with httpx.Client(
+            follow_redirects=True,
+            headers={"User-Agent": "rssmaster/0.1.0 (+local-first extract reprocess)"},
+            timeout=self.settings.fetch_timeout_seconds,
+        ) as client:
+            result = self._extract_candidate(client=client, candidate=candidate)
+
+        if write:
+            self.repository.persist_result(candidate.id, result=result)
+
+        return result
+
     def _extract_candidate(self, *, client: httpx.Client, candidate: ExtractionCandidate) -> ExtractionResult:
         attempted_at = utc_now()
         fallback_document = prepare_document(

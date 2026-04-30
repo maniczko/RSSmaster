@@ -85,6 +85,7 @@ These requirement classes already have a home:
 | --- | --- |
 | MVP scope and non-goals | `docs/prd.md` now, later mirrored or promoted into Confluence |
 | local runtime setup | `docs/local-development.md` |
+| code ownership and cleanup boundaries | `docs/code-ownership.md` plus `docs/code-ownership.json` |
 | backend and frontend API semantics | `docs/api-contract.md` |
 | orchestration semantics | `docs/orchestration-contract.md` |
 | storage semantics | `docs/storage-schema.md` |
@@ -96,6 +97,7 @@ These requirement classes already have a home:
 
 - `docs/prd.md` is the current local MVP scope mirror
 - `docs/architecture.md` is the current local architecture overview mirror
+- `docs/code-ownership.md` is the current owner map for cleanup work and the source for `npm run check:ownership`
 - `docs/orchestration-contract.md` defines reusable pipeline semantics
 - `docs/adrs/README.md` defines where architecture decisions should be recorded
 

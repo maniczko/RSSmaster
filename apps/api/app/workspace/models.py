@@ -259,6 +259,26 @@ class SourceHealthEntryModel(BaseModel):
     unread_count: int
     health_status: str
     health_summary: str
+    health_indicators: list[str] = Field(default_factory=list)
+    health_stale: bool = False
+    health_noisy: bool = False
+    last_fetch_at: str | None = None
+    last_successful_fetch_at: str | None = None
+    last_error_at: str | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    consecutive_failures: int = 0
+    items_last_24h: int = 0
+    items_last_7d: int = 0
+    total_items: int = 0
+    latest_item_at: str | None = None
+    readable_items_7d: int = 0
+    local_readable_items_7d: int = 0
+    excerpt_fallback_items_7d: int = 0
+    source_only_items_7d: int = 0
+    extraction_failed_items_7d: int = 0
+    reading_readiness: Literal["ready", "degraded", "blocked", "unknown"] = "unknown"
+    reading_summary: str = "Brak danych o czytelności z ostatnich 7 dni."
     group_name: str | None
     control: ChannelControlModel
 

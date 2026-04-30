@@ -944,6 +944,73 @@ class WorkspaceRepository:
             ).fetchall()
         return {str(row["channel_id"]): dict(row) for row in rows}
 
+    def list_source_reading_stats(self) -> dict[str, dict[str, int]]:
+        with connect(self.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    i.channel_id,
+                    COUNT(*) AS total_items_7d,
+                    SUM(
+                        CASE
+                            WHEN trim(COALESCE(i.cleaned_html, '')) != ''
+                              OR trim(COALESCE(i.content_text, '')) != ''
+                              OR trim(COALESCE(i.excerpt, '')) != ''
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS readable_items_7d,
+                    SUM(
+                        CASE
+                            WHEN trim(COALESCE(i.cleaned_html, '')) != ''
+                              OR trim(COALESCE(i.content_text, '')) != ''
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS local_readable_items_7d,
+                    SUM(
+                        CASE
+                            WHEN trim(COALESCE(i.cleaned_html, '')) = ''
+                              AND trim(COALESCE(i.content_text, '')) = ''
+                              AND trim(COALESCE(i.excerpt, '')) != ''
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS excerpt_fallback_items_7d,
+                    SUM(
+                        CASE
+                            WHEN trim(COALESCE(i.cleaned_html, '')) = ''
+                              AND trim(COALESCE(i.content_text, '')) = ''
+                              AND trim(COALESCE(i.excerpt, '')) = ''
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS source_only_items_7d,
+                    SUM(
+                        CASE
+                            WHEN i.extraction_status = 'failed' THEN 1
+                            ELSE 0
+                        END
+                    ) AS extraction_failed_items_7d
+                FROM items i
+                WHERE datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at))
+                    >= datetime('now', '-7 days')
+                GROUP BY i.channel_id
+                """
+            ).fetchall()
+
+        return {
+            str(row["channel_id"]): {
+                "total_items_7d": int(row["total_items_7d"] or 0),
+                "readable_items_7d": int(row["readable_items_7d"] or 0),
+                "local_readable_items_7d": int(row["local_readable_items_7d"] or 0),
+                "excerpt_fallback_items_7d": int(row["excerpt_fallback_items_7d"] or 0),
+                "source_only_items_7d": int(row["source_only_items_7d"] or 0),
+                "extraction_failed_items_7d": int(row["extraction_failed_items_7d"] or 0),
+            }
+            for row in rows
+        }
+
     def update_channel_control(
         self,
         channel_id: str,

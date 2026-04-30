@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..", "..");
 const DEFAULT_WAIT_TIMEOUT_MS = 120000;
+const DEFAULT_COMMAND_TIMEOUT_MS = Number.parseInt(process.env.RSSMASTER_RUNTIME_COMMAND_TIMEOUT_MS ?? "300000", 10);
 
 async function findFreePort() {
   const server = net.createServer();
@@ -26,8 +27,15 @@ async function findFreePort() {
   return address.port;
 }
 
-async function readJson(url) {
-  const response = await fetch(url);
+async function readJson(url, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status} for ${url}`);
   }
@@ -75,12 +83,23 @@ function startProcess({ args, command, env, label, logDir, logPrefix }) {
   return { child, label, logPath };
 }
 
-async function runLoggedCommand({ args, command, env, label, logDir, logPrefix }) {
+async function runLoggedCommand({ args, command, env, label, logDir, logPrefix, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS }) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const processInfo = startProcess({ args, command, env, label, logDir, logPrefix });
     const exitCode = await new Promise((resolve) => {
-      processInfo.child.once("exit", (code) => resolve(code ?? 0));
-      processInfo.child.once("error", () => resolve(1));
+      const timeout = setTimeout(async () => {
+        await stopProcess(processInfo);
+        resolve(124);
+      }, timeoutMs);
+
+      processInfo.child.once("exit", (code) => {
+        clearTimeout(timeout);
+        resolve(code ?? 0);
+      });
+      processInfo.child.once("error", () => {
+        clearTimeout(timeout);
+        resolve(1);
+      });
     });
     if (exitCode === 0) {
       return;
@@ -88,6 +107,10 @@ async function runLoggedCommand({ args, command, env, label, logDir, logPrefix }
 
     const logText = await readFile(processInfo.logPath, "utf8").catch(() => "");
     const buildLockActive = logText.includes("Another next build process is already running");
+    const timedOut = exitCode === 124;
+    if (timedOut) {
+      throw new Error(`${label} timed out after ${timeoutMs}ms; see ${processInfo.logPath}`);
+    }
     if (!buildLockActive || attempt === 3) {
       throw new Error(`${label} failed with exit code ${exitCode}; see ${processInfo.logPath}`);
     }
@@ -119,16 +142,35 @@ async function stopProcess(processInfo) {
   }
 }
 
-async function shouldUseIsolatedRuntime({ apiUrl, forceExistingRuntime }) {
+async function inspectRuntimeAuth({ apiUrl, forceExistingRuntime }) {
   if (forceExistingRuntime) {
-    return false;
+    return {
+      authMode: "forced-existing-runtime",
+      session: null,
+      useIsolatedRuntime: false,
+    };
   }
 
   try {
     const session = await readJson(`${apiUrl}/api/v1/auth/session`);
-    return Boolean(session?.auth_required && !session?.session);
+    if (session?.auth_required && !session?.session) {
+      return {
+        authMode: "isolated-because-existing-runtime-requires-auth",
+        session,
+        useIsolatedRuntime: true,
+      };
+    }
+    return {
+      authMode: session?.auth_required ? "existing-authenticated-runtime" : "existing-open-runtime",
+      session,
+      useIsolatedRuntime: false,
+    };
   } catch {
-    return false;
+    return {
+      authMode: "isolated-because-existing-runtime-session-unknown",
+      session: null,
+      useIsolatedRuntime: true,
+    };
   }
 }
 
@@ -137,19 +179,26 @@ export async function prepareSmokeRuntime({
   forceExistingRuntime = false,
   label,
   outputDir,
+  requireAuthenticated = false,
   webUrl,
 }) {
   const normalizedApiUrl = apiUrl.replace(/\/$/, "");
   const normalizedWebUrl = webUrl.replace(/\/$/, "");
-  const useIsolatedRuntime = await shouldUseIsolatedRuntime({
+  const authProbe = await inspectRuntimeAuth({
     apiUrl: normalizedApiUrl,
     forceExistingRuntime,
   });
+  const useIsolatedForAuthBaseline = requireAuthenticated && !forceExistingRuntime;
 
-  if (!useIsolatedRuntime) {
+  if (!authProbe.useIsolatedRuntime && !useIsolatedForAuthBaseline) {
     return {
       apiUrl: normalizedApiUrl,
+      authMode: authProbe.authMode,
+      authProbe: authProbe.session,
       close: async () => {},
+      databasePath: null,
+      accountsDatabasePath: null,
+      accountsWorkspaceDir: null,
       isolated: false,
       runDir: null,
       webUrl: normalizedWebUrl,
@@ -166,15 +215,17 @@ export async function prepareSmokeRuntime({
   const webPort = await findFreePort();
   const isolatedApiUrl = `http://127.0.0.1:${apiPort}`;
   const isolatedWebUrl = `http://127.0.0.1:${webPort}`;
+  const databasePath = path.join(dataDir, "workspace.db");
+  const accountsDatabasePath = path.join(dataDir, "accounts.db");
   const env = {
     ...process.env,
     NEXT_PUBLIC_API_BASE_URL: isolatedApiUrl,
     RSSMASTER_API_PORT: String(apiPort),
     RSSMASTER_API_URL: isolatedApiUrl,
-    RSSMASTER_DATABASE_PATH: path.join(dataDir, "workspace.db"),
+    RSSMASTER_DATABASE_PATH: databasePath,
     RSSMASTER_WEB_PORT: String(webPort),
     RSSMASTER_WEB_URL: isolatedWebUrl,
-    RSSMASTER_ACCOUNTS_DATABASE_PATH: path.join(dataDir, "accounts.db"),
+    RSSMASTER_ACCOUNTS_DATABASE_PATH: accountsDatabasePath,
     RSSMASTER_ACCOUNTS_WORKSPACE_DIR: workspaceDir,
     RSSMASTER_ACCOUNTS_COOKIE_NAME: `rssmaster_${label}_${runId.replace(/[^a-z0-9]/gi, "_")}`,
   };
@@ -216,10 +267,15 @@ export async function prepareSmokeRuntime({
 
   return {
     apiUrl: isolatedApiUrl,
+    authMode: requireAuthenticated ? "isolated-authenticated-baseline-required" : "isolated-no-account-runtime",
+    authProbe: authProbe.session,
     close: async () => {
       await stopProcess(webProcess);
       await stopProcess(apiProcess);
     },
+    databasePath,
+    accountsDatabasePath,
+    accountsWorkspaceDir: workspaceDir,
     isolated: true,
     runDir,
     webUrl: isolatedWebUrl,

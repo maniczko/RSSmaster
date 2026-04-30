@@ -19,6 +19,10 @@ def assert_status_ok(name: str, url: str) -> dict[str, object]:
     payload = read_json(url)
     if payload.get("status") != "ok":
         raise RuntimeError(f"{name} returned unexpected payload from {url}: {payload}")
+    if name == "api":
+        migration_status = payload.get("migration_status")
+        if not isinstance(migration_status, dict) or migration_status.get("status") != "ready":
+            raise RuntimeError(f"api health did not report migration_status.ready at {url}: {payload}")
     return payload
 
 
@@ -30,6 +34,13 @@ def assert_api_startup_ok(url: str) -> dict[str, object]:
     startup = payload.get("startup")
     if not isinstance(startup, dict) or startup.get("database_ready") is not True:
         raise RuntimeError(f"api startup diagnostics did not report database_ready=true at {url}: {payload}")
+
+    schema = startup.get("schema")
+    if not isinstance(schema, dict):
+        raise RuntimeError(f"api startup diagnostics did not report schema metadata at {url}: {payload}")
+    migration_status = schema.get("migration_status")
+    if not isinstance(migration_status, dict) or migration_status.get("status") != "ready":
+        raise RuntimeError(f"api startup diagnostics did not report migration_status.ready at {url}: {payload}")
 
     return payload
 

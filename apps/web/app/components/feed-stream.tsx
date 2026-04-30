@@ -17,6 +17,21 @@ type FeedStreamItem = {
   digest_candidate: boolean;
   has_cleaned_content: boolean;
   has_raw_content: boolean;
+  reader_status?: {
+    mode?: "cleaned" | "text_fallback" | "excerpt" | "source_only";
+    quality?: "ready" | "degraded" | "blocked" | "loading";
+    label?: string | null;
+    summary?: string | null;
+    primary_action?: string | null;
+    diagnostic_reason?: string | null;
+  } | null;
+};
+
+type FeedStreamEmptyAction = {
+  label: string;
+  onClick: () => void;
+  tone?: "default" | "accent";
+  disabled?: boolean;
 };
 
 type FeedStreamProps = {
@@ -27,7 +42,10 @@ type FeedStreamProps = {
   activeItemId: string | null;
   busyItemId: string | null;
   emptyActionLabel?: string | null;
+  emptyActions?: FeedStreamEmptyAction[];
   emptyDescription?: string;
+  emptyDiagnosticDescription?: string;
+  emptyDiagnosticTitle?: string;
   emptyTitle?: string;
   formatTimestamp: (value: string | null, fallback: string) => string;
   onEmptyAction?: (() => void) | null;
@@ -73,8 +91,11 @@ export function FeedStream({
   activeItemId,
   busyItemId,
   emptyActionLabel = null,
-  emptyDescription = "Zmien filtr, wyszukiwanie albo odswiez kolejke, aby zobaczyc nowe materialy do czytania.",
-  emptyTitle = "Brak artykulow w tym widoku",
+  emptyActions,
+  emptyDescription = "Zmień filtr, wyszukiwanie albo odśwież kolejkę, aby zobaczyć nowe materiały do czytania.",
+  emptyDiagnosticDescription = "Aktualny widok nie ma artykułów dla tych filtrów. Najszybciej pomoże zmiana wyszukiwania, pokazanie całej kolejki albo ręczny sync.",
+  emptyDiagnosticTitle = "Dlaczego nic tu nie ma?",
+  emptyTitle = "Brak artykułów w tym widoku",
   formatTimestamp,
   onEmptyAction = null,
   onSelect,
@@ -98,14 +119,40 @@ export function FeedStream({
   }
 
   if (items.length === 0) {
+    const resolvedEmptyActions =
+      emptyActions ??
+      (emptyActionLabel && onEmptyAction
+        ? [
+            {
+              label: emptyActionLabel,
+              onClick: onEmptyAction,
+              tone: "accent" as const,
+            },
+          ]
+        : []);
+
     return (
-      <div className="feed-stream-empty">
+      <div className="feed-stream-empty" data-testid="reader-empty-state">
         <strong>{emptyTitle}</strong>
         <p>{emptyDescription}</p>
-        {emptyActionLabel && onEmptyAction ? (
-          <button className="mini-button mini-button-accent" onClick={onEmptyAction} type="button">
-            {emptyActionLabel}
-          </button>
+        <div className="feed-stream-empty-diagnostic">
+          <span>{emptyDiagnosticTitle}</span>
+          <p>{emptyDiagnosticDescription}</p>
+        </div>
+        {resolvedEmptyActions.length > 0 ? (
+          <div className="feed-stream-empty-actions">
+            {resolvedEmptyActions.map((action) => (
+              <button
+                className={`mini-button ${action.tone === "accent" ? "mini-button-accent" : ""}`}
+                disabled={action.disabled}
+                key={action.label}
+                onClick={action.onClick}
+                type="button"
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
         ) : null}
       </div>
     );

@@ -9,6 +9,42 @@ export type ParsedAppPath = {
   libraryView: AppLibraryView;
 };
 
+export type ParsedReadRouteSearch = {
+  legacyLibraryView?: AppLibraryView;
+  scope?: AppScope;
+  sort?: AppSortMode;
+  q?: string;
+  item?: string;
+  surface?: AppReadSurface;
+};
+
+export type PendingRouteRestoreState = {
+  href: string;
+  section: AppSection;
+} | null;
+
+export type ReadRouteBootInput = {
+  pathname: string;
+  search: string | Pick<URLSearchParams, "get">;
+  section: AppSection;
+  libraryView: AppLibraryView;
+  activeItemId: string | null;
+  readingItemId: string | null;
+  itemSearch: string;
+  readSurface: AppReadSurface;
+};
+
+export type ReadRouteBootState = {
+  section: AppSection;
+  libraryView: AppLibraryView;
+  activeItemId: string | null;
+  readingItemId: string | null;
+  itemSearch: string;
+  readSurface: AppReadSurface;
+  scope?: AppScope;
+  sort?: AppSortMode;
+};
+
 export type AppHrefInput = {
   section: AppSection;
   libraryView?: AppLibraryView;
@@ -70,6 +106,105 @@ export function parseAppPath(pathname: string): ParsedAppPath {
   };
 }
 
+function getRouteSearchParams(search: string | Pick<URLSearchParams, "get">): Pick<URLSearchParams, "get"> {
+  return typeof search === "string" ? new URLSearchParams(search) : search;
+}
+
+function getTrimmedParam(params: Pick<URLSearchParams, "get">, name: string) {
+  const value = params.get(name)?.trim();
+  return value || undefined;
+}
+
+export function parseReadRouteSearch(search: string | Pick<URLSearchParams, "get">): ParsedReadRouteSearch {
+  const params = getRouteSearchParams(search);
+  const legacyView = params.get("view");
+  const scope = params.get("scope");
+  const sort = params.get("sort");
+  const surface = params.get("surface");
+  const q = params.get("q");
+
+  return {
+    legacyLibraryView: isAppLibraryView(legacyView) ? legacyView : undefined,
+    scope: isAppScope(scope) ? scope : undefined,
+    sort: isAppSortMode(sort) ? sort : undefined,
+    q: q ?? undefined,
+    item: getTrimmedParam(params, "item"),
+    surface: isAppReadSurface(surface) ? surface : undefined,
+  };
+}
+
+export function buildBrowserPath(location: Pick<Location, "pathname" | "search">): string {
+  return `${location.pathname}${location.search}`;
+}
+
+export function shouldHoldForPendingRouteRestore({
+  currentSection,
+  currentUrl,
+  pending,
+}: {
+  currentSection: AppSection | null;
+  currentUrl: string;
+  pending: PendingRouteRestoreState;
+}) {
+  return Boolean(pending && (currentUrl !== pending.href || currentSection !== pending.section));
+}
+
+export function resolveReadRouteBootState({
+  pathname,
+  search,
+  section,
+  libraryView,
+  activeItemId,
+  readingItemId,
+  itemSearch,
+  readSurface,
+}: ReadRouteBootInput): ReadRouteBootState {
+  const pathState = parseAppPath(pathname);
+  let nextSection = section;
+  let nextLibraryView = libraryView;
+  let nextActiveItemId = activeItemId;
+  let nextReadingItemId = readingItemId;
+  let nextItemSearch = itemSearch;
+  let nextReadSurface = readSurface;
+
+  if (pathState.section) {
+    nextSection = pathState.section;
+    if (pathState.section === "read") {
+      nextLibraryView = pathState.libraryView;
+    }
+  }
+
+  const readRouteSearch = parseReadRouteSearch(search);
+  if (readRouteSearch.legacyLibraryView) {
+    nextLibraryView = readRouteSearch.legacyLibraryView;
+    nextSection = "read";
+  }
+
+  if (nextSection === "read") {
+    if (readRouteSearch.item) {
+      nextActiveItemId = readRouteSearch.item;
+      nextReadingItemId = readRouteSearch.item;
+    }
+    if (nextActiveItemId && readRouteSearch.surface === "article") {
+      nextReadSurface = "article";
+    }
+    if (typeof readRouteSearch.q === "string") {
+      nextItemSearch = readRouteSearch.q;
+    }
+  }
+
+  return {
+    activeItemId: nextActiveItemId,
+    itemSearch: nextItemSearch,
+    libraryView: nextLibraryView,
+    readingItemId: nextReadingItemId,
+    readSurface: nextReadSurface,
+    scope: nextSection === "read" ? readRouteSearch.scope : undefined,
+    section: nextSection,
+    sort: nextSection === "read" ? readRouteSearch.sort : undefined,
+  };
+}
+
 export function buildAppHref({
   section,
   libraryView = "inbox",
@@ -113,19 +248,15 @@ export function parseLegacyQueryPath(search: string): {
   item?: string;
   surface?: AppReadSurface;
 } {
-  const params = new URLSearchParams(search);
-  const view = params.get("view");
-  const scope = params.get("scope");
-  const sort = params.get("sort");
-  const surface = params.get("surface");
+  const parsedSearch = parseReadRouteSearch(search);
 
   return {
     section: "read",
-    libraryView: isAppLibraryView(view) ? view : "inbox",
-    scope: isAppScope(scope) ? scope : undefined,
-    sort: isAppSortMode(sort) ? sort : undefined,
-    q: params.get("q")?.trim() || undefined,
-    item: params.get("item")?.trim() || undefined,
-    surface: isAppReadSurface(surface) ? surface : undefined,
+    libraryView: parsedSearch.legacyLibraryView ?? "inbox",
+    scope: parsedSearch.scope,
+    sort: parsedSearch.sort,
+    q: parsedSearch.q?.trim() || undefined,
+    item: parsedSearch.item,
+    surface: parsedSearch.surface,
   };
 }

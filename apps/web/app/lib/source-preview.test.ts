@@ -132,14 +132,14 @@ describe("source preview helpers", () => {
   });
 
   it("maps preview statuses to stable copy labels", () => {
-    expect(getSourcePreviewStatusLabel("ready")).toBe("Gotowy podglad");
-    expect(getSourcePreviewStatusLabel("already_subscribed")).toBe("Juz dodane");
-    expect(getSourcePreviewStatusLabel("multiple_candidates")).toBe("Wiele kandydatow");
+    expect(getSourcePreviewStatusLabel("ready")).toBe("Gotowy podgląd");
+    expect(getSourcePreviewStatusLabel("already_subscribed")).toBe("Już dodane");
+    expect(getSourcePreviewStatusLabel("multiple_candidates")).toBe("Wiele kandydatów");
   });
 
   it("builds calm live announcements for screen readers", () => {
     expect(getSourcePreviewAnnouncement({ uiState: "idle" })).toBe(
-      "Wklej adres strony albo feedu, aby zobaczyc preview.",
+      "Wklej adres strony albo feedu, aby zobaczyć preview.",
     );
     expect(getSourcePreviewAnnouncement({ uiState: "loading" })).toBe(
       "Trwa sprawdzanie adresu i wykrywanie feedu.",
@@ -148,7 +148,7 @@ describe("source preview helpers", () => {
       "Wynik gotowy. Wykryto jeden feed do obserwowania.",
     );
     expect(getSourcePreviewAnnouncement({ uiState: "multiple_candidates", resultCount: 2 })).toBe(
-      "Wynik gotowy. Znaleziono 2 kandydatow.",
+      "Wynik gotowy. Znaleziono 2 kandydatów.",
     );
     expect(
       getSourcePreviewAnnouncement({

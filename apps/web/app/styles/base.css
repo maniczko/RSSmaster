@@ -47,6 +47,26 @@ body {
   font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
 }
 
+.skip-link {
+  position: fixed;
+  top: 0.8rem;
+  left: 0.8rem;
+  z-index: 1000;
+  transform: translateY(-180%);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-elevated);
+  color: var(--accent-strong);
+  padding: 0.6rem 0.95rem;
+  font-weight: 800;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -362,9 +382,13 @@ kbd {
   margin-bottom: 1rem;
 }
 
+.reader-pane-header h1,
 .reader-pane-header h2,
+.ops-section h1,
 .ops-section h3,
 .reader-preview-panel h3,
+.workspace-redirect-shell h1,
+.workspace-runtime-blocker h1,
 .runtime-fallback h2 {
   margin: 0.35rem 0 0.45rem;
 }

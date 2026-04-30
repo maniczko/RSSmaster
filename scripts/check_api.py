@@ -5,6 +5,8 @@ import os
 import shutil
 import sys
 import tempfile
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -23,6 +25,9 @@ os.environ["RSSMASTER_ACCOUNTS_COOKIE_NAME"] = "rssmaster_api_check_session"
 os.environ["RSSMASTER_FETCH_TIMEOUT_SECONDS"] = "5"
 
 sys.path.insert(0, str(ROOT_DIR / "apps" / "api"))
+ROUTE_MANIFEST_PATH = ROOT_DIR / "docs" / "api-route-manifest.json"
+API_CONTRACT_PATH = ROOT_DIR / "docs" / "api-contract.md"
+VALID_ROUTE_STABILITIES = {"stable", "experimental", "compatibility", "diagnostic", "internal"}
 
 try:
     from fastapi.testclient import TestClient
@@ -34,6 +39,16 @@ except ModuleNotFoundError as error:
     raise SystemExit(1) from error
 
 
+def recent_rss_date(*, days_ago: int, hours_ago: int = 0) -> str:
+    published_at = datetime.now(UTC) - timedelta(days=days_ago, hours=hours_ago)
+    return format_datetime(published_at, usegmt=True)
+
+
+def recent_iso_timestamp(*, days_ago: int, hours_ago: int = 0) -> str:
+    value = datetime.now(UTC) - timedelta(days=days_ago, hours=hours_ago)
+    return value.isoformat().replace("+00:00", "Z")
+
+
 def rss_item(*, site_url: str, item_guid: str, title: str = "Entry") -> str:
     return f"""
     <item>
@@ -41,7 +56,7 @@ def rss_item(*, site_url: str, item_guid: str, title: str = "Entry") -> str:
       <link>{site_url}/{item_guid}</link>
       <guid>{item_guid}</guid>
       <description>{title} summary prepared for local verification.</description>
-      <pubDate>Fri, 17 Apr 2026 18:00:00 GMT</pubDate>
+      <pubDate>{recent_rss_date(days_ago=1)}</pubDate>
     </item>
     """
 
@@ -228,7 +243,59 @@ class SampleFeedHandler(BaseHTTPRequestHandler):
         self.wfile.write(body.encode("utf-8"))
 
 
+def route_key(route: dict[str, object]) -> tuple[str, str]:
+    return str(route["method"]).upper(), str(route["path"])
+
+
+def collect_fastapi_route_keys() -> set[tuple[str, str]]:
+    route_keys: set[tuple[str, str]] = set()
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if not path or not methods:
+            continue
+        for method in methods:
+            method_name = str(method).upper()
+            if method_name in {"HEAD", "OPTIONS"}:
+                continue
+            route_keys.add((method_name, str(path)))
+    return route_keys
+
+
+def load_route_manifest() -> list[dict[str, object]]:
+    payload = json.loads(ROUTE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert payload.get("schema_version") == 1, "docs/api-route-manifest.json schema_version must be 1"
+    routes = payload.get("routes")
+    assert isinstance(routes, list) and routes, "docs/api-route-manifest.json must define a non-empty routes list"
+    for route in routes:
+        assert isinstance(route, dict), f"Route manifest entry must be an object: {route!r}"
+        assert route.get("method") and route.get("path"), f"Route manifest entry missing method/path: {route!r}"
+        assert route.get("surface"), f"Route manifest entry missing surface: {route!r}"
+        stability = route.get("stability")
+        assert stability in VALID_ROUTE_STABILITIES, f"Route manifest entry has invalid stability: {route!r}"
+    return routes
+
+
+def assert_route_manifest_matches_app() -> None:
+    manifest_routes = load_route_manifest()
+    expected = {route_key(route) for route in manifest_routes}
+    assert len(expected) == len(manifest_routes), "docs/api-route-manifest.json contains duplicate method/path entries"
+
+    actual = collect_fastapi_route_keys()
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - expected)
+    assert not missing, f"Route manifest lists routes missing from FastAPI app: {missing}"
+    assert not unexpected, f"FastAPI app exposes undocumented routes: {unexpected}"
+
+    contract_text = API_CONTRACT_PATH.read_text(encoding="utf-8")
+    assert "docs/api-route-manifest.json" in contract_text, "docs/api-contract.md must reference docs/api-route-manifest.json"
+    for stability in sorted(VALID_ROUTE_STABILITIES):
+        assert f"`{stability}`" in contract_text, f"docs/api-contract.md must explain route stability `{stability}`"
+
+
 def main() -> int:
+    assert_route_manifest_matches_app()
+
     server = ThreadingHTTPServer(("127.0.0.1", 0), SampleFeedHandler)
     base_url = f"http://127.0.0.1:{server.server_port}"
     broken_server = ThreadingHTTPServer(("127.0.0.1", 0), SampleFeedHandler)
@@ -251,6 +318,11 @@ def main() -> int:
         "/images/related-card.jpg",
         "/theme/pattern-divider.png",
     ]
+    direct_feed_date = recent_rss_date(days_ago=1)
+    metadata_feed_date = recent_rss_date(days_ago=2)
+    alpha_feed_date = recent_rss_date(days_ago=3)
+    beta_feed_date = recent_rss_date(days_ago=4)
+    heuristic_feed_date = recent_rss_date(days_ago=1, hours_ago=6)
     server.routes = {
         "/feeds/direct.xml": (
             200,
@@ -259,7 +331,7 @@ def main() -> int:
                 title="Direct Feed",
                 site_url=f"{base_url}/direct-home",
                 item_guids=["direct-1"],
-                published_at="Fri, 17 Apr 2026 18:00:00 GMT",
+                published_at=direct_feed_date,
             ),
         ),
         "/feeds/meta.xml": (
@@ -269,7 +341,7 @@ def main() -> int:
                 title="Metadata Feed",
                 site_url=f"{base_url}/metadata-home",
                 item_guids=["meta-1"],
-                published_at="Thu, 16 Apr 2026 09:30:00 GMT",
+                published_at=metadata_feed_date,
             ),
         ),
         "/feeds/alpha.xml": (
@@ -279,7 +351,7 @@ def main() -> int:
                 title="Alpha Feed",
                 site_url=f"{base_url}/alpha-home",
                 item_guids=["alpha-1"],
-                published_at="Tue, 14 Apr 2026 11:00:00 GMT",
+                published_at=alpha_feed_date,
             ),
         ),
         "/feeds/beta.xml": (
@@ -289,7 +361,7 @@ def main() -> int:
                 title="Beta Feed",
                 site_url=f"{base_url}/beta-home",
                 item_guids=["beta-1"],
-                published_at="Mon, 13 Apr 2026 08:00:00 GMT",
+                published_at=beta_feed_date,
             ),
         ),
         "/feed": (
@@ -299,7 +371,7 @@ def main() -> int:
                 title="Heuristic Feed",
                 site_url=f"{base_url}/heuristic-home",
                 item_guids=["heuristic-1"],
-                published_at="Wed, 15 Apr 2026 08:15:00 GMT",
+                published_at=heuristic_feed_date,
             ),
         ),
         "/direct-home/direct-1": (
@@ -454,7 +526,7 @@ def main() -> int:
                     title="Metadata Feed",
                     site_url=f"{base_url}/metadata-home",
                     item_guids=["meta-1"],
-                    published_at="Thu, 16 Apr 2026 09:30:00 GMT",
+                    published_at=metadata_feed_date,
                 ),
             )
             recovery_sync_response = client.post("/api/v1/sync/runs", json={"mode": "manual"})
@@ -495,13 +567,14 @@ def main() -> int:
                 "/api/v1/items",
                 params={"category": "metadata"},
             )
+            direct_only_cutoff = recent_iso_timestamp(days_ago=1, hours_ago=3)
             published_after_response = client.get(
                 "/api/v1/items",
-                params={"published_after": "2026-04-16T12:00:00Z"},
+                params={"published_after": direct_only_cutoff},
             )
             published_before_response = client.get(
                 "/api/v1/items",
-                params={"published_before": "2026-04-16T09:30:00Z"},
+                params={"published_before": direct_only_cutoff},
             )
             multi_channel_items_response = client.get(
                 "/api/v1/items",
@@ -522,8 +595,8 @@ def main() -> int:
             invalid_time_window_response = client.get(
                 "/api/v1/items",
                 params={
-                    "published_after": "2026-04-17T00:00:00Z",
-                    "published_before": "2026-04-16T00:00:00Z",
+                    "published_after": recent_iso_timestamp(days_ago=1),
+                    "published_before": recent_iso_timestamp(days_ago=2),
                 },
             )
             favorite_empty_response = client.get(
@@ -564,6 +637,18 @@ def main() -> int:
                 params={"sort": "sideways"},
             )
             detail_item_response = client.get(f"/api/v1/items/{direct_item_id}")
+            reextract_dry_run_response = client.post(
+                f"/api/v1/items/{direct_item_id}/reextract",
+                json={"mode": "dry_run"},
+            )
+            reextract_write_response = client.post(
+                f"/api/v1/items/{direct_item_id}/reextract",
+                json={"mode": "write"},
+            )
+            missing_reextract_response = client.post(
+                "/api/v1/items/missing-item/reextract",
+                json={"mode": "dry_run"},
+            )
             missing_detail_item_response = client.get("/api/v1/items/missing-item")
             content_search_response = client.get(
                 "/api/v1/items",
@@ -649,6 +734,14 @@ def main() -> int:
                 "/api/v1/settings/delivery/preflight",
                 json={"check_connection": False},
             )
+            digest_persisted_preview_response = client.post(
+                "/api/v1/digests/preview",
+                json={
+                    "title": "Persisted Candidate Digest",
+                    "digest_candidates_only": True,
+                    "include_read": True,
+                },
+            )
             digest_preview_response = client.post(
                 "/api/v1/digests/preview",
                 json={
@@ -710,6 +803,10 @@ def main() -> int:
             )
             workspace_briefing_response = client.get(
                 "/api/v1/workspace/briefing",
+                headers=cors_headers,
+            )
+            workspace_source_health_response = client.get(
+                "/api/v1/workspace/source-health",
                 headers=cors_headers,
             )
             annotation_note_response = client.post(
@@ -854,6 +951,10 @@ def main() -> int:
         assert all(item["extraction_status"] == "completed" for item in all_items)
         assert all(item["has_cleaned_content"] is True for item in all_items)
         assert all(item["has_raw_content"] is True for item in all_items)
+        assert all(item["reader_status"]["mode"] == "cleaned" for item in all_items)
+        assert all(item["reader_status"]["quality"] == "ready" for item in all_items)
+        assert all(item["reader_status"]["label"] == "Pełny tekst" for item in all_items)
+        assert all(item["reader_status"]["primary_action"] == "read_in_app" for item in all_items)
         assert all(item["digest"]["status"] == "ready" for item in all_items)
         assert all(item["channel"]["state"] == "active" for item in all_items)
         assert all(item["library"]["state"] == "inbox" for item in all_items)
@@ -1012,6 +1113,28 @@ def main() -> int:
             fragments=premium_cleanup_forbidden_text,
         )
         assert detail_item_response.json()["item"]["library"]["state"] == "inbox"
+        assert detail_item_response.json()["item"]["reader_status"]["mode"] == "cleaned"
+        assert "diagnostic_reason" in detail_item_response.json()["item"]["reader_status"]
+
+        assert reextract_dry_run_response.status_code == 200, reextract_dry_run_response.text
+        reextract_dry_payload = reextract_dry_run_response.json()
+        assert reextract_dry_payload["mode"] == "dry_run"
+        assert reextract_dry_payload["write_applied"] is False
+        assert reextract_dry_payload["before"]["reader_status"]["mode"] == "cleaned"
+        assert reextract_dry_payload["after"]["reader_status"]["mode"] == "cleaned"
+        assert isinstance(reextract_dry_payload["stop_reasons"], list)
+        assert reextract_dry_payload["item"]["id"] == direct_item_id
+
+        assert reextract_write_response.status_code == 200, reextract_write_response.text
+        reextract_write_payload = reextract_write_response.json()
+        assert reextract_write_payload["mode"] == "write"
+        assert reextract_write_payload["write_applied"] is True
+        assert reextract_write_payload["after"]["reader_status"]["quality"] == "ready"
+        assert reextract_write_payload["item"]["reader_status"]["mode"] == "cleaned"
+        assert reextract_write_payload["stop_reasons"] == []
+
+        assert missing_reextract_response.status_code == 404, missing_reextract_response.text
+        assert missing_reextract_response.json()["error"]["code"] == "item_not_found"
 
         assert missing_detail_item_response.status_code == 404, missing_detail_item_response.text
         assert missing_detail_item_response.json()["error"]["code"] == "item_not_found"
@@ -1148,6 +1271,18 @@ def main() -> int:
         assert delivery_settings_preflight_response.json()["preflight"]["status"] == "ready"
         assert delivery_settings_preflight_response.json()["preflight"]["can_send"] is True
 
+        assert digest_persisted_preview_response.status_code == 200, digest_persisted_preview_response.text
+        persisted_digest_preview = digest_persisted_preview_response.json()["preview"]
+        assert persisted_digest_preview["selection_mode"] == "digest_candidates"
+        assert persisted_digest_preview["stats"]["article_count"] == 2
+        assert persisted_digest_preview["stats"]["digest_candidate_count"] == 2
+        persisted_digest_ids = {
+            entry["item_id"]
+            for entry in persisted_digest_preview["selection_snapshot"]
+        }
+        assert persisted_digest_ids == {metadata_item_id, heuristic_item_id}
+        assert direct_item_id not in persisted_digest_ids
+
         assert digest_preview_response.status_code == 200, digest_preview_response.text
         assert digest_preview_response.json()["preview"]["stats"]["article_count"] == 3
         assert digest_preview_response.json()["preview"]["selection_mode"] == "explicit"
@@ -1265,6 +1400,7 @@ def main() -> int:
             workspace_ranking_response,
             workspace_stories_response,
             workspace_briefing_response,
+            workspace_source_health_response,
             annotation_note_response,
             annotation_highlight_response,
             item_tags_response,
@@ -1296,6 +1432,20 @@ def main() -> int:
         assert briefing_payload["stats"]["saved_count"] >= 0
         assert briefing_payload["recommended"]
         assert briefing_payload["stats"]["recommended_count"] == len(briefing_payload["recommended"])
+
+        source_health_payload = workspace_source_health_response.json()
+        assert len(source_health_payload["items"]) == 3
+        for entry in source_health_payload["items"]:
+            assert entry["reading_readiness"] in {"ready", "degraded", "blocked", "unknown"}
+            assert isinstance(entry["reading_summary"], str) and entry["reading_summary"]
+            assert isinstance(entry["readable_items_7d"], int)
+            assert isinstance(entry["local_readable_items_7d"], int)
+            assert isinstance(entry["excerpt_fallback_items_7d"], int)
+            assert isinstance(entry["source_only_items_7d"], int)
+            assert entry["readable_items_7d"] == entry["local_readable_items_7d"] + entry["excerpt_fallback_items_7d"]
+            assert isinstance(entry["extraction_failed_items_7d"], int)
+            assert "last_successful_fetch_at" in entry
+            assert "last_error_message" in entry
 
         assert export_payload["exported_at"]
         assert export_payload["sources_opml"].startswith('<?xml version="1.0" encoding="UTF-8"?>')

@@ -156,6 +156,7 @@ class ItemRepository:
                     i.archived_at,
                     i.digest_candidate,
                     i.extraction_status,
+                    i.extraction_error,
                     i.raw_html,
                     i.cleaned_html,
                     i.content_text,
@@ -230,6 +231,7 @@ class ItemRepository:
                     i.archived_at,
                     i.digest_candidate,
                     i.extraction_status,
+                    i.extraction_error,
                     i.raw_html,
                     i.cleaned_html,
                     i.content_text,
@@ -269,6 +271,7 @@ class ItemRepository:
                     i.archived_at,
                     i.digest_candidate,
                     i.extraction_status,
+                    i.extraction_error,
                     i.raw_html,
                     i.cleaned_html,
                     i.content_text,
@@ -359,6 +362,15 @@ class ItemRepository:
     ) -> dict[str, object]:
         has_cleaned_content = has_text(row["cleaned_html"]) or has_text(row["content_text"])
         has_raw_content = has_text(row["raw_html"]) or has_text(row["excerpt"])
+        reader_status = build_reader_status(
+            extraction_status=row["extraction_status"],
+            extraction_error=row["extraction_error"],
+            cleaned_html=row["cleaned_html"],
+            content_text=row["content_text"],
+            raw_html=row["raw_html"],
+            excerpt=row["excerpt"],
+            include_diagnostic=include_content,
+        )
         library = build_library(
             is_favorite=bool(row["is_favorite"]),
             favorited_at=row["favorited_at"],
@@ -386,6 +398,7 @@ class ItemRepository:
             "extraction_status": row["extraction_status"],
             "has_cleaned_content": has_cleaned_content,
             "has_raw_content": has_raw_content,
+            "reader_status": reader_status,
             "library": library,
             "search_match": search_match,
             "channel": {
@@ -446,6 +459,110 @@ def escape_like(value: str) -> str:
 
 def has_text(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def build_reader_status(
+    *,
+    extraction_status: object,
+    extraction_error: object,
+    cleaned_html: object,
+    content_text: object,
+    raw_html: object,
+    excerpt: object,
+    include_diagnostic: bool,
+) -> dict[str, object]:
+    extraction_state = str(extraction_status or "pending")
+    diagnostic_reason = sanitize_extraction_diagnostic(extraction_error) if include_diagnostic else None
+
+    if has_text(cleaned_html) and extraction_state == "completed":
+        return {
+            "mode": "cleaned",
+            "quality": "ready",
+            "label": "Pełny tekst",
+            "summary": "Oczyszczony widok jest gotowy do czytania w aplikacji.",
+            "primary_action": "read_in_app",
+            "diagnostic_reason": diagnostic_reason if extraction_state == "failed" else None,
+        }
+
+    if has_text(content_text):
+        quality = "degraded" if extraction_state in {"failed", "skipped"} else "ready"
+        summary = (
+            "Ekstrakcja pełnego tekstu nie zakończyła się poprawnie, ale feed dostarczył czytelny tekst lokalny."
+            if quality == "degraded"
+            else "Pełny HTML nie jest gotowy, ale artykuł ma czytelny tekst lokalny."
+        )
+        return {
+            "mode": "text_fallback",
+            "quality": quality,
+            "label": "Tekst z feedu",
+            "summary": summary,
+            "primary_action": "read_in_app",
+            "diagnostic_reason": diagnostic_reason if extraction_state == "failed" else None,
+        }
+
+    if has_text(excerpt):
+        return {
+            "mode": "excerpt",
+            "quality": "degraded",
+            "label": "Tylko skrót",
+            "summary": "Pełny tekst nie jest gotowy, ale skrót z feedu można przeczytać w aplikacji.",
+            "primary_action": "read_in_app",
+            "diagnostic_reason": diagnostic_reason if extraction_state == "failed" else None,
+        }
+
+    if extraction_state in {"pending", "running"}:
+        return {
+            "mode": "source_only",
+            "quality": "loading",
+            "label": "W trakcie",
+            "summary": "Czytelny widok czeka na ekstrakcję albo kolejny sync.",
+            "primary_action": "wait_for_sync",
+            "diagnostic_reason": None,
+        }
+
+    if has_text(raw_html):
+        return {
+            "mode": "source_only",
+            "quality": "degraded",
+            "label": "Źródło",
+            "summary": "Aplikacja ma surowy materiał, ale nie ma bezpiecznej lokalnej wersji do czytania.",
+            "primary_action": "open_source",
+            "diagnostic_reason": diagnostic_reason if extraction_state == "failed" else None,
+        }
+
+    return {
+        "mode": "source_only",
+        "quality": "blocked",
+        "label": "Źródło",
+        "summary": "Brak lokalnej treści; najlepszym fallbackiem jest otwarcie oryginalnego źródła.",
+        "primary_action": "open_source",
+        "diagnostic_reason": diagnostic_reason if extraction_state == "failed" else None,
+    }
+
+
+def sanitize_extraction_diagnostic(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+
+    normalized = " ".join(value.strip().split())
+    if not normalized:
+        return None
+
+    blocked_markers = (
+        "traceback",
+        "file \"",
+        "line ",
+        "stack",
+        "raise ",
+    )
+    lowered = normalized.casefold()
+    if any(marker in lowered for marker in blocked_markers):
+        return "Ekstrakcja zgłosiła błąd techniczny. Szczegóły są dostępne w logach runtime."
+
+    if len(normalized) > 180:
+        return normalized[:177].rstrip() + "..."
+
+    return normalized
 
 
 def resolve_sort_sql(sort: str) -> tuple[str, str]:

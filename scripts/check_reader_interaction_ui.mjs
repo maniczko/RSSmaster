@@ -6,6 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareSmokeRuntime } from "./lib/local-runtime.mjs";
+import {
+  attachPlaywrightArtifact,
+  collectScreenshotEvidence,
+} from "./lib/playwright-artifact-schema.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +17,7 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 const OUTPUT_DIR = path.join(ROOT_DIR, "output", "playwright");
 const OUTPUT_JSON = path.join(OUTPUT_DIR, "reader-interaction-smoke.json");
 const OUTPUT_SCREENSHOT = path.join(OUTPUT_DIR, "reader-interaction-smoke.png");
+const RUN_STARTED_AT = new Date();
 
 function assert(condition, message) {
   if (!condition) {
@@ -125,10 +130,15 @@ async function waitForReaderArticle(page, title) {
   await page.waitForFunction((expectedTitle) => document.body.innerText.includes(expectedTitle), title, {
     timeout: 30000,
   });
-  const proseVisible = await page.locator(".reader-article-prose").first().isVisible().catch(() => false);
+  const proseVisible = await page
+    .locator(".reader-article-prose")
+    .first()
+    .waitFor({ state: "visible", timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
   if (!proseVisible) {
     const readButton = page.getByRole("button", {
-      name: /Czytaj (artykul|artykuł|oczyszczony|fallback|skrot|skrót)/i,
+      name: /^Czytaj$|Czytaj (artykul|artykuł|pełny tekst|tekst z feedu|oczyszczony|fallback|skrot|skrót)/i,
     }).first();
     if ((await readButton.count()) > 0 && (await readButton.isVisible())) {
       await readButton.click({ timeout: 8000 });
@@ -136,6 +146,68 @@ async function waitForReaderArticle(page, title) {
   }
   await page.waitForSelector(".reader-article-prose", { timeout: 20000 });
   await page.waitForSelector('[data-testid="reader-decision-bar"]', { timeout: 20000 });
+}
+
+function withStandardArtifact(results, { error = null, status = "passed" } = {}) {
+  const screenshotEvidence = collectScreenshotEvidence([OUTPUT_SCREENSHOT], {
+    rootDir: ROOT_DIR,
+    runStartedAt: RUN_STARTED_AT,
+  });
+  return attachPlaywrightArtifact(results, {
+    actions: [
+      {
+        id: "reader-read-next",
+        label: "Przeczytaj + dalej",
+        route: "/read/saved",
+        status: results.actionAdvancedToNext ? "passed" : "failed",
+        screenshot: OUTPUT_SCREENSHOT,
+        notes: {
+          undoEnabled: results.undoEnabled,
+          mobileTargetMinHeight: results.mobileTargetMinHeight,
+        },
+      },
+    ],
+    checkName: "check:reader:interaction",
+    errors: {
+      console: results.consoleErrors ?? [],
+      page: results.pageErrors ?? [],
+      harness: error
+        ? [
+            {
+              message: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack ?? null : null,
+            },
+          ]
+        : [],
+    },
+    metadata: {
+      opened_newer_article: results.openedNewerArticle,
+      decision_bar_visible: results.decisionBarVisible,
+      no_horizontal_overflow: results.noHorizontalOverflow,
+    },
+    routes: [
+      {
+        id: "reader-saved-article-mobile",
+        route: "/read/saved",
+        viewport: "mobile",
+        status,
+        screenshot: OUTPUT_SCREENSHOT,
+        ready: results.openedNewerArticle && results.decisionBarVisible,
+        overflow: results.noHorizontalOverflow === false,
+        keyboardReachable: null,
+        consoleErrorCount: results.consoleErrors?.length ?? 0,
+        pageErrorCount: results.pageErrors?.length ?? 0,
+      },
+    ],
+    runtime: results.runtime,
+    screenshots: screenshotEvidence,
+    startedAt: RUN_STARTED_AT,
+    status,
+    targetUrls: {
+      apiUrl: results.runtime?.apiUrl ?? null,
+      webUrl: results.runtime?.webUrl ?? null,
+    },
+  });
 }
 
 async function main() {
@@ -181,6 +253,7 @@ async function main() {
       pageErrors,
       runtime: {
         apiUrl,
+        authMode: runtime.authMode,
         isolated: runtime.isolated,
         runDir: runtime.runDir,
         webUrl,
@@ -234,7 +307,7 @@ async function main() {
     }
 
     console.log(JSON.stringify(results, null, 2));
-    await writeFile(OUTPUT_JSON, JSON.stringify(results, null, 2), "utf8");
+    await writeFile(OUTPUT_JSON, JSON.stringify(withStandardArtifact(results), null, 2), "utf8");
   } finally {
     await runtime.close();
   }

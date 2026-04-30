@@ -14,6 +14,21 @@ type ReaderBrowseItem = {
   digest_candidate: boolean;
   has_cleaned_content: boolean;
   has_raw_content: boolean;
+  reader_status?: {
+    mode?: "cleaned" | "text_fallback" | "excerpt" | "source_only";
+    quality?: "ready" | "degraded" | "blocked" | "loading";
+    label?: string | null;
+    summary?: string | null;
+    primary_action?: string | null;
+    diagnostic_reason?: string | null;
+  } | null;
+};
+
+type ReaderBrowseEmptyAction = {
+  label: string;
+  onClick: () => void;
+  tone?: "default" | "accent";
+  disabled?: boolean;
 };
 
 type ReaderBrowseViewProps = {
@@ -23,7 +38,10 @@ type ReaderBrowseViewProps = {
   channelSiteUrls: Record<string, string | null>;
   channelTitles: Record<string, string>;
   emptyActionLabel?: string | null;
+  emptyActions?: ReaderBrowseEmptyAction[];
   emptyDescription?: string;
+  emptyDiagnosticDescription?: string;
+  emptyDiagnosticTitle?: string;
   emptyTitle?: string;
   formatTimestamp: (value: string | null, fallback: string) => string;
   isFocusedMode: boolean;
@@ -55,7 +73,10 @@ export function ReaderBrowseView({
   channelSiteUrls,
   channelTitles,
   emptyActionLabel = null,
+  emptyActions,
   emptyDescription,
+  emptyDiagnosticDescription,
+  emptyDiagnosticTitle,
   emptyTitle,
   formatTimestamp,
   isFocusedMode,
@@ -83,11 +104,11 @@ export function ReaderBrowseView({
     <section className={`reader-pane reader-pane-flat reader-pane-browse ${isFocusedMode ? "reader-pane-focused" : ""}`}>
       <header className="reader-pane-header reader-pane-header-flat feed-browse-header feed-browse-header-compact">
         <div className="feed-browse-title-wrap">
-          <h2>{activeFeedScopeLabel}</h2>
+          <h1>{activeFeedScopeLabel}</h1>
         </div>
       </header>
 
-      <div className="feed-browse-toolbar feed-browse-toolbar-stream">
+      <div className="feed-browse-toolbar feed-browse-toolbar-stream" data-testid="reader-browse-toolbar">
         <div className="feed-browse-toolbar-left">
           <div className="segmented-control" aria-label="Filtr przeczytania">
             <button className={!showReadItems ? "segment-active" : ""} onClick={() => onShowReadItemsChange(false)} type="button">
@@ -103,12 +124,13 @@ export function ReaderBrowseView({
           <label className="feed-browse-search">
             <span>Szukaj w artykulach</span>
             <input
+              data-testid="reader-search-input"
               onChange={(event) => onItemSearchChange(event.target.value)}
               placeholder="Szukaj w artykulach"
               value={itemSearch}
             />
           </label>
-          <div className="segmented-control" aria-label="Kolejnosc sortowania">
+          <div className="segmented-control" aria-label="Kolejnosc sortowania" data-testid="reader-sort-control">
             <button className={itemSortMode === "newest" ? "segment-active" : ""} onClick={() => onSortModeChange("newest")} type="button">
               Najnowsze
             </button>
@@ -134,7 +156,10 @@ export function ReaderBrowseView({
         channelSiteUrls={channelSiteUrls}
         channelTitles={channelTitles}
         emptyActionLabel={emptyActionLabel}
+        emptyActions={emptyActions}
         emptyDescription={emptyDescription}
+        emptyDiagnosticDescription={emptyDiagnosticDescription}
+        emptyDiagnosticTitle={emptyDiagnosticTitle}
         emptyTitle={emptyTitle}
         formatTimestamp={formatTimestamp}
         isLoading={isLoading}

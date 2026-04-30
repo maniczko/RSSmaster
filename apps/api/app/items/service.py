@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from datetime import datetime, timezone
 
+from app.config import Settings
 from app.errors import ApiError
+from app.extract.models import ExtractionResult
+from app.extract.repository import ExtractionRepository
+from app.extract.service import ExtractionService
 
-from .models import ItemCursor, ItemListFilters, ItemListResult, ItemSortMode, LibraryAction, LibraryView
-from .repository import ItemRepository
+from .models import ItemCursor, ItemListFilters, ItemListResult, ItemReextractMode, ItemSortMode, LibraryAction, LibraryView
+from .repository import ItemRepository, build_reader_status, has_text
 
 
 class ItemService:
-    def __init__(self, repository: ItemRepository) -> None:
+    def __init__(self, settings: Settings, repository: ItemRepository) -> None:
+        self.settings = settings
         self.repository = repository
 
     def list_items(
@@ -123,12 +129,115 @@ class ItemService:
             )
         return item
 
+    def reextract_item(self, item_id: str, *, mode: ItemReextractMode) -> dict[str, object]:
+        before_item = self.get_item_detail(item_id)
+        extraction_service = ExtractionService(
+            settings=self.settings,
+            repository=ExtractionRepository(self.settings.database_file),
+        )
+        result = extraction_service.reextract_item(item_id=item_id, write=mode == "write")
+        if result is None:
+            raise ApiError(
+                status_code=404,
+                code="item_not_found",
+                message="Item was not found.",
+                details={"item_id": item_id},
+                retryable=False,
+            )
+
+        after_reader_status = build_reader_status(
+            extraction_status=result.extraction_status,
+            extraction_error=result.extraction_error,
+            cleaned_html=result.cleaned_html,
+            content_text=result.content_text,
+            raw_html=result.raw_html,
+            excerpt=result.excerpt,
+            include_diagnostic=True,
+        )
+        before = build_reextract_snapshot(
+            extraction_status=before_item.get("extraction_status"),
+            reader_status=before_item["reader_status"],
+            cleaned_html=before_item.get("cleaned_html"),
+            content_text=before_item.get("content_text"),
+            excerpt=before_item.get("excerpt"),
+        )
+        after = build_reextract_snapshot(
+            extraction_status=result.extraction_status,
+            reader_status=after_reader_status,
+            cleaned_html=result.cleaned_html,
+            content_text=result.content_text,
+            excerpt=result.excerpt,
+        )
+        response_item = self.get_item_detail(item_id) if mode == "write" else before_item
+
+        return {
+            "item_id": item_id,
+            "mode": mode,
+            "write_applied": mode == "write",
+            "before": before,
+            "after": after,
+            "stop_reasons": build_reextract_stop_reasons(result=result, after=after),
+            "item": response_item,
+        }
+
 
 def normalize_optional_text(value: str | None) -> str | None:
     if value is None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def build_reextract_snapshot(
+    *,
+    extraction_status: object,
+    reader_status: object,
+    cleaned_html: object,
+    content_text: object,
+    excerpt: object,
+) -> dict[str, object]:
+    preview = normalize_preview_text(content_text) or normalize_preview_text(excerpt)
+    status = dict(reader_status) if isinstance(reader_status, dict) else {}
+    return {
+        "extraction_status": str(extraction_status) if extraction_status is not None else None,
+        "reader_status": status,
+        "has_cleaned_content": has_text(cleaned_html),
+        "has_content_text": has_text(content_text),
+        "has_excerpt": has_text(excerpt),
+        "cleaned_html_word_count_approx": count_words_from_html(cleaned_html),
+        "content_preview": preview,
+        "diagnostic_reason": status.get("diagnostic_reason"),
+    }
+
+
+def build_reextract_stop_reasons(*, result: ExtractionResult, after: dict[str, object]) -> list[str]:
+    stop_reasons: list[str] = []
+    if result.extraction_status != "completed":
+        stop_reasons.append(f"extraction_status={result.extraction_status}")
+    if not after["has_cleaned_content"] and not after["has_content_text"]:
+        stop_reasons.append("local_text_missing")
+    if int(after["cleaned_html_word_count_approx"]) < 40 and (after["has_cleaned_content"] or after["has_content_text"]):
+        stop_reasons.append(f"cleaned_html_word_count_approx={after['cleaned_html_word_count_approx']}<40")
+    reader_status = after.get("reader_status")
+    if isinstance(reader_status, dict) and reader_status.get("quality") in {"blocked", "loading"}:
+        stop_reasons.append(f"reader_quality={reader_status['quality']}")
+    return stop_reasons
+
+
+def normalize_preview_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split()).strip()
+    if not normalized:
+        return None
+    return normalized[:280]
+
+
+def count_words_from_html(value: object) -> int:
+    if not isinstance(value, str) or not value.strip():
+        return 0
+    text = re.sub(r"<[^>]+>", " ", value)
+    return len([part for part in text.split() if part.strip()])
 
 
 def split_filter_values(value: str | None) -> tuple[str, ...]:

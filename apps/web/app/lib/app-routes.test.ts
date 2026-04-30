@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildBrowserPath,
   buildAppHref,
   parseAppPath,
   parseLegacyQueryPath,
+  parseReadRouteSearch,
+  resolveReadRouteBootState,
+  shouldHoldForPendingRouteRestore,
 } from "@/app/lib/app-routes";
 
 describe("app route helpers", () => {
@@ -56,6 +60,88 @@ describe("app route helpers", () => {
       q: "ai",
       item: undefined,
       surface: "article",
+    });
+  });
+
+  it("parses canonical reader query params without leaking invalid values", () => {
+    expect(parseReadRouteSearch("?view=unknown&scope=all&sort=oldest&q=money.pl&item=%20itm_123%20&surface=article")).toEqual({
+      legacyLibraryView: undefined,
+      scope: "all",
+      sort: "oldest",
+      q: "money.pl",
+      item: "itm_123",
+      surface: "article",
+    });
+  });
+
+  it("builds the current browser path from location-like input", () => {
+    expect(buildBrowserPath({ pathname: "/read/inbox", search: "?scope=all" })).toBe("/read/inbox?scope=all");
+  });
+
+  it("holds route sync while continuity restore has not reached its target URL", () => {
+    expect(
+      shouldHoldForPendingRouteRestore({
+        currentSection: "read",
+        currentUrl: "/read/inbox",
+        pending: {
+          href: "/read/saved?item=itm_123",
+          section: "read",
+        },
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldHoldForPendingRouteRestore({
+        currentSection: "read",
+        currentUrl: "/read/saved?item=itm_123",
+        pending: {
+          href: "/read/saved?item=itm_123",
+          section: "read",
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("resolves boot state from stored continuity plus canonical read URL", () => {
+    expect(
+      resolveReadRouteBootState({
+        pathname: "/read/saved",
+        search: "?scope=all&sort=oldest&q=money.pl&item=itm_123&surface=article",
+        section: "discover",
+        libraryView: "inbox",
+        activeItemId: null,
+        readingItemId: null,
+        itemSearch: "stored",
+        readSurface: "browse",
+      }),
+    ).toEqual({
+      activeItemId: "itm_123",
+      itemSearch: "money.pl",
+      libraryView: "saved",
+      readingItemId: "itm_123",
+      readSurface: "article",
+      scope: "all",
+      section: "read",
+      sort: "oldest",
+    });
+  });
+
+  it("lets legacy root view query override stored non-read section", () => {
+    expect(
+      resolveReadRouteBootState({
+        pathname: "/",
+        search: "?view=digest&scope=unread",
+        section: "settings",
+        libraryView: "saved",
+        activeItemId: null,
+        readingItemId: null,
+        itemSearch: "",
+        readSurface: "browse",
+      }),
+    ).toMatchObject({
+      libraryView: "digest",
+      scope: "unread",
+      section: "read",
     });
   });
 });

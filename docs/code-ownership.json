@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "assessed_at": "2026-04-29",
+    "overall_current_score": 5.0,
+    "overall_target_score": 9.0,
+    "summary": "RSSmaster is functional and well covered, but ownership is concentrated in frontend and workspace orchestration files."
+  },
+  "mechanisms": {
+    "auth": {
+      "owner": "apps/api/app/auth",
+      "role": "canonical domain owner for local accounts, sessions, cookies, and account-to-workspace resolution",
+      "current_score": 7.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "apps/api/app/auth",
+        "apps/api/tests/test_local_auth.py",
+        "apps/web/app/components/local-auth.tsx",
+        "scripts/check_auth_ui.mjs"
+      ],
+      "verification": [
+        "python scripts/test_api_unit.py",
+        "npm run check:auth"
+      ],
+      "next_refactor_tasks": [
+        "Keep auth UI isolated from ChannelLab state growth.",
+        "Keep background jobs using explicit captured account workspace context."
+      ]
+    },
+    "reader": {
+      "owner": "apps/web/app/features/reader",
+      "role": "target frontend owner for queue browsing, article surface, triage, reader continuity, empty states, and reading quality",
+      "current_score": 5.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "apps/web/app/channel-lab.tsx",
+        "apps/web/app/components/reader-browse-view.tsx",
+        "apps/web/app/components/reader-article-topbar.tsx",
+        "apps/web/app/lib/reader-empty-state.ts",
+        "apps/web/app/lib/reader-quality.ts"
+      ],
+      "verification": [
+        "npm run build",
+        "npm run test:unit:web",
+        "npm run check:reader",
+        "npm run check:reader:interaction"
+      ],
+      "next_refactor_tasks": [
+        "Extract reader state and route synchronization out of ChannelLab.",
+        "Move reader API calls and DTOs into a typed web API client.",
+        "Keep empty-state diagnostics covered by unit and browser checks."
+      ]
+    },
+    "sources": {
+      "owner": "apps/api/app/channels + apps/api/app/source_management",
+      "role": "canonical owner for source onboarding, autodiscovery, OPML, source controls, sync entrypoints, and source health UX",
+      "current_score": 6.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "apps/api/app/channels",
+        "apps/api/app/source_management",
+        "apps/web/app/lib/source-preview.ts",
+        "scripts/check_sources_ui.mjs"
+      ],
+      "verification": [
+        "python scripts/test_api_unit.py",
+        "python scripts/check_api.py",
+        "npm run check:sources"
+      ],
+      "next_refactor_tasks": [
+        "Separate source discovery from source backoffice rendering in the web shell.",
+        "Make source controls use one canonical persistence model.",
+        "Keep preview/add/sync feedback calm and source-specific."
+      ]
+    },
+    "library": {
+      "owner": "apps/api/app/library",
+      "role": "canonical domain owner for tags, collections, saved searches, and library retrieval surfaces",
+      "current_score": 5.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "apps/api/app/library",
+        "apps/api/app/items",
+        "apps/api/app/db/schema.sql",
+        "docs/storage-schema.md"
+      ],
+      "verification": [
+        "python scripts/test_api_unit.py",
+        "python scripts/check_api.py"
+      ],
+      "next_refactor_tasks": [
+        "Choose one schema path for tags, collections, and saved searches.",
+        "Remove repository-level lazy table creation except compatibility shims.",
+        "Keep item state semantics aligned with reader and digest flows."
+      ]
+    },
+    "annotations": {
+      "owner": "apps/api/app/annotations",
+      "role": "canonical owner for highlights, notes, annotation hub, and item-level knowledge capture",
+      "current_score": 6.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "apps/api/app/annotations",
+        "apps/web/app/components/annotation-panel.tsx",
+        "docs/api-contract.md"
+      ],
+      "verification": [
+        "python scripts/test_api_unit.py",
+        "python scripts/check_api.py"
+      ],
+      "next_refactor_tasks": [
+        "Move annotation mutations out of workspace facade.",
+        "Keep capture-created notes visible through the same annotation owner."
+      ]
+    },
+    "digest": {
+      "owner": "apps/api/app/digests + apps/api/app/delivery",
+      "role": "canonical owner for persisted candidates, preview, build, history, delivery preflight, and delivery logs",
+      "current_score": 7.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "apps/api/app/digests",
+        "apps/api/app/delivery",
+        "apps/web/app/components/digest-build-panel.tsx",
+        "scripts/check_digest_ui.mjs"
+      ],
+      "verification": [
+        "python scripts/test_api_unit.py",
+        "python scripts/check_api.py",
+        "npm run check:digest"
+      ],
+      "next_refactor_tasks": [
+        "Keep digest selection independent from visible reader filters.",
+        "Keep delivery dry-run and live-send responsibilities separate."
+      ]
+    },
+    "capture": {
+      "owner": "apps/api/app/workspace capture facade + apps/web/app/capture",
+      "role": "owner for outside-app URL capture, note handoff, and saved-reader recovery",
+      "current_score": 6.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "apps/web/app/capture/page.tsx",
+        "apps/web/app/components/capture-studio.tsx",
+        "apps/api/tests/test_workspace_capture.py",
+        "scripts/check_capture_ui.mjs"
+      ],
+      "verification": [
+        "npm run test:unit:web",
+        "python scripts/test_api_unit.py",
+        "npm run check:capture"
+      ],
+      "next_refactor_tasks": [
+        "Move capture API semantics from workspace service into a capture owner or compatibility adapter.",
+        "Keep unauthenticated capture notice covered by browser smoke."
+      ]
+    },
+    "ranking_stories": {
+      "owner": "apps/api/app/ranking + apps/api/app/stories",
+      "role": "canonical owner for ranking pipeline, story clusters, briefing recommendations, and discovery signals",
+      "current_score": 6.0,
+      "target_score": 8.5,
+      "primary_paths": [
+        "apps/api/app/ranking",
+        "apps/api/app/stories",
+        "apps/api/tests/test_workspace_ranking.py",
+        "apps/api/tests/test_workspace_story_clusters.py"
+      ],
+      "verification": [
+        "python scripts/test_api_unit.py",
+        "python scripts/check_api.py"
+      ],
+      "next_refactor_tasks": [
+        "Keep workspace endpoints as aggregation only.",
+        "Document which signals are ranking inputs versus presentation labels."
+      ]
+    },
+    "workspace_facade": {
+      "owner": "apps/api/app/workspace",
+      "role": "compatibility facade and UI aggregation layer only; domain logic must delegate to canonical owners",
+      "current_score": 4.0,
+      "target_score": 8.5,
+      "primary_paths": [
+        "apps/api/app/workspace",
+        "docs/api-contract.md",
+        "scripts/check_api.py"
+      ],
+      "verification": [
+        "python scripts/test_api_unit.py",
+        "python scripts/check_api.py",
+        "npm run check:reader",
+        "npm run check:sources"
+      ],
+      "next_refactor_tasks": [
+        "Split workspace service into facade methods that delegate to library, annotations, ranking, stories, source management, and capture.",
+        "Keep /api/v1/workspace routes backward compatible until frontend call sites are migrated."
+      ]
+    },
+    "storage_migrations": {
+      "owner": "apps/api/app/db",
+      "role": "canonical owner for SQLite schema, migrations, startup readiness, and recovery diagnostics",
+      "current_score": 7.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "apps/api/app/db",
+        "apps/api/tests/test_db_migrations.py",
+        "docs/storage-schema.md",
+        "scripts/check_health.py"
+      ],
+      "verification": [
+        "python scripts/test_api_unit.py",
+        "python scripts/check_health.py"
+      ],
+      "next_refactor_tasks": [
+        "Keep all schema additions versioned and idempotent.",
+        "Retire duplicate storage paths only with explicit compatibility checks."
+      ]
+    },
+    "qa_harness": {
+      "owner": "scripts + docs/release-checklist.md",
+      "role": "canonical owner for release gates, browser smoke checks, performance evidence, artifact schema, and stale artifact detection",
+      "current_score": 6.0,
+      "target_score": 9.0,
+      "primary_paths": [
+        "scripts/check_api.py",
+        "scripts/run_release_evidence.py",
+        "scripts/lib/playwright-artifact-schema.mjs",
+        "docs/release-checklist.md"
+      ],
+      "verification": [
+        "npm run test:unit",
+        "npm run check",
+        "npm run health",
+        "npm run release:evidence"
+      ],
+      "next_refactor_tasks": [
+        "Split check_api into route manifest validation and focused smoke sections.",
+        "Keep all browser checks writing the shared artifact schema.",
+        "Make ownership checks part of the fast unit gate."
+      ]
+    }
+  }
+}

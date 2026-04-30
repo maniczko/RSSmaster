@@ -6,6 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareSmokeRuntime } from "./lib/local-runtime.mjs";
+import {
+  attachPlaywrightArtifact,
+  collectScreenshotEvidence,
+} from "./lib/playwright-artifact-schema.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +17,7 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 const OUTPUT_DIR = path.join(ROOT_DIR, "output", "playwright");
 const OUTPUT_JSON = path.join(OUTPUT_DIR, "capture-smoke.json");
 const OUTPUT_SCREENSHOT = path.join(OUTPUT_DIR, "capture-smoke.png");
+const RUN_STARTED_AT = new Date();
 
 function assert(condition, message) {
   if (!condition) {
@@ -302,6 +307,63 @@ async function openReaderNotes(page, noteText) {
   await waitForTextVisible(page, noteText, 20000);
 }
 
+function withStandardArtifact(results) {
+  const screenshots = collectScreenshotEvidence([OUTPUT_SCREENSHOT], {
+    rootDir: ROOT_DIR,
+    runStartedAt: RUN_STARTED_AT,
+  });
+  return attachPlaywrightArtifact(results, {
+    actions: [
+      { id: "global-capture-action", label: "Global capture action", status: results.globalCaptureAction ? "passed" : "failed" },
+      { id: "capture-prefill", label: "Capture prefill", route: "/capture", status: results.prefilledUrl && results.prefilledTitle && results.prefilledNote ? "passed" : "failed" },
+      { id: "capture-save", label: "Zapisz do biblioteki", route: "/capture", status: results.captureSucceeded ? "passed" : "failed" },
+      { id: "capture-handoff", label: "Open saved reader", route: "/read/saved", status: results.openedSavedReader && results.notePersisted ? "passed" : "failed" },
+    ],
+    checkName: "check:capture",
+    errors: {
+      console: results.consoleErrors ?? [],
+      page: results.pageErrors ?? [],
+      harness: results.error ? [{ message: String(results.error) }] : [],
+    },
+    metadata: {
+      article_url: results.articleUrl ?? null,
+      item_id: results.itemId ?? null,
+      bookmarklet_ready: results.bookmarkletReady ?? false,
+      manifest_share_target: results.manifestShareTarget ?? false,
+    },
+    routes: [
+      {
+        id: "capture",
+        route: "/capture",
+        viewport: "desktop",
+        status: results.status ?? "failed",
+        screenshot: OUTPUT_SCREENSHOT,
+        ready: results.prefilledUrl && results.captureSucceeded,
+        overflow: null,
+        consoleErrorCount: results.consoleErrors?.length ?? 0,
+        pageErrorCount: results.pageErrors?.length ?? 0,
+      },
+      {
+        id: "saved-reader-handoff",
+        route: "/read/saved",
+        viewport: "desktop",
+        status: results.openedSavedReader && results.notePersisted ? "passed" : "failed",
+        screenshot: OUTPUT_SCREENSHOT,
+        ready: results.openedSavedReader,
+        overflow: null,
+      },
+    ],
+    runtime: results.runtime,
+    screenshots,
+    startedAt: RUN_STARTED_AT,
+    status: results.status ?? "failed",
+    targetUrls: {
+      apiUrl: results.runtime?.apiUrl ?? null,
+      webUrl: results.runtime?.webUrl ?? null,
+    },
+  });
+}
+
 async function main() {
   await ensureOutputDir();
 
@@ -353,7 +415,9 @@ async function main() {
     });
 
     const results = {
+      status: "running",
       articleUrl,
+      globalCaptureAction: false,
       prefilledUrl: false,
       prefilledTitle: false,
       prefilledNote: false,
@@ -367,6 +431,7 @@ async function main() {
       pageErrors,
       runtime: {
         apiUrl,
+        authMode: runtime.authMode,
         isolated: runtime.isolated,
         runDir: runtime.runDir,
         webUrl,
@@ -382,6 +447,13 @@ async function main() {
         manifest?.share_target?.params?.url === "url" &&
         manifest?.share_target?.params?.title === "title" &&
         manifest?.share_target?.params?.text === "note";
+
+      await page.goto(`${webUrl}/read/inbox`, { waitUntil: "domcontentloaded", timeout: 60000 });
+      const globalCaptureAction = page.getByTestId("global-capture-action").first();
+      await globalCaptureAction.waitFor({ state: "visible", timeout: 20000 });
+      await globalCaptureAction.click({ timeout: 8000 });
+      await page.waitForURL((url) => url.pathname === "/capture", { timeout: 15000 });
+      results.globalCaptureAction = new URL(page.url()).pathname === "/capture";
 
       const captureUrl = `${webUrl}/capture?url=${encodeURIComponent(articleUrl)}&title=${encodeURIComponent(initialTitle)}&note=${encodeURIComponent(initialNote)}`;
       await page.goto(captureUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -444,17 +516,21 @@ async function main() {
       assert(results.prefilledUrl, "Capture page did not prefill the shared URL.");
       assert(results.prefilledTitle, "Capture page did not prefill the shared title.");
       assert(results.prefilledNote, "Capture page did not prefill the shared note.");
+      assert(results.globalCaptureAction, "Main app shell did not expose a working global capture action.");
       assert(results.bookmarkletReady, "Capture page did not expose a ready bookmarklet href.");
       assert(results.manifestShareTarget, "Manifest share target does not point to /capture with the expected params.");
       assert(results.openedSavedReader, "Capture flow did not navigate into the saved reader.");
       assert(results.notePersisted, "Capture note was not persisted as an item note annotation.");
       assert(consoleErrors.length === 0, `Capture smoke logged browser console issues: ${consoleErrors.map((entry) => entry.text).join(" | ")}`);
       assert(pageErrors.length === 0, `Capture smoke saw page errors: ${pageErrors.map((entry) => entry.message).join(" | ")}`);
+      results.status = "passed";
     } catch (error) {
+      results.status = "failed";
+      results.error = error instanceof Error ? error.stack ?? error.message : String(error);
       await page.screenshot({ path: OUTPUT_SCREENSHOT, fullPage: true }).catch(() => {});
       throw error;
     } finally {
-      await writeFile(OUTPUT_JSON, `${JSON.stringify(results, null, 2)}\n`, "utf8");
+      await writeFile(OUTPUT_JSON, `${JSON.stringify(withStandardArtifact(results), null, 2)}\n`, "utf8");
       await browser.close();
       await fixtureServer.close();
     }
@@ -474,7 +550,7 @@ main().catch(async (error) => {
     manualScreenReaderSignOff: "pending",
   };
   await ensureOutputDir();
-  await writeFile(OUTPUT_JSON, `${JSON.stringify(failurePayload, null, 2)}\n`, "utf8");
+  await writeFile(OUTPUT_JSON, `${JSON.stringify(withStandardArtifact(failurePayload), null, 2)}\n`, "utf8");
   console.error(`[check:capture] FAIL: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 });

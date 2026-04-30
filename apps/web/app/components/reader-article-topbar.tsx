@@ -10,12 +10,15 @@ import {
 type ReaderArticleTopbarProps = {
   busy: boolean;
   digestCandidate: boolean;
+  canReextract?: boolean;
   isArchived: boolean;
   isFavorite: boolean;
   isRead: boolean;
+  reextractBusy?: boolean;
   showInspector: boolean;
   sourceUrl: string;
   onBackToFeed: () => void;
+  onReextract?: () => void;
   onToggleArchive: () => void;
   onToggleDigest: () => void;
   onToggleFavorite: () => void;
@@ -25,16 +28,19 @@ type ReaderArticleTopbarProps = {
 
 export function ReaderArticleTopbar({
   busy,
+  canReextract = false,
   digestCandidate,
   isArchived,
   isFavorite,
   isRead,
   onBackToFeed,
+  onReextract,
   onToggleArchive,
   onToggleDigest,
   onToggleFavorite,
   onToggleInspector,
   onToggleRead,
+  reextractBusy = false,
   showInspector,
   sourceUrl,
 }: ReaderArticleTopbarProps) {
@@ -53,6 +59,14 @@ export function ReaderArticleTopbar({
       </div>
 
       <div className="feed-reader-topbar-actions">
+        {canReextract ? (
+          <button className="mini-button mini-button-accent" disabled={busy || reextractBusy} onClick={onReextract} type="button">
+            <span className="button-with-icon">
+              <ReaderIcon className="app-icon button-inline-icon" />
+              Ponów ekstrakcję
+            </span>
+          </button>
+        ) : null}
         <button
           className={`mini-button ${showInspector ? "mini-button-accent" : ""}`}
           onClick={onToggleInspector}

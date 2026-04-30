@@ -5,6 +5,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { prepareSmokeRuntime } from "./lib/local-runtime.mjs";
+import {
+  attachPlaywrightArtifact,
+  collectScreenshotEvidence,
+} from "./lib/playwright-artifact-schema.mjs";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -14,6 +20,7 @@ const OUTPUT_SCREENSHOT = path.join(OUTPUT_DIR, "reader-rich-smoke.png");
 const FIXTURE_IMAGE_PATH = path.join(ROOT_DIR, "scripts", "fixtures", "sources-preview", "favicon.ico");
 const RELATED_CONTENT_FRAGMENTS = ["Powiazane artykuly", "Przeczytaj takze", "Zobacz rowniez"];
 const PROMO_WIDGET_FRAGMENTS = ["Kup premium", "Subskrybuj premium", "Oferta partnerska"];
+const RUN_STARTED_AT = new Date();
 
 const READER_CORPUS_CASES = [
   {
@@ -220,6 +227,53 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function withStandardArtifact(results) {
+  const screenshots = collectScreenshotEvidence([OUTPUT_SCREENSHOT], {
+    rootDir: ROOT_DIR,
+    runStartedAt: RUN_STARTED_AT,
+  });
+  return attachPlaywrightArtifact(results, {
+    actions: [
+      { id: "reader-corpus-open", label: "Open reader corpus article", status: results.articleOpened ? "passed" : "failed" },
+      { id: "reader-cleaned-mode", label: "Cleaned reading mode", status: results.cleanedMode ? "passed" : "failed" },
+      { id: "reader-keyboard-toolbar", label: "Keyboard reaches reader toolbar", status: results.keyboardReachedBackButton && results.keyboardReachedNotesButton ? "passed" : "failed" },
+    ],
+    checkName: "check:reader",
+    errors: {
+      console: results.consoleErrors ?? [],
+      page: results.pageErrors ?? [],
+      harness: results.error ? [{ message: String(results.error) }] : [],
+    },
+    metadata: {
+      corpus_count: results.corpus?.length ?? 0,
+      evidence_tiers: results.evidenceTiers ?? null,
+      link_hrefs: results.linkHrefs ?? [],
+    },
+    routes: [
+      {
+        id: "reader-rich-saved",
+        route: "/read/saved",
+        viewport: "desktop",
+        status: results.status ?? "passed",
+        screenshot: OUTPUT_SCREENSHOT,
+        ready: results.articleOpened && results.cleanedMode,
+        overflow: null,
+        keyboardReachable: results.keyboardReachedBackButton && results.keyboardReachedNotesButton,
+        consoleErrorCount: results.consoleErrors?.length ?? 0,
+        pageErrorCount: results.pageErrors?.length ?? 0,
+      },
+    ],
+    runtime: results.runtime,
+    screenshots,
+    startedAt: RUN_STARTED_AT,
+    status: results.status ?? "passed",
+    targetUrls: {
+      apiUrl: results.runtime?.apiUrl ?? null,
+      webUrl: results.runtime?.webUrl ?? null,
+    },
+  });
 }
 
 function normalizeAuditText(value) {
@@ -573,33 +627,44 @@ async function main() {
   await ensureOutputDir();
 
   const { chromium } = loadPlaywright();
-  const webUrl = (process.env.RSSMASTER_WEB_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
-  const apiUrl = (process.env.RSSMASTER_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
-
-  await assertJsonHealth("web", `${webUrl}/api/health`);
-  await assertJsonHealth("api", `${apiUrl}/health`);
-
-  const fixtureServer = await startFixtureServer();
-
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
-  await installUnexpectedLocalImageFallback(
-    page,
-    new Set([getUrlPort(webUrl), getUrlPort(apiUrl), getUrlPort(fixtureServer.origin)]),
-  );
-  const consoleErrors = [];
-  const pageErrors = [];
-
-  page.on("console", (message) => {
-    if (message.type() === "error") {
-      consoleErrors.push(message.text());
-    }
+  const requestedWebUrl = (process.env.RSSMASTER_WEB_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
+  const requestedApiUrl = (process.env.RSSMASTER_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+  const runtime = await prepareSmokeRuntime({
+    apiUrl: requestedApiUrl,
+    forceExistingRuntime: process.env.RSSMASTER_USE_EXISTING_RUNTIME === "1",
+    label: "reader-rich-smoke",
+    outputDir: OUTPUT_DIR,
+    webUrl: requestedWebUrl,
   });
-  page.on("pageerror", (error) => {
-    pageErrors.push(String(error));
-  });
+  const webUrl = runtime.webUrl;
+  const apiUrl = runtime.apiUrl;
 
-  const results = {
+  try {
+    await assertJsonHealth("web", `${webUrl}/api/health`);
+    await assertJsonHealth("api", `${apiUrl}/health`);
+
+    const fixtureServer = await startFixtureServer();
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
+    await installUnexpectedLocalImageFallback(
+      page,
+      new Set([getUrlPort(webUrl), getUrlPort(apiUrl), getUrlPort(fixtureServer.origin)]),
+    );
+    const consoleErrors = [];
+    const pageErrors = [];
+
+    page.on("console", (message) => {
+      if (message.type() === "error") {
+        consoleErrors.push(message.text());
+      }
+    });
+    page.on("pageerror", (error) => {
+      pageErrors.push(String(error));
+    });
+
+    const results = {
+    status: "running",
     articleOpened: false,
     blockquoteRendered: false,
     cleanedMode: false,
@@ -627,9 +692,16 @@ async function main() {
       manualScreenReaderSignOff: "pending",
       unitGreen: "apps/web/app/lib/reader-html.test.ts",
     },
+    runtime: {
+      apiUrl,
+      authMode: runtime.authMode,
+      isolated: runtime.isolated,
+      runDir: runtime.runDir,
+      webUrl,
+    },
   };
 
-  try {
+    try {
     for (const caseDef of READER_CORPUS_CASES) {
       const capturedItem = await captureReaderArticle(apiUrl, `${fixtureServer.origin}/cases/${caseDef.id}/article`);
       await page.goto(`${webUrl}/read/saved?item=${encodeURIComponent(capturedItem.id)}`, {
@@ -735,13 +807,17 @@ async function main() {
     assert(consoleErrors.length === 0, `consoleErrors=${JSON.stringify(consoleErrors)}`);
 
     await page.screenshot({ path: OUTPUT_SCREENSHOT, fullPage: true });
-  } finally {
-    await browser.close();
-    await fixtureServer.close();
-  }
+    results.status = "passed";
+    } finally {
+      await browser.close();
+      await fixtureServer.close();
+    }
 
-  console.log(JSON.stringify(results, null, 2));
-  await writeFile(OUTPUT_JSON, JSON.stringify(results, null, 2), "utf8");
+    console.log(JSON.stringify(results, null, 2));
+    await writeFile(OUTPUT_JSON, JSON.stringify(withStandardArtifact(results), null, 2), "utf8");
+  } finally {
+    await runtime.close();
+  }
 }
 
 main().catch((error) => {

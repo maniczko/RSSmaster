@@ -11,6 +11,8 @@ rssmaster now uses a local account control database plus one SQLite workspace pe
   - local account identities, password hashes, and revocable sessions
 - `data/accounts/*.db`
   - per-account workspaces for channels, items, settings, digests, delivery logs, notes, tags, and collections
+  - generated digest artifacts are written next to the owning account workspace under `data/accounts/<workspace-stem>/digests/`
+  - background sync/extract jobs must use the captured account workspace path rather than the legacy default database
 
 ## Tables
 
@@ -43,8 +45,17 @@ Stores subscribed sources and operational feed metadata.
 Stores incoming articles, reading state, extraction artifacts, and digest eligibility.
 
 - Needed for: article list views, read/favorite state, extraction, digest selection
-- Important fields: `dedupe_key`, `guid`, `normalized_source_url`, `raw_html`, `cleaned_html`
+- Important fields: `dedupe_key`, `guid`, `normalized_source_url`, `raw_html`, `cleaned_html`, `content_text`, `excerpt`, `extraction_status`, `extraction_error`
 - Key guarantee: repeated syncs can deduplicate safely while preserving readable content
+
+`reader_status` in the API is not persisted as a column. It is a projection from the fields above:
+
+- completed `cleaned_html` becomes the full local reading mode
+- `content_text` becomes a text fallback
+- `excerpt` becomes a degraded summary fallback
+- missing local content becomes source-only or loading depending on `extraction_status`
+- detail responses may expose a sanitized `extraction_error` as `diagnostic_reason`
+- item-level `POST /api/v1/items/{item_id}/reextract` rewrites only the existing extraction artifact columns for that one item when called with `mode: write`; `mode: dry_run` performs no storage mutation
 
 ### `settings`
 
@@ -61,6 +72,7 @@ Stores lifecycle and observability data for sync, extract, digest, and delivery 
 - Needed for: run history, retries, failure analysis, progress UI
 - Important fields: `job_type`, `status`, `scope_json`, `error_message`, `retry_count`
 - Key guarantee: every major background workflow is reconstructable from persisted state
+- Account boundary: background jobs persist `job_runs` only in the workspace captured when the run was created
 
 ### `digest_history`
 
@@ -69,6 +81,7 @@ Stores digest build history and the snapshot of selected content.
 - Needed for: digest audit trail, resend flows, EPUB artifact lookup
 - Important fields: `selection_snapshot_json`, `article_count`, `artifact_path`, `artifact_sha256`
 - Key guarantee: a generated digest can be traced back to the exact article selection used
+- Account boundary: `artifact_path` points at the owning workspace's `digests/` folder, not the legacy shared `data/digests/` folder
 
 ### `delivery_logs`
 
@@ -88,12 +101,25 @@ Stores send attempts and outcomes for Kindle or other delivery targets.
 
 ## Migration strategy
 
-- Schema version is tracked in both `schema_migrations` and SQLite `user_version`
-- `scripts/init_db.py` is the entry point for initializing the local database
-- Later migrations should be additive and versioned rather than replacing this file in place
+- The migration registry lives in `apps/api/app/db/initializer.py`.
+- Schema version is tracked in both `schema_migrations` and SQLite `PRAGMA user_version`.
+- Version 1 is the baseline migration and replays `apps/api/app/db/schema.sql` idempotently with `CREATE TABLE IF NOT EXISTS`.
+- `ensure_database()` creates the migration table first, applies pending migrations, records applied versions, sets `user_version`, validates required tables, and returns `migration_status` for startup diagnostics.
+- `scripts/init_db.py` is the entry point for initializing the local database.
+- Later schema changes should add a new versioned migration instead of rewriting the V1 baseline in place.
+- If startup reports missing required tables or `migration_status.status` is not `ready`, back up the affected `data/*.db` or account workspace DB before retrying initialization; then inspect `schema_migrations`, `PRAGMA user_version`, and `/diagnostics/startup` to decide whether to rerun initialization or restore from backup.
 
 ## Auth smoke isolation
 
 - `npm run check:auth` creates temporary auth databases only under `output/playwright/auth-smoke/`.
 - The smoke overrides `RSSMASTER_DATABASE_PATH`, `RSSMASTER_ACCOUNTS_DATABASE_PATH`, and `RSSMASTER_ACCOUNTS_WORKSPACE_DIR`.
 - The smoke must not read from or write to real operator data under `data/`.
+
+## Feed reading smoke isolation
+
+- `npm run check:feed-reading` creates temporary workspace and account paths only under `output/playwright/feed-reading/`.
+- The smoke adds fixture feeds, syncs them, checks `reader_status` and source reading readiness, and verifies the browser empty-state/action copy.
+- The source-health reading fields are projections from existing `items` rows and channel health metadata; there is no new table or migration for V1.
+- `readable_items_7d` intentionally remains broad for compatibility: it includes local text and excerpt fallback.
+- `local_readable_items_7d`, `excerpt_fallback_items_7d`, and `source_only_items_7d` split that broad count into full local reading, summary-only fallback, and source-required buckets.
+- `reading_readiness` uses the split fields: excerpt-only feeds are `degraded`, not `ready`.

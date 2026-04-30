@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 
 from app.config import Settings, get_settings
+from app.db.initializer import database_path_override, resolve_database_path
 
 from .models import CreateSyncRunRequest, SyncRunListResponse, SyncRunResponse
 from .repository import SyncRepository
@@ -11,9 +14,19 @@ from .service import SyncService
 router = APIRouter(prefix="/api/v1/sync", tags=["sync"])
 
 
-def get_sync_service(settings: Settings = Depends(get_settings)) -> SyncService:
-    repository = SyncRepository(settings.database_file)
+def build_sync_service(settings: Settings, database_path: Path) -> SyncService:
+    repository = SyncRepository(database_path)
     return SyncService(settings, repository)
+
+
+def get_sync_service(settings: Settings = Depends(get_settings)) -> SyncService:
+    return build_sync_service(settings, resolve_database_path(settings.database_file))
+
+
+def execute_sync_run_in_workspace(*, settings: Settings, database_path: Path, run_id: str) -> None:
+    with database_path_override(database_path):
+        service = build_sync_service(settings, database_path)
+        service.execute_run(run_id)
 
 
 @router.get("/runs", response_model=SyncRunListResponse)
@@ -37,14 +50,21 @@ def list_sync_runs(
 def create_sync_run(
     request: CreateSyncRunRequest,
     background_tasks: BackgroundTasks,
-    service: SyncService = Depends(get_sync_service),
+    settings: Settings = Depends(get_settings),
 ) -> SyncRunResponse:
+    workspace_database_path = resolve_database_path(settings.database_file)
+    service = build_sync_service(settings, workspace_database_path)
     run = service.create_run(
         channel_ids=request.channel_ids,
         mode=request.mode,
         trigger_kind=request.resolved_trigger_kind,
     )
-    background_tasks.add_task(service.execute_run, run["id"])
+    background_tasks.add_task(
+        execute_sync_run_in_workspace,
+        settings=settings,
+        database_path=workspace_database_path,
+        run_id=str(run["id"]),
+    )
     return SyncRunResponse(run=run)
 
 

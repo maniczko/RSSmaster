@@ -174,9 +174,13 @@ def root() -> dict[str, object]:
 
 @app.get("/health")
 def health() -> dict[str, object]:
+    schema = startup_state.get("schema") if isinstance(startup_state.get("schema"), dict) else {}
     return {
         "checked_at": datetime.now(UTC).isoformat(),
+        "database_ready": startup_state.get("database_ready") is True,
         "environment": settings.environment,
+        "migration_status": schema.get("migration_status") if isinstance(schema, dict) else None,
+        "schema_version": schema.get("schema_version") if isinstance(schema, dict) else None,
         "service": "api",
         "status": "ok",
     }

@@ -19,9 +19,20 @@ function createItem(overrides: Partial<FeedStreamCopyItem> = {}): FeedStreamCopy
 
 describe("feed stream copy helpers", () => {
   it("maps content availability into human labels", () => {
-    expect(getFeedCardSurfaceLabel(createItem({ has_cleaned_content: true }))).toBe("Pelny tekst");
-    expect(getFeedCardSurfaceLabel(createItem({ has_raw_content: true }))).toBe("Tekst zastepczy");
-    expect(getFeedCardSurfaceLabel(createItem())).toBe("Skrot");
+    expect(getFeedCardSurfaceLabel(createItem({ has_cleaned_content: true }))).toBe("Pełny tekst");
+    expect(getFeedCardSurfaceLabel(createItem({ has_raw_content: true }))).toBe("Tylko skrót");
+    expect(getFeedCardSurfaceLabel(createItem())).toBe("Źródło");
+    expect(
+      getFeedCardSurfaceLabel(
+        createItem({
+          reader_status: {
+            mode: "text_fallback",
+            label: "Tekst z feedu",
+            summary: "Czytelny fallback.",
+          },
+        }),
+      ),
+    ).toBe("Tekst z feedu");
   });
 
   it("builds compact metadata lines", () => {
@@ -47,7 +58,7 @@ describe("feed stream copy helpers", () => {
       }),
     );
 
-    expect(excerpt).toBe("Otworz artykul, aby zobaczyc oczyszczony widok czytania.");
+    expect(excerpt).toBe("Otwórz artykuł, aby zobaczyć najlepszy dostępny widok czytania.");
   });
 
   it("truncates overly long excerpts", () => {

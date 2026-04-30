@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from app.config import Settings as AppSettings, get_settings
+from app.db.initializer import resolve_database_path
 from app.settings.repository import SettingsRepository
 from app.settings.service import SettingsService
 
@@ -21,8 +22,9 @@ router = APIRouter(prefix="/api/v1/delivery", tags=["delivery"])
 
 
 def get_delivery_service(settings: AppSettings = Depends(get_settings)) -> DeliveryService:
-    delivery_repository = DeliveryRepository(settings.database_file)
-    settings_repository = SettingsRepository(settings.database_file)
+    workspace_database_path = resolve_database_path(settings.database_file)
+    delivery_repository = DeliveryRepository(workspace_database_path)
+    settings_repository = SettingsRepository(workspace_database_path)
     settings_service = SettingsService(settings, settings_repository)
     return DeliveryService(settings, delivery_repository, settings_service)
 

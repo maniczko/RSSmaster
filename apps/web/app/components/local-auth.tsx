@@ -32,6 +32,8 @@ type AuthScreenProps = {
   onFormChange: (patch: Partial<LocalAuthFormState>) => void;
   onModeToggle: () => void;
   onSubmit: () => void;
+  returnToDescription?: string;
+  returnToLabel?: string;
 };
 
 type AccountStatusProps = {
@@ -60,6 +62,8 @@ export function AuthScreen({
   onFormChange,
   onModeToggle,
   onSubmit,
+  returnToDescription,
+  returnToLabel,
 }: AuthScreenProps) {
   const resolvedMode = hasLocalAccounts ? mode : "register";
 
@@ -78,7 +82,7 @@ export function AuthScreen({
                 <LibraryIcon className="app-icon app-icon-xs" />
                 Konta lokalne
               </span>
-              <h2>{hasLocalAccounts ? "Zaloguj się do swojej biblioteki" : "Utwórz pierwsze konto RSSmaster"}</h2>
+              <h1>{hasLocalAccounts ? "Zaloguj się do swojej biblioteki" : "Utwórz pierwsze konto RSSmaster"}</h1>
             </div>
             <span>{hasLocalAccounts ? "wymagane logowanie" : "przejęcie bieżącej biblioteki"}</span>
           </div>
@@ -92,6 +96,15 @@ export function AuthScreen({
             <p style={{ margin: "0 0 1rem", color: "var(--muted-text)" }}>
               Kolejne konta mają osobną bazę danych, więc aby odzyskać zapisy, zaloguj się do istniejącego konta.
             </p>
+          ) : null}
+          {returnToLabel ? (
+            <div className="ops-row" data-testid="auth-return-context">
+              <strong>Po zalogowaniu wrócisz do: {returnToLabel}</strong>
+              <span>
+                {returnToDescription ??
+                  "RSSmaster zachowa aktualną trasę i odtworzy ekran, na którym przerwano pracę."}
+              </span>
+            </div>
           ) : null}
 
           <form className="channel-form" onSubmit={handleSubmit}>

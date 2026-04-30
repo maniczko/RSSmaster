@@ -22,9 +22,12 @@ export function AppShell({
 }: AppShellProps) {
   return (
     <div className={`app-shell ${sidebarOpen ? "app-shell-sidebar-open" : ""} ${navRail ? "app-shell-with-nav-rail" : ""}`}>
+      <a className="skip-link" href="#rssmaster-main">
+        Przejdź do treści
+      </a>
       <header className="app-header">{header}</header>
       <div className="app-body">
-        {navRail ? <aside className="app-nav-rail">{navRail}</aside> : null}
+        {navRail ? <aside aria-label="Główne sekcje produktu" className="app-nav-rail">{navRail}</aside> : null}
         {onSidebarClose ? (
           <button
             aria-hidden={!sidebarOpen}
@@ -35,7 +38,7 @@ export function AppShell({
             type="button"
           />
         ) : null}
-        <aside className="app-sidebar" id="rssmaster-sidebar">
+        <aside aria-label="Menu boczne i feedy" className="app-sidebar" id="rssmaster-sidebar">
           {onSidebarClose ? (
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
               <WorkspaceButton
@@ -53,7 +56,9 @@ export function AppShell({
           ) : null}
           {sidebar}
         </aside>
-        <main className="app-workspace">{children}</main>
+        <main aria-label="Główna zawartość RSSmastera" className="app-workspace" id="rssmaster-main" tabIndex={-1}>
+          {children}
+        </main>
       </div>
     </div>
   );

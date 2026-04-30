@@ -9,6 +9,10 @@ LibraryView = Literal["inbox", "saved", "archive"]
 LibraryState = Literal["inbox", "saved", "archived"]
 LibraryAction = Literal["save", "unsave", "archive", "restore"]
 ItemSortMode = Literal["newest", "oldest"]
+ReaderStatusMode = Literal["cleaned", "text_fallback", "excerpt", "source_only"]
+ReaderStatusQuality = Literal["ready", "degraded", "blocked", "loading"]
+ReaderStatusPrimaryAction = Literal["read_in_app", "open_source", "wait_for_sync", "inspect_source"]
+ItemReextractMode = Literal["dry_run", "write"]
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,15 @@ class ItemDigestVisibilityModel(BaseModel):
     reason: str
 
 
+class ItemReaderStatusModel(BaseModel):
+    mode: ReaderStatusMode
+    quality: ReaderStatusQuality
+    label: str
+    summary: str
+    primary_action: ReaderStatusPrimaryAction
+    diagnostic_reason: str | None = None
+
+
 class ItemLibraryModel(BaseModel):
     state: LibraryState
     saved_at: str | None
@@ -91,6 +104,7 @@ class ItemModel(BaseModel):
     extraction_status: str
     has_cleaned_content: bool
     has_raw_content: bool
+    reader_status: ItemReaderStatusModel
     library: ItemLibraryModel
     search_match: ItemSearchMatchModel | None = None
     channel: ItemChannelModel
@@ -127,3 +141,28 @@ class UpdateItemStateRequest(BaseModel):
     is_archived: bool | None = None
     digest_candidate: bool | None = None
     library_action: LibraryAction | None = None
+
+
+class ReextractItemRequest(BaseModel):
+    mode: ItemReextractMode = "dry_run"
+
+
+class ReextractItemSnapshotModel(BaseModel):
+    extraction_status: str | None
+    reader_status: ItemReaderStatusModel
+    has_cleaned_content: bool
+    has_content_text: bool
+    has_excerpt: bool
+    cleaned_html_word_count_approx: int
+    content_preview: str | None
+    diagnostic_reason: str | None = None
+
+
+class ReextractItemResponse(BaseModel):
+    item_id: str
+    mode: ItemReextractMode
+    write_applied: bool
+    before: ReextractItemSnapshotModel
+    after: ReextractItemSnapshotModel
+    stop_reasons: list[str]
+    item: ItemDetailModel

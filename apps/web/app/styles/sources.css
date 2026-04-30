@@ -235,6 +235,35 @@
   max-width: 64ch;
 }
 
+.source-flow-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.source-flow-steps li {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.86), rgba(255, 255, 255, 0.92));
+}
+
+.source-flow-steps strong {
+  color: #1d4ed8;
+  font-size: 0.78rem;
+}
+
+.source-flow-steps span {
+  color: #334155;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -488,4 +517,34 @@
   border-color: rgba(100, 116, 139, 0.18);
   background: rgba(148, 163, 184, 0.12);
   color: #475569;
+}
+
+.source-result-guidance {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(22, 163, 74, 0.16);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(240, 253, 244, 0.92), rgba(255, 255, 255, 0.94));
+}
+
+.source-result-guidance span {
+  color: #15803d;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.source-result-guidance strong {
+  color: #0f172a;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.source-result-guidance p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.88rem;
+  line-height: 1.45;
 }

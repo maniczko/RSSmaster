@@ -174,14 +174,14 @@ export function CaptureStudio({
   }
 
   return (
-    <main className="capture-page">
+    <main aria-labelledby="capture-page-title" className="capture-page">
       <section className="capture-shell">
         <div className="capture-hero">
           <span className="panel-badge panel-badge-with-icon">
             <CaptureIcon className="app-icon app-icon-xs" />
             Capture
           </span>
-          <h1>Zapisz artykuł z dowolnej strony</h1>
+          <h1 id="capture-page-title">Zapisz artykuł z dowolnej strony</h1>
           <p>
             Wklej link i jednym ruchem wrzuć go do zapisanej biblioteki. Ten ekran jest też gotowy pod bookmarklet i systemowe
             udostępnianie.
