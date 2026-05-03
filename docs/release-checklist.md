@@ -56,7 +56,7 @@ Use these three evidence levels deliberately:
 | `npm run check:perf:browser` | auth-aware browser route-ready baseline with isolated logged-in account, cold + warm p95/p99 for `/read/inbox`, `/read/saved`, `/sources`, and `/digest` | full cold boot, API business correctness, long-session memory profile | `output/playwright/browser-perf-smoke.json`, `output/playwright/perf-history/browser-route-ready.ndjson` |
 | `npm run check:perf:workspace` | auth-aware workspace API p95/p99 with isolated logged-in account for ranking, stories, briefing, and source-health | browser render time, semantic ranking quality, full API contract | `output/playwright/workspace-perf-smoke.json`, `output/playwright/perf-history/workspace-api.ndjson` |
 | `npm run qa:app` | aggregated contract + `/sources` + reader + capture confidence with one summary, per-flow hard timeouts, stale artifact checks, and timeout-vs-product-failure classification | canonical clean boot by itself | `output/playwright/app-qa.json` |
-| `npm run release:evidence` | timestamped 9/10 release evidence runner across ports, health, build, unit, contract, auth-aware browser checks, perf checks, stale artifacts, and known unverified external checks | live SMTP send, Kindle inbox acceptance, spoken screen-reader sign-off | `output/release-evidence/release-*.json`, `output/release-evidence/release-*.md` |
+| `npm run release:evidence` | timestamped 9/10 release evidence runner across ports, health, build, unit, contract, auth-aware browser checks, perf checks, stale/invalid artifact review, and known unverified external checks; `--reuse-fresh` only reuses artifacts that are fresh, parseable, schema-valid, and reported as `passed` | live SMTP send, Kindle inbox acceptance, spoken screen-reader sign-off | `output/release-evidence/release-*.json`, `output/release-evidence/release-*.md` |
 
 ## 4. Automated verification
 
@@ -83,7 +83,7 @@ Use these three evidence levels deliberately:
 - Run `npm run check:reader:real-queue -- --phase before`, then `python scripts/reextract_items.py --manifest output/playwright/reader-real-queue-manifest.json --write`, then `npm run check:reader:real-queue -- --phase after` when the change touches extraction cleanup, publisher-specific reader noise, or sampled backfill rollout.
 - Run `npm run qa:app` when you want a single aggregated report for cross-app release confidence.
 - Review `output/playwright/app-qa.json` after `npm run qa:app`: `flows.*.status` distinguishes `passed`, `failed`, and `timeout`; `artifact_freshness.all_required_fresh` must be `true` before treating the aggregate as fresh evidence.
-- Run `npm run release:evidence` when you need one timestamped 9/10 release evidence bundle. Use `npm run release:evidence -- --reuse-fresh` only after the component gates were just run and you want to avoid duplicate work.
+- Run `npm run release:evidence` when you need one timestamped 9/10 release evidence bundle. Use `npm run release:evidence -- --reuse-fresh` only after the component gates were just run and you want to avoid duplicate work; reuse is refused when an artifact is stale, malformed, schema-invalid, or not reported as `passed`.
 - Treat any failure in `scripts/check_api.py`, `check:capture`, `qa:sources`, `qa:reader`, or `qa:app` as a release blocker for the covered flow.
 - Treat any failure in `check:reader:real-queue -- --phase after` or any stop condition in `scripts/reextract_items.py` as a rollout blocker for sampled backfill.
 
@@ -92,7 +92,7 @@ Current automated coverage:
 - channel add flow with direct feed validation and homepage autodiscovery
 - `/sources` website flow smoke for keyboard reachability, live announcements, stale preview guards, calm expected preview failures, multiple candidates, and backoffice focus continuity
 - `/sources` observe flow, already-followed state, and baseline tablet/mobile render smoke
-- standardized Playwright artifact schema for `check:layout`, `check:sources`, `check:reader:interaction`, `check:digest`, and `check:feed-reading` with route/action/error/screenshot fields and fingerprint-based screenshot evidence
+- standardized Playwright artifact schema for every `check_*.mjs` browser smoke, including real-queue audits, with route/action/error/screenshot fields and fingerprint-based screenshot evidence
 - feed-reading reliability with one healthy feed, one empty feed, one extraction-failed fallback feed, explicit empty-state actions, source readability cards, visible item-level re-extract recovery, and in-app fallback reading
 - sync run creation, partial failure handling, rerun recovery, and deduplication
 - extraction from real article pages into `cleaned_html` and `content_text`

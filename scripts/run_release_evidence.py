@@ -107,6 +107,26 @@ def read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def artifact_reported_status(payload: dict[str, Any] | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    artifact = payload.get("artifact")
+    artifact_status = artifact.get("status") if isinstance(artifact, dict) else None
+    return payload.get("status") or payload.get("overall_status") or artifact_status
+
+
+def artifact_schema_valid(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    validation = payload.get("artifactSchemaValidation")
+    if isinstance(validation, dict):
+        return validation.get("valid") is True
+
+    return False
+
+
 def artifact_details(paths: tuple[Path, ...], run_started_epoch: float, max_age_minutes: int) -> list[dict[str, Any]]:
     now_epoch = time.time()
     details: list[dict[str, Any]] = []
@@ -115,16 +135,22 @@ def artifact_details(paths: tuple[Path, ...], run_started_epoch: float, max_age_
         modified_epoch = path.stat().st_mtime if exists else None
         age_seconds = now_epoch - modified_epoch if modified_epoch is not None else None
         payload = read_json(path) if exists else None
+        parse_ok = payload is not None if exists else False
+        reported_status = artifact_reported_status(payload)
+        schema_valid = artifact_schema_valid(payload)
+        fresh_enough_to_reuse = bool(age_seconds is not None and age_seconds <= max_age_minutes * 60)
         details.append(
             {
                 "path": str(path),
                 "exists": exists,
                 "fresh_for_current_run": bool(modified_epoch is not None and modified_epoch >= run_started_epoch - 1),
-                "fresh_enough_to_reuse": bool(age_seconds is not None and age_seconds <= max_age_minutes * 60),
+                "fresh_enough_to_reuse": fresh_enough_to_reuse,
                 "modified_at": datetime.fromtimestamp(modified_epoch, UTC).isoformat() if modified_epoch else None,
                 "age_seconds": round(age_seconds, 3) if age_seconds is not None else None,
-                "parse_ok": payload is not None if exists else False,
-                "reported_status": (payload.get("status") or payload.get("overall_status")) if isinstance(payload, dict) else None,
+                "parse_ok": parse_ok,
+                "artifact_schema_valid": schema_valid,
+                "reported_status": reported_status,
+                "reusable": bool(exists and fresh_enough_to_reuse and parse_ok and schema_valid and reported_status == "passed"),
             }
         )
     return details
@@ -136,7 +162,7 @@ def can_reuse_gate(gate: Gate, max_age_minutes: int) -> bool:
     if not gate.artifacts:
         return False
     artifacts = artifact_details(gate.artifacts, 0, max_age_minutes)
-    return all(item["exists"] and item["fresh_enough_to_reuse"] and item["parse_ok"] for item in artifacts)
+    return all(item["reusable"] for item in artifacts)
 
 
 def run_gate(gate: Gate, env: dict[str, str], run_started_epoch: float, max_age_minutes: int, reuse_fresh: bool) -> dict[str, Any]:
@@ -169,8 +195,11 @@ def run_gate(gate: Gate, env: dict[str, str], run_started_epoch: float, max_age_
     duration_seconds = round(time.time() - started, 3)
     artifacts = artifact_details(gate.artifacts, run_started_epoch, max_age_minutes)
     artifacts_required_and_stale = bool(gate.artifacts) and not all(item["fresh_for_current_run"] for item in artifacts)
+    artifacts_required_and_invalid = bool(gate.artifacts) and not all(
+        item["parse_ok"] and item["artifact_schema_valid"] and item["reported_status"] == "passed" for item in artifacts
+    )
     status = "timeout" if timed_out else ("passed" if exit_code == 0 else "failed")
-    if status == "passed" and artifacts_required_and_stale:
+    if status == "passed" and (artifacts_required_and_stale or artifacts_required_and_invalid):
         status = "stale"
 
     return {
@@ -183,7 +212,7 @@ def run_gate(gate: Gate, env: dict[str, str], run_started_epoch: float, max_age_
         "duration_seconds": duration_seconds,
         "timeout_seconds": gate.timeout_seconds,
         "timed_out": timed_out,
-        "failure_kind": "harness_timeout" if timed_out else ("stale_artifact" if status == "stale" else ("product_or_gate_failure" if exit_code != 0 else None)),
+        "failure_kind": "harness_timeout" if timed_out else ("stale_or_invalid_artifact" if status == "stale" else ("product_or_gate_failure" if exit_code != 0 else None)),
         "next_diagnostic_command": " ".join(gate.command),
         "artifacts": artifacts,
     }

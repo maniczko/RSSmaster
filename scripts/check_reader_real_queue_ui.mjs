@@ -4,6 +4,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  attachPlaywrightArtifact,
+  collectScreenshotEvidence,
+} from "./lib/playwright-artifact-schema.mjs";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -31,6 +36,7 @@ const DEFAULT_FORBIDDEN_TEXT_FRAGMENTS = [
   "Źródło zdjęć:",
 ];
 const MIN_PROSE_WORD_COUNT = 40;
+const RUN_STARTED_AT = new Date();
 
 function assert(condition, message) {
   if (!condition) {
@@ -421,6 +427,71 @@ function collectInvariantFailures(entry, apiAudit, renderedAudit) {
   return failures;
 }
 
+function withStandardArtifact(report, { apiUrl, entries, webUrl }) {
+  const screenshots = collectScreenshotEvidence(
+    report.items.map((item) => item.screenshot),
+    {
+      rootDir: ROOT_DIR,
+      runStartedAt: RUN_STARTED_AT,
+    },
+  );
+  const failedItemIds = new Set(report.failedItems.map((item) => item.itemId));
+  const hasHarnessFailure =
+    report.pageErrors.length > 0
+    || report.consoleErrors.length > 0
+    || report.auditedCount !== entries.length
+    || report.failedItems.length > 0;
+
+  return attachPlaywrightArtifact(report, {
+    checkName: "check:reader:real-queue",
+    status: hasHarnessFailure ? "failed" : "passed",
+    startedAt: RUN_STARTED_AT,
+    targetUrls: { apiUrl, webUrl },
+    runtime: {
+      isolated: false,
+      authMode: "operator-real-queue",
+      runDir: OUTPUT_DIR,
+    },
+    routes: report.items.map((item) => ({
+      id: `real-queue-${report.phase}-${item.index}`,
+      route: new URL(item.route).pathname,
+      finalUrl: item.route,
+      status: failedItemIds.has(item.itemId) ? "failed" : "passed",
+      screenshot: item.screenshot,
+      ready: true,
+      notes: {
+        class: item.class,
+        invariantFailures: item.invariantFailures,
+        itemId: item.itemId,
+        label: item.label,
+      },
+    })),
+    screenshots,
+    errors: {
+      console: report.consoleErrors,
+      page: report.pageErrors,
+      http: [],
+      harness: [
+        ...report.harnessErrors,
+        ...report.failedItems.map((item) => ({
+          itemId: item.itemId,
+          invariantFailures: item.invariantFailures,
+        })),
+      ],
+    },
+    metadata: {
+      audited_count: report.auditedCount,
+      failed_count: report.failedItems.length,
+      manifest_path: report.manifestPath,
+      phase: report.phase,
+      with_captions: report.withCaptions,
+      with_figures: report.withFigures,
+      with_images: report.withImages,
+      with_noise: report.withNoise,
+    },
+  });
+}
+
 async function main() {
   await ensureOutputDir();
   assert(existsSync(MANIFEST_PATH), `Brak manifestu real queue: ${MANIFEST_PATH}`);
@@ -463,11 +534,13 @@ async function main() {
     withFigures: 0,
     withCaptions: 0,
     consoleErrors,
+    harnessErrors: [],
     pageErrors,
     items: [],
     failedItems: [],
   };
 
+  let runError = null;
   try {
     for (const entry of entries) {
       const itemDetail = await fetchItemDetail(apiUrl, entry.itemId);
@@ -525,10 +598,32 @@ async function main() {
         invariantFailures,
       });
     }
+  } catch (error) {
+    runError = error;
+    report.harnessErrors.push({
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack ?? null : null,
+    });
   } finally {
     report.auditedCount = report.items.length;
-    await writeFile(outputJsonPath, JSON.stringify(report, null, 2), "utf8");
+    await writeFile(
+      outputJsonPath,
+      JSON.stringify(
+        withStandardArtifact(report, {
+          apiUrl,
+          entries,
+          webUrl,
+        }),
+        null,
+        2,
+      ),
+      "utf8",
+    );
     await browser.close();
+  }
+
+  if (runError) {
+    throw runError;
   }
 
   assert(pageErrors.length === 0, `pageErrors=${JSON.stringify(pageErrors)}`);

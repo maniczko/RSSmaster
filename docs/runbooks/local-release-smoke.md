@@ -74,6 +74,7 @@ Prove that the currently implemented product loop still works:
   - runs the 9/10 confidence bundle: ports, health, build, unit tests, API contract, auth-aware browser checks, perf checks, stale artifact review, and known unverified external checks
   - writes timestamped JSON and Markdown under `output/release-evidence/`
   - supports `-- --reuse-fresh` when the relevant component gates were just run and you only need a fresh summary wrapper
+  - refuses reuse when an artifact is stale, malformed, schema-invalid, or not reported as `passed`
 - `npm run check:perf:browser` and `npm run check:perf:workspace`
   - default to isolated, logged-in local accounts so performance evidence stays auth-aware without mutating the operator library
   - record cold and warm browser route-ready p95/p99 plus authenticated workspace API p95/p99

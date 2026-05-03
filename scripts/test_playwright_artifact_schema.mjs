@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -104,6 +104,22 @@ async function main() {
     status: "unknown",
   });
   assert.ok(invalidIssues.length >= 3);
+
+  const checkScripts = (await readdir(__dirname))
+    .filter((name) => /^check_.*\.mjs$/.test(name))
+    .sort();
+  const missingArtifactSchema = [];
+  for (const scriptName of checkScripts) {
+    const content = await readFile(path.join(__dirname, scriptName), "utf8");
+    if (!content.includes("attachPlaywrightArtifact(") && !content.includes("buildPlaywrightArtifact(")) {
+      missingArtifactSchema.push(scriptName);
+    }
+  }
+  assert.deepEqual(
+    missingArtifactSchema,
+    [],
+    `Every check_*.mjs browser smoke should write the standard Playwright artifact schema. Missing: ${missingArtifactSchema.join(", ")}`,
+  );
 }
 
 main().catch((error) => {
