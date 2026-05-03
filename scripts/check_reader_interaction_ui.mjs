@@ -156,6 +156,17 @@ function withStandardArtifact(results, { error = null, status = "passed" } = {})
   return attachPlaywrightArtifact(results, {
     actions: [
       {
+        id: "reader-send-kindle-action",
+        label: "Wyślij na Kindle",
+        route: "/read/saved",
+        status: results.kindleActionVisible && results.kindleConfigFeedbackVisible ? "passed" : "failed",
+        screenshot: OUTPUT_SCREENSHOT,
+        notes: {
+          readyStateDetected: results.kindleActionReady,
+          configFeedbackVisible: results.kindleConfigFeedbackVisible,
+        },
+      },
+      {
         id: "reader-read-next",
         label: "Przeczytaj + dalej",
         route: "/read/saved",
@@ -183,6 +194,9 @@ function withStandardArtifact(results, { error = null, status = "passed" } = {})
     metadata: {
       opened_newer_article: results.openedNewerArticle,
       decision_bar_visible: results.decisionBarVisible,
+      kindle_action_visible: results.kindleActionVisible,
+      kindle_action_ready: results.kindleActionReady,
+      kindle_config_feedback_visible: results.kindleConfigFeedbackVisible,
       no_horizontal_overflow: results.noHorizontalOverflow,
     },
     routes: [
@@ -247,6 +261,9 @@ async function main() {
       decisionBarVisible: false,
       actionAdvancedToNext: false,
       undoEnabled: false,
+      kindleActionVisible: false,
+      kindleActionReady: false,
+      kindleConfigFeedbackVisible: false,
       mobileTargetMinHeight: false,
       noHorizontalOverflow: false,
       consoleErrors,
@@ -270,6 +287,20 @@ async function main() {
       await waitForReaderArticle(page, "Reader interaction newer article");
       results.openedNewerArticle = true;
       results.decisionBarVisible = await page.getByTestId("reader-decision-bar").isVisible();
+      const kindleButton = page.getByTestId("reader-send-kindle");
+      results.kindleActionVisible = await kindleButton.isVisible();
+      const kindleActionLabel = (await kindleButton.getAttribute("aria-label")) ?? "";
+      results.kindleActionReady = kindleActionLabel.includes("Wyślij artykuł na Kindle");
+      if (!results.kindleActionReady) {
+        await kindleButton.click();
+        await page.getByTestId("reader-kindle-feedback").waitFor({ state: "visible", timeout: 10000 });
+        results.kindleConfigFeedbackVisible = await page
+          .getByTestId("reader-kindle-feedback")
+          .filter({ hasText: "Skonfiguruj Kindle przed wysyłką" })
+          .isVisible();
+      } else {
+        results.kindleConfigFeedbackVisible = true;
+      }
 
       const readNextButton = page.getByTestId("reader-decision-read-next");
       const buttonMetrics = await readNextButton.evaluate((node) => {
@@ -289,10 +320,25 @@ async function main() {
         { timeout: 30000 },
       );
       results.actionAdvancedToNext = true;
+      await page.getByTestId("reader-decision-undo").waitFor({ state: "visible", timeout: 10000 });
+      try {
+        await page.waitForFunction(
+          () => {
+            const undoButton = document.querySelector('[data-testid="reader-decision-undo"]');
+            return undoButton instanceof HTMLButtonElement && !undoButton.disabled;
+          },
+          undefined,
+          { timeout: 10000 },
+        );
+      } catch {
+        // Keep the assertion below as the single failure point while still recording the observed state.
+      }
       results.undoEnabled = await page.getByTestId("reader-decision-undo").isEnabled();
       results.noHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
       assert(results.decisionBarVisible, "Reader decision bar is not visible.");
+      assert(results.kindleActionVisible, "Reader Kindle action is not visible in the article topbar.");
+      assert(results.kindleConfigFeedbackVisible, "Reader Kindle action did not show configuration feedback.");
       assert(results.mobileTargetMinHeight, `Primary mobile target is too small or not pointer: ${JSON.stringify(buttonMetrics)}`);
       assert(results.actionAdvancedToNext, "Reader action + next did not advance to the next article.");
       assert(results.undoEnabled, "Undo action is not enabled after decision action.");

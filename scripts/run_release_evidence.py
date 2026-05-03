@@ -195,13 +195,13 @@ def unverified_checks() -> list[dict[str, str]]:
             "id": "live-smtp-send",
             "status": "unverified",
             "reason": "Requires real SMTP credentials and an intentional live send.",
-            "next_step": "Follow the live delivery runbook and store evidence under ignored output/.",
+            "next_step": "Follow docs/runbooks/live-delivery-signoff.md and store evidence under ignored output/live-delivery/.",
         },
         {
             "id": "kindle-acceptance",
             "status": "unverified",
             "reason": "Requires Amazon Kindle inbox acceptance and rendering confirmation.",
-            "next_step": "Run a manual Kindle acceptance pass with a non-secret evidence template.",
+            "next_step": "Copy docs/runbooks/live-delivery-evidence-template.md into output/live-delivery/ and complete the Kindle acceptance section.",
         },
         {
             "id": "screen-reader-spoken-signoff",

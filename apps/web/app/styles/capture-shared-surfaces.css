@@ -988,6 +988,18 @@
   flex-wrap: wrap;
 }
 
+.mini-button-kindle {
+  border-color: rgba(14, 116, 144, 0.24);
+  background: linear-gradient(135deg, rgba(236, 254, 255, 0.96), rgba(240, 253, 244, 0.96));
+  color: #155e75;
+  box-shadow: 0 12px 28px rgba(14, 116, 144, 0.09);
+}
+
+.mini-button-kindle-ready {
+  border-color: rgba(5, 150, 105, 0.28);
+  color: #047857;
+}
+
 .reader-decision-bar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

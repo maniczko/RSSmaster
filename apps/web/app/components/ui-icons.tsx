@@ -232,6 +232,19 @@ export function DeliveryIcon(props: AppIconProps) {
   );
 }
 
+export function KindleIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <rect x="4.5" y="2.75" width="8.4" height="14.5" rx="1.75" />
+      <path d="M6.75 5.6h3.9" />
+      <path d="M6.75 8.05h3.2" />
+      <path d="M8.7 14.55h.01" />
+      <path d="M12.2 6.35h3.25v3.25" />
+      <path d="m9.8 11.95 5.45-5.45" />
+    </BaseIcon>
+  );
+}
+
 export function KeyboardIcon(props: AppIconProps) {
   return (
     <BaseIcon {...props}>

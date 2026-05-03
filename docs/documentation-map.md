@@ -100,6 +100,7 @@ These requirement classes already have a home:
 - `docs/code-ownership.md` is the current owner map for cleanup work and the source for `npm run check:ownership`
 - `docs/orchestration-contract.md` defines reusable pipeline semantics
 - `docs/adrs/README.md` defines where architecture decisions should be recorded
+- `docs/runbooks/live-delivery-signoff.md` defines the manual SMTP/Kindle acceptance path that automated release evidence intentionally does not perform
 
 ## Practical rule
 

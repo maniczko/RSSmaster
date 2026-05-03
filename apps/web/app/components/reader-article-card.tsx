@@ -56,7 +56,7 @@ export function ReaderArticleCard({
   title,
 }: ReaderArticleCardProps) {
   return (
-    <article className="feed-reader-card">
+    <article className="feed-reader-card" data-testid="premium-reader-surface">
       <header className="feed-reader-hero">
         <div className="feed-reader-meta">
           <span>{sourceLabel}</span>
@@ -94,14 +94,14 @@ export function ReaderArticleCard({
           Przygotowywanie lokalnego widoku czytania...
         </div>
       ) : showCleanedHtml && sanitizedCleanedHtml ? (
-        <div className={readerSurfaceClasses} onScroll={onSurfaceScroll} ref={contentRef}>
+        <div className={readerSurfaceClasses} data-testid="reader-article-width" onScroll={onSurfaceScroll} ref={contentRef}>
           <div
             className="reader-article-prose"
             dangerouslySetInnerHTML={{ __html: highlightedCleanedHtml ?? sanitizedCleanedHtml }}
           />
         </div>
       ) : bodyParagraphs.length > 0 ? (
-        <div className={readerSurfaceClasses} onScroll={onSurfaceScroll} ref={contentRef}>
+        <div className={readerSurfaceClasses} data-testid="reader-article-width" onScroll={onSurfaceScroll} ref={contentRef}>
           <div className="reader-article-prose">
             {bodyParagraphs.map((paragraph, paragraphIndex) => (
               <p key={`${paragraph.slice(0, 64)}-${paragraphIndex}`}>{paragraph}</p>

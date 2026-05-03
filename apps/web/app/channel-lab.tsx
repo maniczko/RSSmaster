@@ -24,16 +24,16 @@ import {
   BookmarkIcon,
   CaptureIcon,
   DeliveryIcon,
+  DeliverySettingsPanel,
   DigestBuildPanel,
   DigestHistoryList,
   DigestIcon,
+  DigestSection,
   DismissIcon,
   DiscoverIcon,
   FeedBrowser,
-  FeedIcon,
   FeedStream,
   HighlightIcon,
-  ImportIcon,
   KeyboardIcon,
   LibraryIcon,
   LibraryViewsNav,
@@ -48,20 +48,22 @@ import {
   ReaderDecisionBar,
   SavedViewChip,
   SettingsIcon,
+  SourceAddModeNav,
   SourceHealthCard,
+  SourceModeIcon,
   SourcesIcon,
   SparkIcon,
   StoryClusterCard,
   StatusIcon,
   SyncIcon,
   TopicIcon,
-  WebsiteIcon,
   WorkspaceButton,
   WorkspaceChip,
   WorkspacePanel,
 } from "./components";
 import {
   buildContinuityBundle,
+  buildArticleKindleDigestPayload,
   buildRestoreStateFromContinuityBundle,
   buildFeedBrowserTree,
   buildFeedIconUrl,
@@ -778,6 +780,10 @@ type FeedbackState =
       title: string;
       lines: string[];
     };
+
+type ArticleKindleFeedbackState = FeedbackState & {
+  itemId: string;
+};
 
 type ItemSortMode = ReaderItemSortMode;
 type ViewDensity = "comfortable" | "compact";
@@ -1922,6 +1928,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [digestBusy, setDigestBusy] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [deliveryBusy, setDeliveryBusy] = useState(false);
+  const [articleKindleBusyId, setArticleKindleBusyId] = useState<string | null>(null);
+  const [articleKindleFeedback, setArticleKindleFeedback] = useState<ArticleKindleFeedbackState | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [sourcePreviewSlow, setSourcePreviewSlow] = useState(false);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
@@ -2243,6 +2251,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         kindle_email: payload.settings.kindle_email ?? "",
       });
     });
+    return payload.settings;
   }
 
   async function loadDeliveryLogs(digestId?: string) {
@@ -4783,6 +4792,91 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }
 
+  async function handleSendArticleToKindle(item: Item) {
+    if (articleKindleBusyId) {
+      return;
+    }
+
+    setArticleKindleBusyId(item.id);
+    try {
+      const resolvedDeliverySettings = deliverySettings ?? (await loadDeliverySettings());
+      if (!resolvedDeliverySettings.smtp_ready) {
+        const senderHint = resolvedDeliverySettings.smtp_from
+          ? `Dodaj ${resolvedDeliverySettings.smtp_from} jako approved sender w Amazon.`
+          : "Po ustawieniu pola SMTP from dodaj ten adres jako approved sender w Amazon.";
+        setArticleKindleFeedback({
+          itemId: item.id,
+          tone: "error",
+          title: "Skonfiguruj Kindle przed wysyłką",
+          lines: [
+            "Uzupełnij SMTP, hasło nadawcy i Kindle email w Ustawieniach.",
+            senderHint,
+            ...resolvedDeliverySettings.issues.slice(0, 3),
+          ],
+        });
+        return;
+      }
+
+      setArticleKindleFeedback({
+        itemId: item.id,
+        tone: "idle",
+        title: "Przygotowuję artykuł na Kindle",
+        lines: ["Buduję jednopunktowy EPUB i wyślę go tym samym kanałem delivery co digest."],
+      });
+
+      const { response: buildResponse, payload: buildPayload } = await fetchApi<DigestHistoryPayload>("/api/v1/digests/build", {
+        method: "POST",
+        body: JSON.stringify(buildArticleKindleDigestPayload(item)),
+      });
+      if (!buildResponse.ok || isErrorEnvelope(buildPayload)) {
+        throw new Error(getPayloadMessage(buildPayload, "Nie udało się przygotować artykułu do wysyłki na Kindle."));
+      }
+
+      const digest = buildPayload.digest;
+      const { response: sendResponse, payload: sendPayload } = await fetchApi<DeliveryDispatchPayload>("/api/v1/delivery/send", {
+        method: "POST",
+        body: JSON.stringify({
+          digest_id: digest.id,
+          target_kind: "kindle",
+          mode: "send",
+          subject: digest.title,
+        }),
+      });
+      if (!sendResponse.ok || isErrorEnvelope(sendPayload)) {
+        throw new Error(getPayloadMessage(sendPayload, "Nie udało się wysłać artykułu na Kindle."));
+      }
+
+      startTransition(() => {
+        setDeliveryPreflight(sendPayload.preflight);
+      });
+      await Promise.all([loadDigestHistory(), loadDeliveryLogs(digest.id)]);
+
+      const sent = sendPayload.log.status === "sent";
+      setArticleKindleFeedback({
+        itemId: item.id,
+        tone: sent ? "success" : "error",
+        title: sent ? "Artykuł wysłany na Kindle" : "Wysyłka Kindle wymaga sprawdzenia",
+        lines: [
+          sent
+            ? `${item.title} trafił do kolejki wysyłki na ${sendPayload.log.recipient ?? "Kindle"}.`
+            : `${sendPayload.log.status} dla ${sendPayload.log.recipient ?? "odbiorcy Kindle"}.`,
+          sendPayload.log.provider_message_id
+            ? `Id wiadomości: ${sendPayload.log.provider_message_id}`
+            : "Jeśli Amazon nie pokaże artykułu po kilku minutach, sprawdź approved sender i log delivery.",
+        ],
+      });
+    } catch (error) {
+      setArticleKindleFeedback({
+        itemId: item.id,
+        tone: "error",
+        title: "Nie udało się wysłać artykułu na Kindle",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+      });
+    } finally {
+      setArticleKindleBusyId(null);
+    }
+  }
+
   function selectRelativeItem(offset: number) {
     if (queueItems.length === 0) {
       return;
@@ -6460,8 +6554,11 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           isArchived={selectedItem.is_archived}
           isFavorite={selectedItem.is_favorite}
           isRead={selectedItem.is_read}
+          kindleBusy={articleKindleBusyId === selectedItem.id}
+          kindleReady={Boolean(deliverySettings?.smtp_ready)}
           onBackToFeed={() => dispatchReader({ type: "show_browse" })}
           onReextract={() => void handleReextractItem(selectedItem, "write")}
+          onSendToKindle={() => void handleSendArticleToKindle(selectedItem)}
           onToggleArchive={() =>
             void mutateItemState(selectedItem, {
               library_action: selectedItem.is_archived ? "restore" : "archive",
@@ -6479,6 +6576,23 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           showInspector={showReadInspector}
           sourceUrl={selectedItem.source_url}
         />
+
+        {articleKindleFeedback && articleKindleFeedback.itemId === selectedItem.id ? (
+          <section
+            aria-atomic="true"
+            aria-live="polite"
+            className={`feedback-card feedback-${articleKindleFeedback.tone} reader-kindle-feedback`}
+            data-testid="reader-kindle-feedback"
+            role="status"
+          >
+            <strong>{articleKindleFeedback.title}</strong>
+            <ul className="feedback-list">
+              {articleKindleFeedback.lines.map((line, lineIndex) => (
+                <li key={`${line}-${lineIndex}`}>{line}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         <ReaderDecisionBar
           busy={decisionBusy}
@@ -6922,19 +7036,6 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       ? "Podgląd uruchamia się automatycznie po chwili. Enter sprawdza od razu."
       : "Enter sprawdza podany adres i pokazuje podgląd przed zapisem.";
 
-    function renderSourceModeIcon(modeId: SourceAddModeId) {
-      if (modeId === "website") {
-        return <WebsiteIcon className="app-icon" />;
-      }
-      if (modeId === "web_feed") {
-        return <FeedIcon className="app-icon" />;
-      }
-      if (modeId === "import_feeds") {
-        return <ImportIcon className="app-icon" />;
-      }
-      return <BackofficeIcon className="app-icon" />;
-    }
-
     return (
       <section className="section-screen section-screen-sources">
         <div className="section-screen-header">
@@ -6977,80 +7078,21 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         </div>
 
         <div className="source-follow-layout">
-          <aside className="source-add-nav" aria-label="Typ dodawanego źródła">
-            <div className="source-add-nav-header">
-              <strong id={sourcePrimaryModesLabelId}>Dodaj źródło</strong>
-              <p>Zacznij od strony albo bezpośredniego feedu. Migracje i operacje ręczne zostają w tle.</p>
-            </div>
-            <div aria-labelledby={sourcePrimaryModesLabelId} className="source-add-nav-list" role="group">
-              {primarySourceAddModes.map((mode) => (
-                <button
-                  aria-pressed={sourceAddMode === mode.id}
-                  className={`source-add-nav-item ${sourceAddMode === mode.id ? "source-add-nav-item-active" : ""}`}
-                  data-testid={`source-mode-${mode.id}`}
-                  key={mode.id}
-                  onClick={() => activateSourceAddMode(mode.id, "input")}
-                  type="button"
-                >
-                  <span className="source-add-nav-icon">{renderSourceModeIcon(mode.id)}</span>
-                  <span className="source-add-nav-copy">
-                    <strong>{mode.label}</strong>
-                    <small>{mode.enabled ? mode.description : "Wkrotce"}</small>
-                  </span>
-                </button>
-              ))}
-            </div>
-            {importSourceAddMode ? (
-              <div className="source-add-nav-secondary">
-                <div className="source-add-nav-secondary-copy">
-                  <strong id={sourceSecondaryActionsLabelId}>Migracja i przechwytywanie</strong>
-                  <p>Przenieś bibliotekę z OPML albo zapisz pojedynczy link bez opuszczania produktu.</p>
-                </div>
-                <div aria-labelledby={sourceSecondaryActionsLabelId} className="source-add-nav-link-list" role="group">
-                  <button
-                    aria-pressed={sourceAddMode === importSourceAddMode.id}
-                    className={`source-add-nav-link ${sourceAddMode === importSourceAddMode.id ? "source-add-nav-link-active" : ""}`}
-                    data-testid="source-mode-import"
-                  onClick={() => activateSourceAddMode(importSourceAddMode.id, "import")}
-                  type="button"
-                >
-                    <span className="button-with-icon">
-                      <ImportIcon className="app-icon button-inline-icon" />
-                      {importSourceAddMode.label}
-                    </span>
-                  </button>
-                  <button className="source-add-nav-link" data-testid="source-capture-link" onClick={() => router.push("/capture")} type="button">
-                    <span className="button-with-icon">
-                      <CaptureIcon className="app-icon button-inline-icon" />
-                      Przechwyć link
-                    </span>
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            {upcomingSourceAddModes.length > 0 ? (
-              <details className="source-add-nav-upcoming">
-                <summary>
-                  <span className="button-with-icon">
-                    <SparkIcon className="app-icon button-inline-icon" />
-                    Więcej wkrótce ({upcomingSourceAddModes.length})
-                  </span>
-                </summary>
-                <div className="source-add-nav-upcoming-list">
-                  {upcomingSourceAddModes.map((mode) => (
-                    <span className="source-add-nav-upcoming-chip" key={mode.id}>
-                      {mode.label}
-                    </span>
-                  ))}
-                </div>
-              </details>
-            ) : null}
-          </aside>
+          <SourceAddModeNav
+            activeModeId={sourceAddMode}
+            importMode={importSourceAddMode}
+            onCapture={() => router.push("/capture")}
+            onModeSelect={activateSourceAddMode}
+            primaryModes={primarySourceAddModes}
+            primaryModesLabelId={sourcePrimaryModesLabelId}
+            secondaryActionsLabelId={sourceSecondaryActionsLabelId}
+            upcomingModes={upcomingSourceAddModes}
+          />
 
           <div className="source-follow-main">
             <div className="source-follow-hero">
               <span className="panel-badge panel-badge-with-icon">
-                {renderSourceModeIcon(currentSourceAddMode.id)}
+                <SourceModeIcon modeId={currentSourceAddMode.id} />
                 {currentSourceAddMode.label}
               </span>
               <h3 data-testid="source-main-heading">{sourceHeroTitle}</h3>
@@ -7292,7 +7334,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                           languageLabel: getSourceLanguageLabel(candidate.language),
                         });
                         return (
-                          <article className="source-candidate-card" key={candidate.feed_url}>
+                          <article className="source-candidate-card" data-testid="source-result-card" key={candidate.feed_url}>
                             <div className="source-candidate-card-head">
                               <SourceIdentityMark label={candidate.title} siteUrl={candidate.site_url ?? candidate.feed_url} />
                               <div className="source-candidate-copy">
@@ -7346,7 +7388,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                     </div>
                   )
                 ) : primarySourceCandidate ? (
-                  <article className="source-result-card">
+                  <article className="source-result-card" data-testid="source-result-card">
                     <div className="source-result-header">
                       <div className="source-result-headline">
                         <SourceIdentityMark
@@ -7730,144 +7772,47 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   function renderUiDigestSection() {
     return (
-      <section className="section-screen">
-        <div className="section-screen-header">
-          <div>
-            <span className="panel-badge panel-badge-with-icon">
-              <DigestIcon className="app-icon app-icon-xs" />
-              {uiSectionCopy.digest.eyebrow}
-            </span>
-            <h1>{uiSectionCopy.digest.title}</h1>
-            <p>{uiSectionCopy.digest.description}</p>
-          </div>
-        </div>
-
-        <div className="section-grid section-grid-two">
-          <div className="screen-stack">
-            {renderUiFeedbackCard()}
-            <DigestBuildPanel
-              badgeLabel="Digest"
-              buildDisabled={digestBusy || digestCandidateStatus === "loading"}
-              busy={digestBusy}
-              countLabel={`${persistedDigestCandidateCount ?? digestCandidateIds.length} zapisanych`}
-              message={digestCandidateMessage}
-              onBackToReader={() => router.push(buildAppHref({ section: "read" }))}
-              onBuild={() => void handleDigestBuild()}
-              onPreview={() => void handleDigestPreview()}
-              onShowDigestQueue={() =>
-                navigateToReadLibraryView("digest", {
-                  search: "",
-                  showReadItems: true,
-                })
-              }
-              preview={digestPreview ?? digestCandidatePreview}
-              previewDisabled={digestBusy || digestCandidateStatus === "loading"}
-              queueCopy={digestQueueCopy}
-              showBadgeIcon
-              showButtonIcons
-              showSummaryActions={hasDigestReaderFilter || digestCandidateStatus === "empty"}
-              status={digestCandidateStatus}
-            />
-
-            <section className="ops-section">
-              <div className="ops-section-header">
-                <div>
-                  <span className="panel-badge panel-badge-with-icon">
-                    <StatusIcon className="app-icon app-icon-xs" />
-                    Historia
-                  </span>
-                  <h3>Zbudowane wydania</h3>
-                </div>
-                <span>{digestHistory.length}</span>
-              </div>
-              <DigestHistoryList
-                emptyMessage="Jeszcze nie zbudowano zadnego wydania."
-                formatTimestamp={formatTimestamp}
-                items={digestHistory}
-              />
-            </section>
-          </div>
-
-          <div className="screen-stack">
-            <section className="ops-section">
-              <div className="ops-section-header">
-                <div>
-                  <span className="panel-badge panel-badge-with-icon">
-                    <DeliveryIcon className="app-icon app-icon-xs" />
-                    Delivery
-                  </span>
-                  <h3>Preflight i wysylka</h3>
-                </div>
-                <span>{deliverySettings?.smtp_ready ? "gotowe" : "wymaga konfiguracji"}</span>
-              </div>
-              <div className="channel-actions">
-                <button className="secondary-button" disabled={deliveryBusy || !latestDigest} onClick={() => void handleDeliveryPreflight("kindle")} type="button">
-                  <span className="button-with-icon">
-                    <DeliveryIcon className="app-icon button-inline-icon" />
-                    Preflight Kindle
-                  </span>
-                </button>
-                <button className="secondary-button" disabled={deliveryBusy || !latestDigest} onClick={() => void handleSendDigest("dry_run", "kindle")} type="button">
-                  <span className="button-with-icon">
-                    <DeliveryIcon className="app-icon button-inline-icon" />
-                    Test na sucho
-                  </span>
-                </button>
-                <button className="action-button compact-button" disabled={deliveryBusy || !latestDigest} onClick={() => void handleSendDigest("send", "kindle")} type="button">
-                  <span className="button-with-icon">
-                    <DeliveryIcon className="app-icon button-inline-icon" />
-                    Wyslij na Kindle
-                  </span>
-                </button>
-              </div>
-              {deliveryPreflight ? (
-                <div className="ops-row">
-                  <div className="ops-row-top">
-                    <strong>{deliveryPreflight.artifact.title}</strong>
-                    <span>{getDeliveryStatusLabel(deliveryPreflight.status)}</span>
-                  </div>
-                  <span>{deliveryPreflight.recipient ? `Odbiorca: ${deliveryPreflight.recipient}` : "Odbiorca nieustalony"}</span>
-                  <span>{deliveryPreflight.artifact.artifact_exists ? `Rozmiar artefaktu: ${deliveryPreflight.artifact.artifact_bytes}` : "Brak artefaktu"}</span>
-                  <span>{deliveryPreflight.checks.map((check) => `${check.name}:${check.status}`).join(" | ")}</span>
-                </div>
-              ) : (
-                <p className="empty-state">Najpierw zbuduj digest, potem uruchom preflight lub wysylke.</p>
-              )}
-            </section>
-
-            <section className="ops-section">
-              <div className="ops-section-header">
-                <div>
-                  <span className="panel-badge panel-badge-with-icon">
-                    <StatusIcon className="app-icon app-icon-xs" />
-                    Logi
-                  </span>
-                  <h3>Historia delivery</h3>
-                </div>
-                <span>{deliveryLogs.length}</span>
-              </div>
-              {deliveryLogs.length > 0 ? (
-                <ul className="ops-list">
-                  {deliveryLogs.map((log) => (
-                    <li className="ops-row" key={log.id}>
-                      <div className="ops-row-top">
-                        <strong>{log.digest_title ?? "Wysylka digestu"}</strong>
-                        <span>{getDeliveryStatusLabel(log.status)}</span>
-                      </div>
-                      <span>{log.target_kind} {log.recipient ?? "odbiorca oczekuje"}</span>
-                      <span>{formatTimestamp(log.sent_at, "Jeszcze nie wyslano")}</span>
-                      {log.error_message ? <span>{log.error_message}</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="empty-state">Brak logow delivery dla biezacego wydania.</p>
-              )}
-            </section>
-          </div>
-        </div>
-      </section>
+      <DigestSection
+        buildDisabled={digestBusy || digestCandidateStatus === "loading"}
+        busy={digestBusy}
+        copy={uiSectionCopy.digest}
+        countLabel={`${persistedDigestCandidateCount ?? digestCandidateIds.length} zapisanych`}
+        deliveryBusy={deliveryBusy}
+        deliveryLogs={deliveryLogs}
+        deliveryPreflight={deliveryPreflight}
+        deliverySettings={deliverySettings}
+        feedbackCard={renderUiFeedbackCard()}
+        formatDeliveryStatus={getDeliveryStatusLabel}
+        formatTimestamp={formatTimestamp}
+        hasLatestDigest={Boolean(latestDigest)}
+        history={digestHistory}
+        message={digestCandidateMessage}
+        onBackToReader={() => router.push(buildAppHref({ section: "read" }))}
+        onBuild={() => void handleDigestBuild()}
+        onDeliveryPreflight={() => void handleDeliveryPreflight("kindle")}
+        onPreview={() => void handleDigestPreview()}
+        onSendDigestDryRun={() => void handleSendDigest("dry_run", "kindle")}
+        onSendDigestLive={() => void handleSendDigest("send", "kindle")}
+        onShowDigestQueue={() =>
+          navigateToReadLibraryView("digest", {
+            search: "",
+            showReadItems: true,
+          })
+        }
+        preview={digestPreview ?? digestCandidatePreview}
+        previewDisabled={digestBusy || digestCandidateStatus === "loading"}
+        queueCopy={digestQueueCopy}
+        showSummaryActions={hasDigestReaderFilter || digestCandidateStatus === "empty"}
+        status={digestCandidateStatus}
+      />
     );
+  }
+
+  function handleDeliverySettingsDraftChange(field: keyof typeof settingsDraft, value: string) {
+    setSettingsDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
   }
 
   function renderUiSettingsSection() {
@@ -7921,59 +7866,17 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </div>
                 <span>{deliverySettings?.smtp_ready ? "gotowe" : "wymaga konfiguracji"}</span>
               </div>
-              <form className="channel-form" onSubmit={(event) => { event.preventDefault(); void handleSaveDeliverySettings(); }}>
-                <label className="field">
-                  <span>SMTP host</span>
-                  <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_host: event.target.value }))} value={settingsDraft.smtp_host} />
-                </label>
-                <label className="field">
-                  <span>Port</span>
-                  <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_port: event.target.value }))} value={settingsDraft.smtp_port} />
-                </label>
-                <label className="field">
-                  <span>Uzytkownik</span>
-                  <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_username: event.target.value }))} value={settingsDraft.smtp_username} />
-                </label>
-                <label className="field">
-                  <span>Haslo</span>
-                  <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_password: event.target.value }))} type="password" value={settingsDraft.smtp_password} />
-                </label>
-                <label className="field">
-                  <span>Od</span>
-                  <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_from: event.target.value }))} value={settingsDraft.smtp_from} />
-                </label>
-                <label className="field">
-                  <span>Kindle email</span>
-                  <input onChange={(event) => setSettingsDraft((current) => ({ ...current, kindle_email: event.target.value }))} value={settingsDraft.kindle_email} />
-                </label>
-                <div className="channel-actions">
-                  <button className="secondary-button" disabled={settingsBusy} type="submit">
-                    <span className="button-with-icon">
-                      <SettingsIcon className="app-icon button-inline-icon" />
-                      {settingsBusy ? "Zapisywanie..." : "Zapisz ustawienia"}
-                    </span>
-                  </button>
-                  <button className="mini-button" disabled={deliveryBusy} onClick={() => void handleDeliverySettingsPreflight()} type="button">
-                    <span className="button-with-icon">
-                      <DeliveryIcon className="app-icon button-inline-icon" />
-                      Sprawdz konfiguracje
-                    </span>
-                  </button>
-                </div>
-              </form>
-              {deliverySettings ? (
-                <div className="ops-row">
-                  <div className="ops-row-top">
-                    <strong>Aktualna konfiguracja wysylki</strong>
-                    <span>{deliverySettings.smtp_ready ? "gotowa" : "niepelna"}</span>
-                  </div>
-                  <span>{deliverySettings.smtp_host ? `${deliverySettings.smtp_host}:${deliverySettings.smtp_port}` : "Brak hosta SMTP"}</span>
-                  <span>{deliverySettings.smtp_password.configured ? "Haslo zapisane" : "Haslo niezapisane"}</span>
-                  <span>{deliverySettings.kindle_email ? `Kindle: ${deliverySettings.kindle_email}` : "Brak adresu Kindle"}</span>
-                  {deliverySettings.issues.length > 0 ? <span>{deliverySettings.issues.join(" | ")}</span> : null}
-                  {deliverySettingsMessage ? <span>{deliverySettingsMessage}</span> : null}
-                </div>
-              ) : null}
+              <DeliverySettingsPanel
+                deliveryBusy={deliveryBusy}
+                draft={settingsDraft}
+                message={deliverySettingsMessage}
+                onDraftChange={handleDeliverySettingsDraftChange}
+                onPreflight={() => void handleDeliverySettingsPreflight()}
+                onSave={() => void handleSaveDeliverySettings()}
+                settings={deliverySettings}
+                settingsBusy={settingsBusy}
+                showButtonIcons
+              />
             </section>
 
             <WorkspacePanel
@@ -9693,57 +9596,16 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
             <span>{deliverySettings?.smtp_ready ? "gotowe" : "wymaga konfiguracji"}</span>
           </div>
 
-          <form className="channel-form" onSubmit={(event) => {
-            event.preventDefault();
-            void handleSaveDeliverySettings();
-          }}>
-            <label className="field">
-              <span>SMTP host</span>
-              <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_host: event.target.value }))} value={settingsDraft.smtp_host} />
-            </label>
-            <label className="field">
-              <span>Port</span>
-              <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_port: event.target.value }))} value={settingsDraft.smtp_port} />
-            </label>
-            <label className="field">
-              <span>Uzytkownik</span>
-              <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_username: event.target.value }))} value={settingsDraft.smtp_username} />
-            </label>
-            <label className="field">
-              <span>Haslo</span>
-              <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_password: event.target.value }))} type="password" value={settingsDraft.smtp_password} />
-            </label>
-            <label className="field">
-              <span>Od</span>
-              <input onChange={(event) => setSettingsDraft((current) => ({ ...current, smtp_from: event.target.value }))} value={settingsDraft.smtp_from} />
-            </label>
-            <label className="field">
-              <span>Kindle email</span>
-              <input onChange={(event) => setSettingsDraft((current) => ({ ...current, kindle_email: event.target.value }))} value={settingsDraft.kindle_email} />
-            </label>
-            <div className="channel-actions">
-              <button className="secondary-button" disabled={settingsBusy} type="submit">
-                {settingsBusy ? "Zapisywanie..." : "Zapisz ustawienia"}
-              </button>
-              <button className="mini-button" disabled={deliveryBusy} onClick={() => void handleDeliverySettingsPreflight()} type="button">
-                Sprawdz konfiguracje
-              </button>
-            </div>
-          </form>
-
-          {deliverySettings ? (
-            <div className="ops-row">
-              <div className="ops-row-top">
-                <strong>Aktualna konfiguracja wysylki</strong>
-                <span>{deliverySettings.smtp_ready ? "gotowa" : "niepelna"}</span>
-              </div>
-              <span>{deliverySettings.smtp_host ? `${deliverySettings.smtp_host}:${deliverySettings.smtp_port}` : "Brak hosta SMTP"}</span>
-              <span>{deliverySettings.smtp_password.configured ? "Haslo zapisane" : "Haslo niezapisane"}</span>
-              <span>{deliverySettings.kindle_email ? `Kindle: ${deliverySettings.kindle_email}` : "Brak adresu Kindle"}</span>
-              {deliverySettings.issues.length > 0 ? <span>{deliverySettings.issues.join(" | ")}</span> : null}
-              {deliverySettingsMessage ? <span>{deliverySettingsMessage}</span> : null}
-            </div>
-          ) : null}
+          <DeliverySettingsPanel
+            deliveryBusy={deliveryBusy}
+            draft={settingsDraft}
+            message={deliverySettingsMessage}
+            onDraftChange={handleDeliverySettingsDraftChange}
+            onPreflight={() => void handleDeliverySettingsPreflight()}
+            onSave={() => void handleSaveDeliverySettings()}
+            settings={deliverySettings}
+            settingsBusy={settingsBusy}
+          />
 
           <div className="channel-actions">
             <button className="secondary-button" disabled={deliveryBusy || !latestDigest} onClick={() => void handleDeliveryPreflight("kindle")} type="button">

@@ -5,6 +5,10 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  attachPlaywrightArtifact,
+  collectScreenshotEvidence,
+} from "./lib/playwright-artifact-schema.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +17,7 @@ const OUTPUT_DIR = path.join(ROOT_DIR, "output", "playwright", "auth-smoke");
 const OUTPUT_JSON = path.join(OUTPUT_DIR, "auth-smoke.json");
 const OUTPUT_SCREENSHOT = path.join(OUTPUT_DIR, "auth-smoke.png");
 const WAIT_TIMEOUT_MS = 120000;
+const RUN_STARTED_AT = new Date();
 
 function assert(condition, message) {
   if (!condition) {
@@ -174,6 +179,101 @@ async function waitForAppShell(page) {
     undefined,
     { timeout: 45000 },
   );
+}
+
+function buildStandardArtifact(payload) {
+  const screenshotEvidence = collectScreenshotEvidence([OUTPUT_SCREENSHOT], {
+    rootDir: ROOT_DIR,
+    runStartedAt: RUN_STARTED_AT,
+  });
+
+  return attachPlaywrightArtifact(payload, {
+    actions: [
+      {
+        id: "auth-register",
+        label: "Register first local account and enter protected app",
+        route: "/settings",
+        screenshot: OUTPUT_SCREENSHOT,
+        status:
+          payload.registered && payload.protectedAppOpenedAfterRegister
+            ? "passed"
+            : "failed",
+      },
+      {
+        id: "auth-logout-guard",
+        label: "Logout revokes session and shows capture auth notice",
+        route: "/capture",
+        screenshot: OUTPUT_SCREENSHOT,
+        status:
+          payload.logout &&
+          payload.protectedApi401AfterLogout &&
+          payload.captureAuthNoticeAfterLogout
+            ? "passed"
+            : "failed",
+      },
+      {
+        id: "auth-login",
+        label: "Login restores protected reader access",
+        route: "/read/inbox",
+        screenshot: OUTPUT_SCREENSHOT,
+        status:
+          payload.login && payload.readInboxOpenedAfterLogin ? "passed" : "failed",
+      },
+    ],
+    checkName: "check:auth",
+    errors: {
+      console: payload.consoleErrors ?? [],
+      page: payload.pageErrors ?? [],
+      http: payload.failedRequests ?? [],
+      harness: payload.error ? [{ message: payload.error }] : [],
+    },
+    metadata: {
+      invalidPasswordStatus: payload.invalidPasswordStatus ?? null,
+      noAccountSession: payload.noAccountSession ?? null,
+      webCommand: payload.webCommand ?? null,
+    },
+    routes: [
+      {
+        id: "settings-auth",
+        ready: Boolean(payload.protectedAppOpenedAfterLogin),
+        route: "/settings",
+        screenshot: OUTPUT_SCREENSHOT,
+        status: payload.protectedAppOpenedAfterLogin ? "passed" : "failed",
+        viewport: "desktop",
+      },
+      {
+        id: "capture-auth-notice",
+        ready: Boolean(payload.captureAuthNoticeAfterLogout),
+        route: "/capture",
+        screenshot: OUTPUT_SCREENSHOT,
+        status: payload.captureAuthNoticeAfterLogout ? "passed" : "failed",
+        viewport: "desktop",
+      },
+      {
+        id: "read-inbox-after-login",
+        ready: Boolean(payload.readInboxOpenedAfterLogin),
+        route: "/read/inbox",
+        screenshot: OUTPUT_SCREENSHOT,
+        status: payload.readInboxOpenedAfterLogin ? "passed" : "failed",
+        viewport: "desktop",
+      },
+    ],
+    runtime: {
+      accountsDatabasePath: payload.isolatedPaths?.accountsDatabasePath ?? null,
+      accountsWorkspaceDir: payload.isolatedPaths?.accountsWorkspaceDir ?? null,
+      authMode: "isolated-auth-runtime",
+      databasePath: payload.isolatedPaths?.databasePath ?? null,
+      isolated: true,
+      runDir: payload.runDir ?? null,
+    },
+    screenshots: screenshotEvidence,
+    startedAt: RUN_STARTED_AT,
+    status: payload.status === "passed" ? "passed" : "failed",
+    targetUrls: {
+      apiUrl: payload.apiUrl ?? null,
+      webUrl: payload.webUrl ?? null,
+    },
+  });
 }
 
 async function main() {
@@ -416,7 +516,11 @@ async function main() {
     }
     await stopProcess(webProcess);
     await stopProcess(apiProcess);
-    await writeFile(OUTPUT_JSON, `${JSON.stringify(results, null, 2)}\n`, "utf8");
+    await writeFile(
+      OUTPUT_JSON,
+      `${JSON.stringify(buildStandardArtifact(results), null, 2)}\n`,
+      "utf8",
+    );
   }
 }
 

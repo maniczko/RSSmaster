@@ -33,6 +33,8 @@ Prove that the currently implemented product loop still works:
 15. Confirm imported items appear and can be triaged.
 16. Use the digest section to preview and build an EPUB.
 17. Use the delivery section to save SMTP/Kindle settings and run a dry-run send.
+18. Open an article and confirm the `Wyślij na Kindle` action is visible; without delivery settings it should show configuration guidance instead of creating a send attempt.
+19. For a real external send, follow `docs/runbooks/live-delivery-signoff.md` and store completed evidence under ignored `output/live-delivery/`.
 
 ## What the commands mean
 
@@ -137,5 +139,7 @@ This runbook still stops short of a true external send guarantee:
 - Kindle inbox acceptance and EPUB rendering on Amazon's side
 - browser-automated verification of the full keyboard-first reader shell outside the current focused reader smoke
 - manual screen-reader sign-off, which still lives in `docs/runbooks/a11y-screen-reader-signoff.md`
+
+Use `docs/runbooks/live-delivery-signoff.md` and `docs/runbooks/live-delivery-evidence-template.md` for the manual SMTP/Kindle evidence path.
 
 Use `docs/release-checklist.md` as the source of truth for final release gating.

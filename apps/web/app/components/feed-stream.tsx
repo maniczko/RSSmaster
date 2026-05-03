@@ -133,27 +133,29 @@ export function FeedStream({
 
     return (
       <div className="feed-stream-empty" data-testid="reader-empty-state">
-        <strong>{emptyTitle}</strong>
-        <p>{emptyDescription}</p>
-        <div className="feed-stream-empty-diagnostic">
-          <span>{emptyDiagnosticTitle}</span>
-          <p>{emptyDiagnosticDescription}</p>
-        </div>
-        {resolvedEmptyActions.length > 0 ? (
-          <div className="feed-stream-empty-actions">
-            {resolvedEmptyActions.map((action) => (
-              <button
-                className={`mini-button ${action.tone === "accent" ? "mini-button-accent" : ""}`}
-                disabled={action.disabled}
-                key={action.label}
-                onClick={action.onClick}
-                type="button"
-              >
-                {action.label}
-              </button>
-            ))}
+        <div className="premium-empty-state-content" data-testid="premium-empty-state">
+          <strong>{emptyTitle}</strong>
+          <p>{emptyDescription}</p>
+          <div className="feed-stream-empty-diagnostic">
+            <span>{emptyDiagnosticTitle}</span>
+            <p>{emptyDiagnosticDescription}</p>
           </div>
-        ) : null}
+          {resolvedEmptyActions.length > 0 ? (
+            <div className="feed-stream-empty-actions">
+              {resolvedEmptyActions.map((action) => (
+                <button
+                  className={`mini-button ${action.tone === "accent" ? "mini-button-accent" : ""}`}
+                  disabled={action.disabled}
+                  key={action.label}
+                  onClick={action.onClick}
+                  type="button"
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
     );
   }

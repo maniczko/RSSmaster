@@ -669,6 +669,8 @@ Response includes:
 - `log`
 - `preflight`
 
+The article-level `Wyślij na Kindle` reader action does not introduce a separate public endpoint. It builds a single-item digest through `POST /api/v1/digests/build` with explicit `item_ids`, then dispatches that generated EPUB through this delivery endpoint with `target_kind: "kindle"` and `mode: "send"`.
+
 ### `GET /api/v1/delivery/logs`
 
 Returns persisted delivery log rows, optionally filtered by `digest_id`.

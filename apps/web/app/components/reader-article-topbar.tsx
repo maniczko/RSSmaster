@@ -3,6 +3,7 @@ import {
   BookmarkIcon,
   DigestIcon,
   FeedIcon,
+  KindleIcon,
   NoteIcon,
   ReaderIcon,
 } from "@/app/components/ui-icons";
@@ -14,11 +15,14 @@ type ReaderArticleTopbarProps = {
   isArchived: boolean;
   isFavorite: boolean;
   isRead: boolean;
+  kindleBusy?: boolean;
+  kindleReady?: boolean;
   reextractBusy?: boolean;
   showInspector: boolean;
   sourceUrl: string;
   onBackToFeed: () => void;
   onReextract?: () => void;
+  onSendToKindle: () => void;
   onToggleArchive: () => void;
   onToggleDigest: () => void;
   onToggleFavorite: () => void;
@@ -33,8 +37,11 @@ export function ReaderArticleTopbar({
   isArchived,
   isFavorite,
   isRead,
+  kindleBusy = false,
+  kindleReady = false,
   onBackToFeed,
   onReextract,
+  onSendToKindle,
   onToggleArchive,
   onToggleDigest,
   onToggleFavorite,
@@ -67,6 +74,24 @@ export function ReaderArticleTopbar({
             </span>
           </button>
         ) : null}
+        <button
+          aria-label={kindleReady ? "Wyślij artykuł na Kindle" : "Skonfiguruj i wyślij artykuł na Kindle"}
+          className={`mini-button mini-button-kindle ${kindleReady ? "mini-button-kindle-ready" : ""}`}
+          data-testid="reader-send-kindle"
+          disabled={busy || kindleBusy}
+          onClick={onSendToKindle}
+          title={
+            kindleReady
+              ? "Zbuduj jednopunktowy EPUB i wyślij go na Kindle"
+              : "Najpierw uzupełnij SMTP, Kindle email i approved sender w Amazon"
+          }
+          type="button"
+        >
+          <span className="button-with-icon">
+            <KindleIcon className="app-icon button-inline-icon" />
+            {kindleBusy ? "Wysyłanie..." : "Wyślij na Kindle"}
+          </span>
+        </button>
         <button
           className={`mini-button ${showInspector ? "mini-button-accent" : ""}`}
           onClick={onToggleInspector}
