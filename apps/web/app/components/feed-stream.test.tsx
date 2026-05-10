@@ -103,4 +103,41 @@ describe("FeedStream", () => {
     expect(markup).toContain("Co dokładnie blokuje czytanie?");
     expect(markup).toContain("nie ma jeszcze historii pobrania");
   });
+
+  it("renders explicit reader feedback actions for ranked cards", () => {
+    const markup = renderToStaticMarkup(
+      <FeedStream
+        activeItemId={null}
+        busyItemId={null}
+        channelSiteUrls={{ chn_test: "https://example.com" }}
+        channelTitles={{ chn_test: "Example" }}
+        formatTimestamp={() => "dzis"}
+        items={[
+          {
+            id: "itm_test",
+            channel_id: "chn_test",
+            title: "Important article",
+            author: null,
+            excerpt: "Short excerpt",
+            published_at: "2026-05-05T07:00:00Z",
+            is_read: false,
+            is_favorite: false,
+            digest_candidate: false,
+            has_cleaned_content: true,
+            has_raw_content: true,
+          },
+        ]}
+        onOpen={() => {}}
+        onReaderFeedback={() => {}}
+        onSelect={() => {}}
+        onToggleDigest={() => {}}
+        onToggleFavorite={() => {}}
+        onToggleRead={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Mniej takich");
+    expect(markup).toContain("Wiecej");
+    expect(markup).toContain("Wazne");
+  });
 });

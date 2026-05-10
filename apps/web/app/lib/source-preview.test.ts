@@ -96,14 +96,14 @@ describe("source preview helpers", () => {
       isExpectedPreviewFailure: true,
     });
     expect(getSourcePreviewFailureLabel(classifySourcePreviewFailure({ previewFailureKind: "transport", httpStatus: 503 }))).toBe(
-      "Feed jest chwilowo niedostepny",
+      "Źródło jest chwilowo niedostępne",
     );
     expect(
       getSourcePreviewFailureDescription(classifySourcePreviewFailure({ previewFailureKind: "transport", httpStatus: 503 })),
-    ).toBe("Nie udalo sie polaczyc z podanym zrodlem. Sprobuj ponownie za chwile albo sprawdz adres.");
+    ).toBe("Nie udało się połączyć z podanym źródłem. Spróbuj ponownie za chwilę albo sprawdź adres.");
     expect(
       getSourcePreviewFailureDescription(classifySourcePreviewFailure({ previewFailureKind: "discovery", httpStatus: 422 })),
-    ).toBe("Nie udalo sie wykryc poprawnego feedu dla podanego adresu.");
+    ).toBe("Nie udało się wykryć poprawnego feedu dla podanego adresu.");
     expect(classifySourcePreviewFailure({ httpStatus: 500, errorCode: "unexpected" })).toEqual({
       failureKind: null,
       httpStatus: 500,
@@ -111,7 +111,7 @@ describe("source preview helpers", () => {
       isExpectedPreviewFailure: false,
     });
     expect(getSourcePreviewFailureLabel(classifySourcePreviewFailure({ httpStatus: 500, errorCode: "unexpected" }))).toBe(
-      "Nieoczekiwany blad preview",
+      "Nieoczekiwany błąd podglądu",
     );
   });
 
@@ -134,12 +134,12 @@ describe("source preview helpers", () => {
   it("maps preview statuses to stable copy labels", () => {
     expect(getSourcePreviewStatusLabel("ready")).toBe("Gotowy podgląd");
     expect(getSourcePreviewStatusLabel("already_subscribed")).toBe("Już dodane");
-    expect(getSourcePreviewStatusLabel("multiple_candidates")).toBe("Wiele kandydatów");
+    expect(getSourcePreviewStatusLabel("multiple_candidates")).toBe("Wiele wyników");
   });
 
   it("builds calm live announcements for screen readers", () => {
     expect(getSourcePreviewAnnouncement({ uiState: "idle" })).toBe(
-      "Wklej adres strony albo feedu, aby zobaczyć preview.",
+      "Wklej adres strony albo feedu, aby zobaczyć podgląd.",
     );
     expect(getSourcePreviewAnnouncement({ uiState: "loading" })).toBe(
       "Trwa sprawdzanie adresu i wykrywanie feedu.",
@@ -148,15 +148,15 @@ describe("source preview helpers", () => {
       "Wynik gotowy. Wykryto jeden feed do obserwowania.",
     );
     expect(getSourcePreviewAnnouncement({ uiState: "multiple_candidates", resultCount: 2 })).toBe(
-      "Wynik gotowy. Znaleziono 2 kandydatów.",
+      "Wynik gotowy. Znaleziono 2 wyniki.",
     );
     expect(
       getSourcePreviewAnnouncement({
         uiState: "error",
-        feedbackTitle: "Feed jest chwilowo niedostepny",
-        feedbackLines: ["Sprawdz adres albo sprobuj ponownie za chwile."],
+        feedbackTitle: "Źródło jest chwilowo niedostępne",
+        feedbackLines: ["Sprawdź adres albo spróbuj ponownie za chwilę."],
       }),
-    ).toBe("Feed jest chwilowo niedostepny. Sprawdz adres albo sprobuj ponownie za chwile.");
+    ).toBe("Źródło jest chwilowo niedostępne. Sprawdź adres albo spróbuj ponownie za chwilę.");
   });
 
   it("builds honest local metrics without follower semantics", () => {

@@ -28,6 +28,44 @@ type ReaderArticleCardProps = {
   title: string;
 };
 
+const htmlEntityReplacements: Record<string, string> = {
+  "&amp;": "&",
+  "&apos;": "'",
+  "&#39;": "'",
+  "&quot;": "\"",
+  "&nbsp;": " ",
+  "&lt;": "<",
+  "&gt;": ">",
+};
+
+function normalizeArticleHeading(value: string) {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(amp|apos|quot|nbsp|lt|gt);|&#39;/g, (match) => htmlEntityReplacements[match] ?? match)
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("pl");
+}
+
+function removeDuplicateLeadingTitle(html: string, title: string) {
+  const headingMatch = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>\s*/i);
+  if (!headingMatch || headingMatch.index === undefined) {
+    return html;
+  }
+
+  const firstParagraphIndex = html.search(/<p\b/i);
+  if (firstParagraphIndex >= 0 && headingMatch.index > firstParagraphIndex) {
+    return html;
+  }
+
+  const headingText = normalizeArticleHeading(headingMatch[1] ?? "");
+  const titleText = normalizeArticleHeading(title);
+
+  return headingText && headingText === titleText
+    ? `${html.slice(0, headingMatch.index)}${html.slice(headingMatch.index + headingMatch[0].length)}`
+    : html;
+}
+
 export function ReaderArticleCard({
   authorLabel,
   bodyParagraphs,
@@ -55,8 +93,12 @@ export function ReaderArticleCard({
   sourceLabel,
   title,
 }: ReaderArticleCardProps) {
+  const readerArticleSurfaceClasses = `${readerSurfaceClasses} reader-article-width`;
+  const cleanedHtml = highlightedCleanedHtml ?? sanitizedCleanedHtml;
+  const displayCleanedHtml = cleanedHtml ? removeDuplicateLeadingTitle(cleanedHtml, title) : null;
+
   return (
-    <article className="feed-reader-card" data-testid="premium-reader-surface">
+    <article className="feed-reader-card premium-reader-surface" data-testid="premium-reader-surface">
       <header className="feed-reader-hero">
         <div className="feed-reader-meta">
           <span>{sourceLabel}</span>
@@ -70,9 +112,9 @@ export function ReaderArticleCard({
           <span className="feed-reader-flag">{qualityBadge}</span>
           {!isRead ? <span className="feed-reader-flag">Nieprzeczytane</span> : null}
           {isFavorite ? <span className="feed-reader-flag">Zapisane</span> : null}
-          {digestCandidate ? <span className="feed-reader-flag">W digescie</span> : null}
+          {digestCandidate ? <span className="feed-reader-flag">W digeście</span> : null}
           {resumeProgress && resumeProgress > 2 ? <span className="feed-reader-flag">Wznow {resumeProgress}%</span> : null}
-          {highlightCount > 0 ? <span className="feed-reader-flag">{highlightCount} podkreslen</span> : null}
+          {highlightCount > 0 ? <span className="feed-reader-flag">{highlightCount} podkreśleń</span> : null}
           {noteCount > 0 ? <span className="feed-reader-flag">{noteCount} notatek</span> : null}
         </div>
 
@@ -85,7 +127,7 @@ export function ReaderArticleCard({
           <p>{qualityDescription}</p>
           <div className="reader-gate-actions">
             <button className="action-button" onClick={onOpenSource} type="button">
-              Otworz zrodlo
+              Otwórz źródło
             </button>
           </div>
         </div>
@@ -93,15 +135,15 @@ export function ReaderArticleCard({
         <div className="reader-article-loading feed-reader-loading" ref={contentRef}>
           Przygotowywanie lokalnego widoku czytania...
         </div>
-      ) : showCleanedHtml && sanitizedCleanedHtml ? (
-        <div className={readerSurfaceClasses} data-testid="reader-article-width" onScroll={onSurfaceScroll} ref={contentRef}>
+      ) : showCleanedHtml && displayCleanedHtml ? (
+        <div className={readerArticleSurfaceClasses} data-testid="reader-article-width" onScroll={onSurfaceScroll} ref={contentRef}>
           <div
             className="reader-article-prose"
-            dangerouslySetInnerHTML={{ __html: highlightedCleanedHtml ?? sanitizedCleanedHtml }}
+            dangerouslySetInnerHTML={{ __html: displayCleanedHtml }}
           />
         </div>
       ) : bodyParagraphs.length > 0 ? (
-        <div className={readerSurfaceClasses} data-testid="reader-article-width" onScroll={onSurfaceScroll} ref={contentRef}>
+        <div className={readerArticleSurfaceClasses} data-testid="reader-article-width" onScroll={onSurfaceScroll} ref={contentRef}>
           <div className="reader-article-prose">
             {bodyParagraphs.map((paragraph, paragraphIndex) => (
               <p key={`${paragraph.slice(0, 64)}-${paragraphIndex}`}>{paragraph}</p>
@@ -110,7 +152,7 @@ export function ReaderArticleCard({
         </div>
       ) : (
         <div className="reader-article-loading reader-article-loading-empty feed-reader-loading" ref={contentRef}>
-          Brak czytelnej tresci artykulu. Uzyj zrodla jako fallbacku.
+          Brak czytelnej treści artykułu. Użyj źródła jako fallbacku.
         </div>
       )}
     </article>

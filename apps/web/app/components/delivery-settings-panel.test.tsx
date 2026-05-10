@@ -37,6 +37,7 @@ describe("DeliverySettingsPanel", () => {
     expect(markup).toContain("Zapisz ustawienia");
     expect(markup).toContain("Sprawdz konfiguracje");
     expect(markup).toContain("button-with-icon");
+    expect(markup).toContain('data-slot="button"');
   });
 
   it("shows current delivery configuration and validation messages", () => {
@@ -54,6 +55,7 @@ describe("DeliverySettingsPanel", () => {
 
     expect(markup).toContain("Aktualna konfiguracja wysylki");
     expect(markup).toContain("niepelna");
+    expect(markup).toContain('data-slot="badge"');
     expect(markup).toContain("smtp.example.com:587");
     expect(markup).toContain("Haslo zapisane");
     expect(markup).toContain("Brak approved sender");

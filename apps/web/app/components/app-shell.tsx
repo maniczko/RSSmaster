@@ -8,6 +8,7 @@ export type AppShellProps = {
   navRail?: ReactNode;
   sidebar: ReactNode;
   children: ReactNode;
+  className?: string;
   sidebarOpen?: boolean;
   onSidebarClose?: () => void;
 };
@@ -17,11 +18,21 @@ export function AppShell({
   navRail,
   sidebar,
   children,
+  className,
   sidebarOpen = false,
   onSidebarClose,
 }: AppShellProps) {
+  const shellClassName = [
+    "app-shell",
+    sidebarOpen ? "app-shell-sidebar-open" : "",
+    navRail ? "app-shell-with-nav-rail" : "",
+    className ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`app-shell ${sidebarOpen ? "app-shell-sidebar-open" : ""} ${navRail ? "app-shell-with-nav-rail" : ""}`}>
+    <div className={shellClassName}>
       <a className="skip-link" href="#rssmaster-main">
         Przejdź do treści
       </a>

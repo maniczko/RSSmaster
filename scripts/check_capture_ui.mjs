@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createBrowserIssueTracker } from "./lib/browser-issue-tracker.mjs";
 import { prepareSmokeRuntime } from "./lib/local-runtime.mjs";
 import {
   attachPlaywrightArtifact,
@@ -323,10 +324,15 @@ function withStandardArtifact(results) {
     errors: {
       console: results.consoleErrors ?? [],
       page: results.pageErrors ?? [],
+      http: [...(results.httpFailures ?? []), ...(results.requestFailures ?? [])],
       harness: results.error ? [{ message: String(results.error) }] : [],
     },
     metadata: {
       article_url: results.articleUrl ?? null,
+      browser_issues: {
+        ignored_console: results.ignoredConsoleIssues ?? [],
+        ignored_request: results.ignoredRequestFailures ?? [],
+      },
       item_id: results.itemId ?? null,
       bookmarklet_ready: results.bookmarkletReady ?? false,
       manifest_share_target: results.manifestShareTarget ?? false,
@@ -394,25 +400,8 @@ async function main() {
       viewport: { width: 1440, height: 1080 },
     });
     const page = await context.newPage();
-    const consoleErrors = [];
-    const pageErrors = [];
-
-    page.on("console", (message) => {
-      if (["error", "warning"].includes(message.type())) {
-        consoleErrors.push({
-          type: message.type(),
-          text: message.text(),
-          url: page.url(),
-        });
-      }
-    });
-
-    page.on("pageerror", (error) => {
-      pageErrors.push({
-        message: String(error),
-        url: page.url(),
-      });
-    });
+    const issueTracker = createBrowserIssueTracker({ consoleTypes: ["error", "warning"] });
+    issueTracker.attachToPage(page);
 
     const results = {
       status: "running",
@@ -427,8 +416,12 @@ async function main() {
       openedSavedReader: false,
       notePersisted: false,
       itemId: null,
-      consoleErrors,
-      pageErrors,
+      consoleErrors: issueTracker.consoleIssues,
+      httpFailures: issueTracker.httpFailures,
+      ignoredConsoleIssues: issueTracker.ignoredConsoleIssues,
+      ignoredRequestFailures: issueTracker.ignoredRequestFailures,
+      pageErrors: issueTracker.pageErrors,
+      requestFailures: issueTracker.requestFailures,
       runtime: {
         apiUrl,
         authMode: runtime.authMode,
@@ -521,8 +514,7 @@ async function main() {
       assert(results.manifestShareTarget, "Manifest share target does not point to /capture with the expected params.");
       assert(results.openedSavedReader, "Capture flow did not navigate into the saved reader.");
       assert(results.notePersisted, "Capture note was not persisted as an item note annotation.");
-      assert(consoleErrors.length === 0, `Capture smoke logged browser console issues: ${consoleErrors.map((entry) => entry.text).join(" | ")}`);
-      assert(pageErrors.length === 0, `Capture smoke saw page errors: ${pageErrors.map((entry) => entry.message).join(" | ")}`);
+      assert(!issueTracker.hasBlockingIssues, `Capture smoke saw browser issues: ${issueTracker.formatBlockingIssues()}`);
       results.status = "passed";
     } catch (error) {
       results.status = "failed";

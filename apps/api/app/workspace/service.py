@@ -70,6 +70,16 @@ TOPIC_STOPWORDS = STOPWORDS | {
     "zdaniem",
     "zlotego",
     "złotego",
+    "artykul",
+    "artykule",
+    "artykulu",
+    "artykułu",
+    "jest",
+    "oraz",
+    "tego",
+    "tych",
+    "sie",
+    "się",
 }
 LOW_SIGNAL_HEADLINE_PREFIXES = (
     "ile kosztuje ",
@@ -90,6 +100,12 @@ LOW_SIGNAL_HEADLINE_PENALTY = 12.0
 SAME_SOURCE_DUPLICATE_PENALTY = 8.0
 MULTI_SOURCE_COVERAGE_BOOST = 4.0
 LOW_SIGNAL_FAMILY_SATURATION_PENALTY = 6.0
+FOR_YOU_MIN_SCORE = 55.0
+NEGATIVE_FEEDBACK_PENALTY = 38.0
+POSITIVE_FEEDBACK_BOOST = 28.0
+HARD_HIDE_ACTIONS = {"hide_topic", "mute_source"}
+POSITIVE_FEEDBACK_ACTIONS = {"more_like_this", "important"}
+NEGATIVE_FEEDBACK_ACTIONS = {"less_like_this", "hide_topic", "mute_source"}
 FALLBACK_WINDOW_HOURS = (72, 120, 168, 336)
 LEARNED_TOPIC_LIMIT = 6
 LEARNED_SOURCE_LIMIT = 3
@@ -147,17 +163,94 @@ class WorkspaceService:
         self.repository.update_profile(assignments=assignments, interests=interests)
         return self._build_profile()
 
-    def get_ranking(self, *, limit: int = 12) -> dict[str, object]:
+    def get_ranking(
+        self,
+        *,
+        limit: int = 12,
+        mode: str = "for_you",
+        min_score: float | None = None,
+        include_hidden: bool = False,
+        explain: bool = True,
+    ) -> dict[str, object]:
         profile = self.get_profile()
         ranked_state = self._refresh_story_clusters_and_rank(profile=profile, target_count=limit)
+        effective_min_score = FOR_YOU_MIN_SCORE if mode == "for_you" and min_score is None else min_score
+        statuses = ("eligible",) if mode in {"for_you", "latest"} else None
         items = [
             serialize_ranked_row(row)
-            for row in self.repository.list_ranked_rows(limit=limit)
+            for row in self.repository.list_ranked_rows(
+                limit=max(limit, int(profile.get("daily_reading_goal") or limit)) * 4 if mode == "hidden" else limit * 4,
+                statuses=statuses,
+                min_score=effective_min_score if mode == "for_you" else min_score,
+            )
         ]
+        if not include_hidden and mode != "hidden":
+            items = [item for item in items if item["visibility"] == "shown"]
+        if mode == "hidden":
+            items = [
+                item
+                for item in items
+                if item["visibility"] == "hidden" or item["candidate_status"] != "eligible"
+            ]
+        if mode == "latest":
+            items = sorted(
+                items,
+                key=lambda entry: entry["item"]["published_at"] or "",
+                reverse=True,
+            )
+        if not explain:
+            for item in items:
+                item["breakdown"]["matched_interests"] = []
+                item["breakdown"]["matched_positive_signals"] = []
+                item["breakdown"]["matched_negative_signals"] = []
         return {
             "generated_at": ranked_state["generated_at"],
-            "items": items,
+            "items": items[:limit],
         }
+
+    def create_reader_feedback(self, payload: dict[str, object]) -> dict[str, object]:
+        item_id = str(payload["item_id"])
+        item = self.item_repository.get_by_id(item_id)
+        if item is None:
+            raise ApiError(
+                status_code=404,
+                code="item_not_found",
+                message="Item was not found.",
+                details={"item_id": item_id},
+                retryable=False,
+            )
+        action = str(payload["action"])
+        if action not in POSITIVE_FEEDBACK_ACTIONS | NEGATIVE_FEEDBACK_ACTIONS:
+            raise ApiError(
+                status_code=400,
+                code="invalid_reader_feedback_action",
+                message="Reader feedback action is not supported.",
+                details={"action": action},
+                retryable=False,
+            )
+        source_id = normalize_optional_text(payload.get("source_id")) or str(item["channel_id"])
+        topic = normalize_feedback_topic(payload.get("topic")) or derive_feedback_topic(item)
+        reason = normalize_optional_text(payload.get("reason"))
+        feedback = self.repository.create_reader_feedback(
+            feedback_id=f"rfb_{uuid4().hex[:12]}",
+            item_id=item_id,
+            source_id=source_id,
+            action=action,
+            topic=topic,
+            reason=reason,
+        )
+        if action == "mute_source" and source_id:
+            self.repository.update_channel_control(
+                source_id,
+                group_id=None,
+                tier="muted",
+                custom_source_cap=None,
+                paused_until=None,
+                snoozed_until=None,
+                notes=reason or "Muted from reader feedback.",
+            )
+        _ranking_refresh_cache.clear()
+        return {"feedback": feedback}
 
     def get_briefing(self) -> dict[str, object]:
         profile = self.get_profile()
@@ -913,6 +1006,7 @@ class WorkspaceService:
     def _build_profile(self) -> dict[str, object]:
         profile = self.repository.ensure_profile()
         explicit_interests = self.repository.list_interests()
+        reader_feedback = self.repository.list_reader_feedback(limit=500)
         learned_interests = derive_learned_interests(
             self.repository.list_preference_signal_rows(limit=SIGNAL_ROW_LIMIT),
             explicit_interests=explicit_interests,
@@ -920,6 +1014,7 @@ class WorkspaceService:
         profile["interests"] = explicit_interests
         profile["learned_interests"] = learned_interests
         profile["effective_interests"] = merge_profile_interests(explicit_interests, learned_interests)
+        profile["reader_feedback"] = reader_feedback
         return profile
 
     @staticmethod
@@ -952,6 +1047,7 @@ def build_ranking_refresh_cache_key(database_file: object, profile: dict[str, ob
         "emergency_source_cap": profile.get("emergency_source_cap"),
         "daily_reading_goal": profile.get("daily_reading_goal"),
         "effective_interests": profile.get("effective_interests") or profile.get("interests") or [],
+        "reader_feedback": profile.get("reader_feedback") or [],
     }
     return json.dumps(profile_fingerprint, sort_keys=True, default=str, separators=(",", ":"))
 
@@ -1008,6 +1104,12 @@ def build_ranking_states(
         }
         for interest in interest_rows
     ]
+    explicit_positive_topic_keys = {
+        str(interest.get("normalized_topic") or interest["label"]).casefold()
+        for interest in profile.get("interests") or []
+        if str(interest.get("kind") or "topic") == "topic" and int(interest.get("weight") or 0) > 0
+    }
+    feedback_signals = build_reader_feedback_signals(list(profile.get("reader_feedback") or []))
     cluster_size_by_item: dict[str, int] = {}
     cluster_source_count_by_item: dict[str, int] = {}
     same_source_repeat_count_by_item: dict[str, int] = {}
@@ -1057,7 +1159,12 @@ def build_ranking_states(
             if part
         ).casefold()
         matched_interests: list[str] = []
+        matched_positive_signals: list[str] = []
+        matched_negative_signals: list[str] = []
+        quality_flags: list[str] = []
         preference_score = 0.0
+        low_signal_headline = is_low_signal_headline(row.get("title"))
+        matched_explicit_topic = False
         for interest in interests:
             match_key = str(interest["match_key"])
             if not match_key:
@@ -1066,12 +1173,22 @@ def build_ranking_states(
                 is_match = match_key in source_blob
                 score_delta = int(interest["weight"]) * 10
             else:
-                is_match = match_key in text_blob
+                is_match = match_key in text_blob or (match_key == "kurs walut" and low_signal_headline)
                 score_delta = int(interest["weight"]) * 8
             if not is_match:
                 continue
+            if low_signal_headline and interest["kind"] == "source":
+                continue
             matched_interests.append(str(interest["label"]))
+            matched_positive_signals.append(str(interest["label"]))
+            if interest["kind"] == "topic" and match_key in explicit_positive_topic_keys and int(interest["weight"]) > 0:
+                matched_explicit_topic = True
             preference_score += float(score_delta)
+        feedback_match = match_reader_feedback(row, text_blob=text_blob, source_blob=source_blob, signals=feedback_signals)
+        matched_positive_signals.extend(feedback_match["matched_positive_signals"])
+        matched_negative_signals.extend(feedback_match["matched_negative_signals"])
+        quality_flags.extend(feedback_match["quality_flags"])
+        preference_score += float(feedback_match["positive_score"]) - float(feedback_match["negative_score"])
         age_hours = age_in_hours(row)
         freshness_score = max(0.0, round(28 - (age_hours * 28 / max(int(profile["candidate_window_hours"]), 1)), 2))
         source_quality_score = 8.0 if int(row.get("consecutive_failures") or 0) == 0 else float(-6 * min(int(row.get("consecutive_failures") or 0), 3))
@@ -1086,7 +1203,10 @@ def build_ranking_states(
             relevance_score += 4
         if cluster_source_count > 1:
             relevance_score += min((cluster_source_count - 1) * MULTI_SOURCE_COVERAGE_BOOST, 8.0)
-        if is_low_signal_headline(row.get("title")) and not matched_interests:
+        if low_signal_headline:
+            quality_flags.append("low_signal_headline")
+        has_low_signal_override = matched_explicit_topic or bool(feedback_match["positive_topic_match"])
+        if low_signal_headline and not has_low_signal_override:
             relevance_score = max(0.0, relevance_score - LOW_SIGNAL_HEADLINE_PENALTY)
         engagement_score = 3.0 if row.get("is_favorite") else 0.0
         originality_score = max(0.0, 12.0 - (same_source_repeat_count * 3.5))
@@ -1104,6 +1224,18 @@ def build_ranking_states(
         elif tier == "muted":
             candidate_status = "suppressed"
             candidate_reason = "source_muted"
+        elif feedback_match["source_muted"]:
+            candidate_status = "suppressed"
+            candidate_reason = "feedback_source_muted"
+        elif feedback_match["topic_hidden"]:
+            candidate_status = "suppressed"
+            candidate_reason = "feedback_topic_hidden"
+        elif feedback_match["negative_topic_match"] and not has_low_signal_override:
+            candidate_status = "suppressed"
+            candidate_reason = "feedback_less_like_this"
+        elif low_signal_headline and not has_low_signal_override:
+            candidate_status = "excluded"
+            candidate_reason = "low_signal_hidden"
         elif row.get("is_read"):
             candidate_status = "excluded"
             candidate_reason = "already_read"
@@ -1144,6 +1276,11 @@ def build_ranking_states(
                     "diversity_penalty": 0.0,
                     "final_score": base_score,
                     "matched_interests": matched_interests,
+                    "matched_positive_signals": sorted(set(matched_positive_signals), key=str.casefold),
+                    "matched_negative_signals": sorted(set(matched_negative_signals), key=str.casefold),
+                    "quality_flags": sorted(set(quality_flags), key=str.casefold),
+                    "visibility": "hidden" if candidate_status != "eligible" else "shown",
+                    "visibility_reason": candidate_reason,
                     "reason": candidate_reason or ("ranked_for_you" if matched_interests else "best_available_candidate"),
                 },
             }
@@ -1181,9 +1318,15 @@ def build_ranking_states(
         candidate["score_breakdown"]["diversity_penalty"] = diversity_penalty
         candidate["final_score"] = round(float(candidate["base_score"]) - saturation_penalty - diversity_penalty, 2)
         candidate["score_breakdown"]["final_score"] = candidate["final_score"]
+        if float(candidate["final_score"]) < FOR_YOU_MIN_SCORE:
+            candidate["score_breakdown"]["visibility"] = "hidden"
+            candidate["score_breakdown"]["visibility_reason"] = "below_quality_threshold"
+        else:
+            candidate["score_breakdown"]["visibility"] = "shown"
+            candidate["score_breakdown"]["visibility_reason"] = None
         candidate["score_breakdown"]["reason"] = (
             "ranked_for_you"
-            if candidate["score_breakdown"]["matched_interests"]
+            if candidate["score_breakdown"]["matched_interests"] or candidate["score_breakdown"]["matched_positive_signals"]
             else "curated_for_reading"
         )
         per_source_seen[source_key] += 1
@@ -1209,6 +1352,8 @@ def build_ranking_states(
         candidate["candidate_status"] = "excluded"
         candidate["candidate_reason"] = "daily_goal_cutoff"
         candidate["score_breakdown"]["reason"] = "below_daily_goal_cutoff"
+        candidate["score_breakdown"]["visibility"] = "hidden"
+        candidate["score_breakdown"]["visibility_reason"] = "daily_goal_cutoff"
 
     return [
         {
@@ -1222,6 +1367,140 @@ def build_ranking_states(
         }
         for candidate in candidate_order
     ]
+
+
+def build_reader_feedback_signals(rows: list[dict[str, object]]) -> dict[str, set[str]]:
+    signals: dict[str, set[str]] = {
+        "hidden_topics": set(),
+        "muted_sources": set(),
+        "negative_topics": set(),
+        "negative_items": set(),
+        "positive_topics": set(),
+        "positive_sources": set(),
+        "positive_items": set(),
+    }
+    for row in rows:
+        action = str(row.get("action") or "")
+        item_id = normalize_optional_text(row.get("item_id"))
+        source_id = normalize_optional_text(row.get("source_id"))
+        topic = normalize_feedback_topic(row.get("topic"))
+        if action in {"hide_topic", "less_like_this"} and topic:
+            signals["negative_topics"].add(topic)
+        if action == "hide_topic" and topic:
+            signals["hidden_topics"].add(topic)
+        if action == "less_like_this" and item_id:
+            signals["negative_items"].add(item_id)
+        if action == "mute_source" and source_id:
+            signals["muted_sources"].add(source_id)
+        if action in POSITIVE_FEEDBACK_ACTIONS and topic:
+            signals["positive_topics"].add(topic)
+        if action in POSITIVE_FEEDBACK_ACTIONS and source_id:
+            signals["positive_sources"].add(source_id)
+        if action in POSITIVE_FEEDBACK_ACTIONS and item_id:
+            signals["positive_items"].add(item_id)
+    return signals
+
+
+def match_reader_feedback(
+    row: dict[str, object],
+    *,
+    text_blob: str,
+    source_blob: str,
+    signals: dict[str, set[str]],
+) -> dict[str, object]:
+    del source_blob
+    item_id = str(row.get("id") or row.get("item_id") or "")
+    source_id = str(row.get("channel_id") or "")
+    low_signal = is_low_signal_headline(row.get("title"))
+    matched_positive: list[str] = []
+    matched_negative: list[str] = []
+    quality_flags: list[str] = []
+    positive_score = 0.0
+    negative_score = 0.0
+    positive_topic_match = False
+    negative_topic_match = False
+    topic_hidden = False
+
+    if item_id in signals["positive_items"]:
+        matched_positive.append("important_item")
+        positive_score += POSITIVE_FEEDBACK_BOOST
+    if item_id in signals["negative_items"]:
+        matched_negative.append("less_like_this_item")
+        negative_score += NEGATIVE_FEEDBACK_PENALTY
+
+    if source_id in signals["positive_sources"] and not low_signal:
+        matched_positive.append("preferred_source")
+        positive_score += POSITIVE_FEEDBACK_BOOST / 3
+    source_muted = source_id in signals["muted_sources"]
+    if source_muted:
+        matched_negative.append("muted_source")
+        quality_flags.append("muted_source")
+
+    for topic in signals["positive_topics"]:
+        if row_matches_feedback_topic(topic, row=row, text_blob=text_blob):
+            matched_positive.append(topic)
+            positive_score += POSITIVE_FEEDBACK_BOOST
+            positive_topic_match = True
+
+    for topic in signals["negative_topics"]:
+        if row_matches_feedback_topic(topic, row=row, text_blob=text_blob):
+            matched_negative.append(topic)
+            negative_score += NEGATIVE_FEEDBACK_PENALTY
+            negative_topic_match = True
+            quality_flags.append("negative_feedback_match")
+
+    for topic in signals["hidden_topics"]:
+        if row_matches_feedback_topic(topic, row=row, text_blob=text_blob):
+            topic_hidden = True
+            quality_flags.append("hidden_topic")
+
+    return {
+        "positive_score": positive_score,
+        "negative_score": negative_score,
+        "source_muted": source_muted,
+        "topic_hidden": topic_hidden,
+        "negative_topic_match": negative_topic_match,
+        "positive_topic_match": positive_topic_match,
+        "matched_positive_signals": matched_positive,
+        "matched_negative_signals": matched_negative,
+        "quality_flags": quality_flags,
+    }
+
+
+def row_matches_feedback_topic(topic: str, *, row: dict[str, object], text_blob: str) -> bool:
+    normalized_topic = normalize_feedback_topic(topic)
+    if normalized_topic is None:
+        return False
+    if normalized_topic == "kurs walut" and is_low_signal_headline(row.get("title")):
+        return True
+    return normalized_topic in text_blob
+
+
+def normalize_feedback_topic(value: object) -> str | None:
+    normalized = normalize_optional_text(value)
+    if normalized is None:
+        return None
+    normalized = normalized.casefold()
+    if normalized in {"fx", "waluty", "kurs", "kursy", "kurs walut", "kursy walut"}:
+        return "kurs walut"
+    return normalize_interest_key(normalized) or normalized
+
+
+def derive_feedback_topic(row: dict[str, object]) -> str | None:
+    if is_low_signal_headline(row.get("title")):
+        return "kurs walut"
+    channel = row.get("channel") if isinstance(row.get("channel"), dict) else {}
+    normalized_row = {
+        "title": row.get("title"),
+        "excerpt": row.get("excerpt"),
+        "content_text": row.get("content_text"),
+        "channel_category": row.get("channel_category") or channel.get("category"),
+    }
+    for keyword in extract_semantic_keywords(normalized_row, limit=3):
+        topic = normalize_feedback_topic(keyword)
+        if topic:
+            return topic
+    return normalize_feedback_topic(channel.get("title"))
 
 
 def derive_story_cluster_key(row: dict[str, object]) -> str:
@@ -1266,18 +1545,21 @@ def derive_learned_interests(
         annotation_count = int(row.get("annotation_count") or 0)
         tag_names = [tag.strip() for tag in str(row.get("tag_names") or "").split("|") if tag.strip()]
         row_is_low_signal = is_low_signal_headline(row.get("title"))
-        has_editorial_signal = annotation_count > 0 or bool(tag_names)
+        has_editorial_signal = annotation_count > 0 or bool(tag_names) or bool(row.get("is_favorite"))
+        has_strong_editorial_signal = annotation_count > 0 or bool(tag_names)
+        if not has_editorial_signal:
+            continue
         signal_weight = 1
         if row.get("is_favorite"):
             signal_weight += 4
-        if row.get("digest_candidate"):
+        if row.get("digest_candidate") and has_strong_editorial_signal:
             signal_weight += 2
         signal_weight += min(annotation_count, 3) * 2
         signal_weight += min(len(tag_names), 3)
 
         source_label = normalize_optional_text(row.get("channel_title"))
         source_match_key = normalize_interest_key(source_label)
-        if source_label and source_match_key and (not row_is_low_signal or has_editorial_signal):
+        if source_label and source_match_key and (not row_is_low_signal or has_strong_editorial_signal):
             eligible_sources.add(source_match_key)
             source_scores[source_label] += signal_weight
 
@@ -1517,12 +1799,19 @@ def serialize_export_item(row: dict[str, object]) -> dict[str, object]:
 
 def serialize_ranked_row(row: dict[str, object]) -> dict[str, object]:
     breakdown = parse_breakdown(row.get("score_breakdown_json"))
+    visibility = str(breakdown.get("visibility") or ("hidden" if row.get("candidate_status") != "eligible" else "shown"))
+    if visibility not in {"shown", "hidden"}:
+        visibility = "shown"
+    quality_flags = [str(flag) for flag in breakdown.get("quality_flags", []) if str(flag)]
     return {
         "item": serialize_item_card(row),
         "candidate_status": row["candidate_status"],
         "candidate_reason": row.get("candidate_reason"),
         "source_cap": int(row["source_cap"]),
         "source_window_hours": int(row["source_window_hours"]),
+        "visibility": visibility,
+        "visibility_reason": breakdown.get("visibility_reason"),
+        "quality_flags": quality_flags,
         "breakdown": {
             "relevance_score": float(breakdown.get("relevance_score", 0)),
             "user_preference_score": float(breakdown.get("user_preference_score", 0)),
@@ -1536,6 +1825,11 @@ def serialize_ranked_row(row: dict[str, object]) -> dict[str, object]:
             "diversity_penalty": float(breakdown.get("diversity_penalty", 0)),
             "final_score": float(breakdown.get("final_score", row.get("final_score", 0))),
             "matched_interests": list(breakdown.get("matched_interests", [])),
+            "matched_positive_signals": list(breakdown.get("matched_positive_signals", [])),
+            "matched_negative_signals": list(breakdown.get("matched_negative_signals", [])),
+            "quality_flags": quality_flags,
+            "visibility": visibility,
+            "visibility_reason": breakdown.get("visibility_reason"),
             "reason": str(breakdown.get("reason", row.get("candidate_reason") or "ranked_for_you")),
         },
     }

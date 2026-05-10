@@ -20,8 +20,12 @@ class DigestSelectionItemModel(BaseModel):
     channel_title: str
     category: str | None
     title: str
+    author: str | None = None
     source_url: str
+    excerpt: str | None = None
     published_at: str | None
+    content_html: str | None = None
+    word_count: int | None = None
     content_hash: str | None
 
 

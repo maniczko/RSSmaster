@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+AIProvider = Literal["openai"]
 PreflightCheckStatus = Literal["passed", "failed", "warning", "skipped"]
 SettingsPreflightStatus = Literal["ready", "needs_configuration", "connection_failed"]
 
@@ -86,3 +87,50 @@ class DeliverySettingsPreflightRequest(BaseModel):
 
 class DeliverySettingsPreflightResponse(BaseModel):
     preflight: DeliverySettingsPreflightModel
+
+
+class AISettingsModel(BaseModel):
+    enabled: bool
+    provider: AIProvider
+    chat_model: str
+    embedding_model: str
+    openai_api_key: DeliverySecretStateModel
+    ready: bool
+    updated_at: str | None
+    updated_by: str | None
+    issues: list[str] = Field(default_factory=list)
+
+
+class AISettingsResponse(BaseModel):
+    settings: AISettingsModel
+
+
+class UpdateAISettingsRequest(BaseModel):
+    enabled: bool | None = None
+    provider: AIProvider | None = None
+    chat_model: str | None = None
+    embedding_model: str | None = None
+    openai_api_key: str | None = None
+    updated_by: str | None = "user"
+
+    @field_validator(
+        "chat_model",
+        "embedding_model",
+        "openai_api_key",
+        "updated_by",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class AISettingsPreflightResponse(BaseModel):
+    status: SettingsPreflightStatus
+    can_use_ai: bool
+    checks: list[PreflightCheckModel] = Field(default_factory=list)

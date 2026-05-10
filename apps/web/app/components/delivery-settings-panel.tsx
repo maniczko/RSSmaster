@@ -1,3 +1,6 @@
+import { Badge } from "@/app/components/ui/badge";
+import { Button } from "@/app/components/ui/button";
+
 import { DeliveryIcon, SettingsIcon } from "./ui-icons";
 
 export type DeliverySettingsDraft = {
@@ -91,12 +94,12 @@ export function DeliverySettingsPanel({
           <input onChange={(event) => onDraftChange("kindle_email", event.target.value)} value={draft.kindle_email} />
         </label>
         <div className="channel-actions">
-          <button className="secondary-button" disabled={settingsBusy} type="submit">
+          <Button className="secondary-button" disabled={settingsBusy} type="submit" variant="outline">
             {renderButtonLabel(settingsBusy ? "Zapisywanie..." : "Zapisz ustawienia", "settings", showButtonIcons)}
-          </button>
-          <button className="mini-button" disabled={deliveryBusy} onClick={onPreflight} type="button">
+          </Button>
+          <Button className="mini-button" disabled={deliveryBusy} onClick={onPreflight} type="button" variant="outline">
             {renderButtonLabel("Sprawdz konfiguracje", "delivery", showButtonIcons)}
-          </button>
+          </Button>
         </div>
       </form>
 
@@ -104,7 +107,7 @@ export function DeliverySettingsPanel({
         <div className="ops-row">
           <div className="ops-row-top">
             <strong>Aktualna konfiguracja wysylki</strong>
-            <span>{settings.smtp_ready ? "gotowa" : "niepelna"}</span>
+            <Badge variant={settings.smtp_ready ? "secondary" : "outline"}>{settings.smtp_ready ? "gotowa" : "niepelna"}</Badge>
           </div>
           <span>{settings.smtp_host ? `${settings.smtp_host}:${settings.smtp_port}` : "Brak hosta SMTP"}</span>
           <span>{settings.smtp_password.configured ? "Haslo zapisane" : "Haslo niezapisane"}</span>

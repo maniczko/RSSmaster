@@ -734,6 +734,8 @@ def main() -> int:
                 "/api/v1/settings/delivery/preflight",
                 json={"check_connection": False},
             )
+            ai_settings_response = client.get("/api/v1/settings/ai")
+            ai_settings_preflight_response = client.post("/api/v1/settings/ai/preflight")
             digest_persisted_preview_response = client.post(
                 "/api/v1/digests/preview",
                 json={
@@ -1270,6 +1272,18 @@ def main() -> int:
         assert delivery_settings_preflight_response.status_code == 200, delivery_settings_preflight_response.text
         assert delivery_settings_preflight_response.json()["preflight"]["status"] == "ready"
         assert delivery_settings_preflight_response.json()["preflight"]["can_send"] is True
+
+        assert ai_settings_response.status_code == 200, ai_settings_response.text
+        ai_settings_payload = ai_settings_response.json()["settings"]
+        assert ai_settings_payload["provider"] == "openai"
+        assert ai_settings_payload["openai_api_key"]["configured"] is False
+        assert "openai_api_key" not in json.dumps(ai_settings_payload.get("issues", []))
+
+        assert ai_settings_preflight_response.status_code == 200, ai_settings_preflight_response.text
+        ai_preflight_payload = ai_settings_preflight_response.json()
+        assert ai_preflight_payload["status"] == "needs_configuration"
+        assert ai_preflight_payload["can_use_ai"] is False
+        assert {check["name"] for check in ai_preflight_payload["checks"]} >= {"ai_enabled", "openai_api_key"}
 
         assert digest_persisted_preview_response.status_code == 200, digest_persisted_preview_response.text
         persisted_digest_preview = digest_persisted_preview_response.json()["preview"]

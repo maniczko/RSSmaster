@@ -1,4 +1,6 @@
 import type { DigestCandidatePreviewStatus, DigestQueueCopy } from "@/app/lib/digest-selection";
+import { Button } from "@/app/components/ui/button";
+import { Badge } from "@/app/components/ui/badge";
 
 export type DigestCandidateSummaryPreview = {
   title: string;
@@ -39,7 +41,7 @@ export function DigestCandidateSummary({
     <div className="ops-row">
       <div className="ops-row-top">
         <strong>{preview ? preview.title : queueCopy.heading}</strong>
-        <span>{preview ? preview.selection_mode : status}</span>
+        <Badge variant="secondary">{preview ? preview.selection_mode : status}</Badge>
       </div>
       {preview ? (
         <>
@@ -57,12 +59,12 @@ export function DigestCandidateSummary({
       {message ? <span>{message}</span> : null}
       {showActions ? (
         <div className="channel-actions">
-          <button className="secondary-button" onClick={onShowDigestQueue} type="button">
+          <Button className="secondary-button" onClick={onShowDigestQueue} type="button" variant="outline">
             Pokaż kolejkę digestu
-          </button>
-          <button className="secondary-button" onClick={onBackToReader} type="button">
+          </Button>
+          <Button className="secondary-button" onClick={onBackToReader} type="button" variant="outline">
             Wróć do czytnika
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>

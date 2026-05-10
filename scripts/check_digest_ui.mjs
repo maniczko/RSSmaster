@@ -315,7 +315,7 @@ async function main() {
     await page.getByText(/1 artykul|1 artykuł/i).first().waitFor({ timeout: 30000 });
 
     await page.getByRole("button", { name: /Zbuduj EPUB/i }).first().click();
-    await page.getByText(/Artefakt digestu utworzony/i).waitFor({ timeout: 45000 });
+    await page.getByText(/Artefakt digestu utworzony|Wydanie magazynu utworzone/i).waitFor({ timeout: 45000 });
     await page.screenshot({ path: OUTPUT_SCREENSHOT, fullPage: true });
 
     const historyPayload = await readJson(`${runtime.apiUrl}/api/v1/digests/history`);
@@ -330,6 +330,10 @@ async function main() {
     console.log("[check:digest] PASS");
     console.log(`[check:digest] evidence: ${OUTPUT_JSON}`);
   } catch (error) {
+    if (browser) {
+      const pages = browser.contexts().flatMap((context) => context.pages());
+      await pages[0]?.screenshot({ path: OUTPUT_SCREENSHOT, fullPage: true }).catch(() => {});
+    }
     results.status = "failed";
     results.error = error instanceof Error ? error.stack ?? error.message : String(error);
     console.error(`[check:digest] FAIL: ${error instanceof Error ? error.message : String(error)}`);

@@ -160,6 +160,7 @@ async def on_startup() -> None:
     startup_state["schema"] = schema_state
     startup_state["started_at"] = datetime.now(UTC).isoformat()
     startup_state["sentry_enabled"] = sentry_enabled
+    startup_state["ai_ready"] = settings.ai_ready
     startup_state["smtp_ready"] = settings.smtp_ready
 
 
@@ -218,6 +219,7 @@ def startup_diagnostics() -> dict[str, object]:
             "/api/v1/annotations/hub",
             "/api/v1/profiles/interests",
             "/api/v1/ranking/pipeline/preview",
+            "/api/v1/settings/ai",
             "/api/v1/settings/delivery",
             "/api/v1/source-management/collections",
             "/api/v1/source-management/health-center",

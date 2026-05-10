@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   ChangeEvent,
@@ -20,27 +20,22 @@ import {
   ArchiveIcon,
   AnnotationPanel,
   ArticleQueueList,
-  BackofficeIcon,
   BookmarkIcon,
   CaptureIcon,
-  DeliveryIcon,
-  DeliverySettingsPanel,
-  DigestBuildPanel,
-  DigestHistoryList,
   DigestIcon,
   DigestSection,
-  DismissIcon,
   DiscoverIcon,
   FeedBrowser,
   FeedStream,
   HighlightIcon,
   KeyboardIcon,
+  KindleIcon,
   LibraryIcon,
   LibraryViewsNav,
   LocalAuthGate,
+  MagazineSection,
   MenuIcon,
   NoteIcon,
-  RankingPreferencesPanel,
   ReaderArticleCard,
   ReaderIcon,
   ReaderArticleTopbar,
@@ -48,25 +43,20 @@ import {
   ReaderDecisionBar,
   SavedViewChip,
   SettingsIcon,
-  SourceAddModeNav,
-  SourceHealthCard,
-  SourceModeIcon,
   SourcesIcon,
   SparkIcon,
   StoryClusterCard,
-  StatusIcon,
-  SyncIcon,
-  TopicIcon,
   WorkspaceButton,
   WorkspaceChip,
   WorkspacePanel,
+  WorkspaceSettingsSection,
+  WorkspaceSourcesSection,
 } from "./components";
 import {
   buildContinuityBundle,
   buildArticleKindleDigestPayload,
   buildRestoreStateFromContinuityBundle,
   buildFeedBrowserTree,
-  buildFeedIconUrl,
   buildReaderEmptyStateCopy,
   defaultViewPreferences,
   getPayloadMessage,
@@ -75,14 +65,9 @@ import {
   buildSourcePreviewRequestKey,
   buildSourcePreviewTopics,
   classifySourcePreviewFailure,
-  formatCompactNumber,
-  formatRelativeDate,
-  getDomainLabel,
-  getFeedGlyph,
   getSourcePreviewFailureDescription,
   getSourcePreviewFailureLabel,
   getSourcePreviewAnnouncement,
-  getSourcePreviewStatusLabel,
   getSourcePreviewUiState,
   getFeedFolderId,
   getReaderViewControlsFromPreference,
@@ -117,37 +102,23 @@ import {
   readResponsePayload,
   sanitizeReaderHtml,
   sanitizeReaderParagraphs,
-  mapSourceHealthCard,
   shouldOfferReextract,
   dedupeStoryQueue,
   shouldDropReaderParagraph,
   shouldApplyReaderViewPreference,
 } from "./lib";
 import type {
-  AnnotationPanelModel,
   ApiErrorEnvelope,
   ContinuityBundle,
   FeedBrowserTreeFolder,
-  RankingPreference,
-  SavedViewChipModel,
   ReaderDecisionAction,
-  ReaderDisplayImageMode,
   ReaderDisplayStateUpdate,
-  ReaderDisplayTextMode,
-  ReaderDisplayWidthMode,
-  ItemReaderStatus,
-  ItemReextractPayload as ReaderItemReextractPayload,
   PendingReaderContinuityRouteRestore,
   ReaderQualityState,
-  ReaderFeedFilter,
   ReaderContinuitySnapshot,
-  ReaderItemSortMode,
   ReaderProgressSnapshot,
-  ReaderReadSurfaceMode,
-  ReaderRecallWindow,
   ReaderStateUpdate,
   ReaderStatus,
-  ReaderEmptySourceLookupCandidate,
   ViewPreferenceSnapshot,
   WorkspaceSourceHealthEntry,
 } from "./lib";
@@ -155,9 +126,10 @@ import {
   buildBrowserPath,
   buildAppHref,
   parseAppPath,
+  parseMagazineRouteSearch,
   parseReadRouteSearch,
   shouldHoldForPendingRouteRestore,
-  type AppLibraryView,
+  type AppReaderMode,
   type AppSection,
 } from "@/app/lib/app-routes";
 import {
@@ -166,660 +138,116 @@ import {
   getDigestStatusLabel,
   type DigestCandidatePreviewStatus,
 } from "./lib/digest-selection";
+import { buildAISettingsPatch, createAISettingsDraft } from "./lib/ai-settings";
 import { sourceAddModes, type SourceAddModeId } from "./lib/source-add-modes";
 
-type Channel = {
-  id: string;
-  title: string;
-  site_url: string | null;
-  feed_url: string;
-  category: string | null;
-  state: "active" | "inactive" | "archived";
-  unread_count: number;
-  last_fetch_at?: string | null;
-  last_error?: string | null;
-  health?: ChannelHealth | null;
-};
-
-type ChannelHealth = {
-  status: "healthy" | "warning" | "error" | "unknown";
-  summary: string;
-  indicators: string[];
-  stale: boolean;
-  noisy: boolean;
-  last_fetch_at: string | null;
-  last_successful_fetch_at: string | null;
-  last_error_at: string | null;
-  last_error_code: string | null;
-  last_error_message: string | null;
-  consecutive_failures: number;
-  items_last_24h: number;
-  items_last_7d: number;
-  total_items: number;
-  latest_item_at: string | null;
-};
-
-type LibraryView = AppLibraryView;
-
-type ItemLibrary = {
-  state: "inbox" | "saved" | "archived";
-  saved_at: string | null;
-  archived_at: string | null;
-  is_saved: boolean;
-  is_archived: boolean;
-};
-
-type Item = {
-  id: string;
-  channel_id: string;
-  title: string;
-  author: string | null;
-  source_url: string;
-  excerpt: string | null;
-  published_at: string | null;
-  is_read: boolean;
-  is_favorite: boolean;
-  is_archived: boolean;
-  digest_candidate: boolean;
-  extraction_status: "pending" | "running" | "completed" | "failed" | "skipped";
-  has_cleaned_content: boolean;
-  has_raw_content: boolean;
-  reader_status?: ItemReaderStatus | null;
-  story_cluster_id?: string | null;
-  story_cluster_size?: number | null;
-  library: ItemLibrary;
-  search_match?: {
-    primary_field:
-      | "title"
-      | "author"
-      | "source"
-      | "excerpt"
-      | "body"
-      | "category"
-      | "organization"
-      | "annotation";
-    fields: Array<
-      "title" | "author" | "source" | "excerpt" | "body" | "category" | "organization" | "annotation"
-    >;
-    snippet: string | null;
-  } | null;
-  channel: {
-    id: string;
-    title: string;
-    category: string | null;
-    feed_url: string;
-    site_url: string | null;
-    state: string;
-  };
-  digest: {
-    is_candidate: boolean;
-    status: "ready" | "excluded" | "pending_extraction" | "blocked_by_extraction" | "needs_content_review";
-    reason: string;
-  };
-};
-
-type ItemDetail = Item & {
-  cleaned_html: string | null;
-  content_text: string | null;
-};
-
-type DigestPreview = {
-  title: string;
-  selection_mode: "digest_candidates" | "explicit";
-  period_start: string | null;
-  period_end: string | null;
-  stats: {
-    article_count: number;
-    category_count: number;
-    unread_count: number;
-    favorite_count: number;
-    digest_candidate_count: number;
-    word_count: number;
-    estimated_read_minutes: number;
-  };
-  category_summary: Array<{
-    category: string;
-    article_count: number;
-  }>;
-};
-
-type DigestHistory = {
-  id: string;
-  status: "pending" | "building" | "completed" | "failed" | "sent" | "archived";
-  title: string;
-  article_count: number;
-  generated_at: string | null;
-  sent_at: string | null;
-  error_message: string | null;
-  artifact: {
-    path: string | null;
-    sha256: string | null;
-    size_bytes: number | null;
-  };
-};
-
-type DeliverySettings = {
-  smtp_host: string | null;
-  smtp_port: number;
-  smtp_username: string | null;
-  smtp_password: {
-    configured: boolean;
-    redacted_value: string | null;
-  };
-  smtp_from: string | null;
-  kindle_email: string | null;
-  smtp_ready: boolean;
-  updated_at: string | null;
-  updated_by: string | null;
-  issues: string[];
-};
-
-type DeliveryPreflight = {
-  status: "ready" | "needs_configuration" | "missing_artifact" | "connection_failed";
-  can_send: boolean;
-  mode: "dry_run" | "send";
-  target_kind: "kindle" | "smtp";
-  recipient: string | null;
-  artifact: {
-    digest_id: string;
-    title: string;
-    status: string;
-    artifact_path: string | null;
-    artifact_exists: boolean;
-    artifact_bytes: number;
-    artifact_sha256: string | null;
-    generated_at: string | null;
-  };
-  checks: Array<{
-    name: string;
-    status: "passed" | "failed" | "warning" | "skipped";
-    message: string;
-  }>;
-};
-
-type DeliveryLog = {
-  id: string;
-  digest_id: string | null;
-  digest_title: string | null;
-  target_kind: "kindle" | "smtp" | "download";
-  recipient: string | null;
-  status: "pending" | "sent" | "failed" | "skipped";
-  provider_message_id: string | null;
-  sent_at: string | null;
-  error_message: string | null;
-};
-
-type SyncRun = {
-  id: string;
-  job_type: "sync";
-  trigger_kind: "manual" | "scheduled" | "system";
-  status: "pending" | "running" | "partial_success" | "failed" | "canceled" | "completed";
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  channels_total: number;
-  channels_succeeded: number;
-  channels_failed: number;
-  items_seen: number;
-  items_created: number;
-  items_skipped: number;
-  error_message: string | null;
-  errors: Array<{
-    channel_id: string;
-    channel_title: string;
-    code: string;
-    message: string;
-  }>;
-};
-
-type WorkspaceInterest = {
-  id: string;
-  label: string;
-  normalized_topic: string | null;
-  kind: "topic" | "source";
-  weight: -1 | 0 | 1 | 2;
-};
-
-type WorkspaceProfile = {
-  id: string;
-  name: string;
-  candidate_window_hours: number;
-  default_source_cap: number;
-  priority_source_cap: number;
-  emergency_source_cap: number;
-  daily_reading_goal: number;
-  interests: WorkspaceInterest[];
-};
-
-type WorkspaceItemCard = {
-  id: string;
-  channel_id: string;
-  title: string;
-  author: string | null;
-  source_url: string;
-  excerpt: string | null;
-  published_at: string | null;
-  is_read: boolean;
-  is_favorite: boolean;
-  digest_candidate: boolean;
-  channel_title: string;
-  channel_category: string | null;
-  channel_feed_url: string;
-  story_cluster_id: string | null;
-  story_cluster_size: number;
-};
-
-type WorkspaceRankingItem = {
-  item: WorkspaceItemCard;
-  candidate_status: "eligible" | "excluded" | "suppressed";
-  candidate_reason: string | null;
-  source_cap: number;
-  source_window_hours: number;
-  breakdown: {
-    relevance_score: number;
-    user_preference_score: number;
-    source_quality_score: number;
-    freshness_score: number;
-    originality_score: number;
-    engagement_score: number;
-    duplicate_penalty: number;
-    noise_penalty: number;
-    saturation_penalty: number;
-    final_score: number;
-    matched_interests: string[];
-    reason: string;
-  };
-};
-
-type WorkspaceBriefing = {
-  generated_at: string;
-  stats: {
-    unread_count: number;
-    saved_count: number;
-    digest_count: number;
-    archived_count: number;
-    recommended_count: number;
-  };
-  summary_lines: string[];
-  resume_item: WorkspaceItemCard | null;
-  recommended: WorkspaceRankingItem[];
-  source_warnings: string[];
-};
-
-type WorkspaceAnnotation = {
-  id: string;
-  item_id: string;
-  kind: "highlight" | "note";
-  quote_text: string | null;
-  note_text: string | null;
-  color: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type WorkspaceTag = {
-  id: string;
-  name: string;
-  color: string | null;
-  item_count: number;
-};
-
-type WorkspaceCollection = {
-  id: string;
-  name: string;
-  description: string | null;
-  item_count: number;
-};
-
-type WorkspaceSavedSearch = {
-  id: string;
-  name: string;
-  query: string;
-  default_view: "inbox" | "saved" | "digest" | "archive";
-};
-
-type WorkspaceSourceGroup = {
-  id: string;
-  name: string;
-  description: string | null;
-  color: string | null;
-  channel_count: number;
-};
-
-type WorkspaceStoryCluster = {
-  id: string;
-  headline: string;
-  item_count: number;
-  category: string | null;
-  primary: WorkspaceItemCard;
-  alternates: WorkspaceItemCard[];
-};
-
-type ListPage = {
-  next_cursor: string | null;
-  has_more: boolean;
-  limit: number;
-};
-
-type AuthAccount = {
-  id: string;
-  username: string;
-  display_name: string;
-  created_at: string;
-  last_login_at: string | null;
-};
-
-type AuthSessionPayload = {
-  has_accounts: boolean;
-  auth_required: boolean;
-  session: {
-    account: AuthAccount;
-  } | null;
-};
-
-type AuthStatus = "loading" | "ready" | "unauthenticated";
-
-type ChannelListPayload = {
-  items: Channel[];
-};
-
-type ChannelCreatePayload = {
-  channel: Channel;
-  discovery: {
-    mode: string;
-    resolved_feed_url: string;
-    candidates: string[];
-  };
-};
-
-type ChannelMutationPayload = {
-  channel: Channel;
-};
-
-type ChannelPreviewCandidate = {
-  feed_url: string;
-  title: string;
-  site_url: string | null;
-  description: string | null;
-  language: string | null;
-  estimated_items_per_week: number | null;
-  sample_items: ChannelPreviewItem[];
-  already_subscribed: boolean;
-  existing_channel_id: string | null;
-};
-
-type ChannelPreviewItem = {
-  title: string;
-  url: string;
-  published_at: string | null;
-  image_url: string | null;
-};
-
-type ChannelPreviewPayload = {
-  status: "ready" | "already_subscribed" | "multiple_candidates";
-  input_url: string;
-  discovery: {
-    mode: "direct" | "head_metadata" | "heuristic";
-    resolved_feed_url: string | null;
-    candidates: string[];
-  };
-  feed: ChannelPreviewCandidate | null;
-  candidates: ChannelPreviewCandidate[];
-  existing_channel: Channel | null;
-};
-
-type SourceSurfaceMode = "add" | "manage";
-
-type SyncRunPayload = {
-  run: SyncRun;
-};
-
-type SyncRunListPayload = {
-  items: SyncRun[];
-};
-
-type ItemListPayload = {
-  items: Item[];
-  page?: ListPage;
-};
-
-type ItemDetailPayload = {
-  item: ItemDetail;
-};
-
-type ItemReextractPayload = ReaderItemReextractPayload<ItemDetail>;
-
-type DigestPreviewPayload = {
-  preview: DigestPreview;
-};
-
-type DigestHistoryListPayload = {
-  items: DigestHistory[];
-  page?: ListPage;
-};
-
-type DigestHistoryPayload = {
-  digest: DigestHistory;
-};
-
-type DeliverySettingsPayload = {
-  settings: DeliverySettings;
-};
-
-type DeliverySettingsPreflightPayload = {
-  preflight: {
-    status: "ready" | "needs_configuration" | "connection_failed";
-    smtp_ready: boolean;
-    can_send: boolean;
-    checks: Array<{
-      name: string;
-      status: "passed" | "failed" | "warning" | "skipped";
-      message: string;
-    }>;
-  };
-};
-
-type DeliveryPreflightPayload = {
-  preflight: DeliveryPreflight;
-};
-
-type DeliveryDispatchPayload = {
-  preflight: DeliveryPreflight;
-  run: {
-    id: string;
-    status: "pending" | "running" | "partial_success" | "failed" | "canceled" | "completed";
-  };
-  log: DeliveryLog;
-};
-
-type DeliveryLogListPayload = {
-  items: DeliveryLog[];
-  page?: ListPage;
-};
-
-type ItemStatePatch = Partial<Pick<Item, "is_read" | "is_favorite" | "is_archived" | "digest_candidate">> & {
-  library_action?: "save" | "unsave" | "archive" | "restore";
-};
-
-type ItemMutationPayload = {
-  item: Item;
-};
-
-type WorkspaceProfilePayload = {
-  profile: WorkspaceProfile;
-};
-
-type WorkspaceBriefingPayload = {
-  briefing: WorkspaceBriefing;
-};
-
-type WorkspaceRankingPayload = {
-  generated_at: string;
-  items: WorkspaceRankingItem[];
-};
-
-type WorkspaceAnnotationListPayload = {
-  items: WorkspaceAnnotation[];
-};
-
-type WorkspaceAnnotationMutationPayload = {
-  annotation: WorkspaceAnnotation;
-};
-
-type WorkspaceTagListPayload = {
-  items: WorkspaceTag[];
-};
-
-type WorkspaceItemTagPayload = {
-  item_id: string;
-  tags: WorkspaceTag[];
-};
-
-type WorkspaceCollectionListPayload = {
-  items: WorkspaceCollection[];
-};
-
-type WorkspaceCollectionMutationPayload = {
-  collection: WorkspaceCollection;
-};
-
-type WorkspaceSavedSearchListPayload = {
-  items: WorkspaceSavedSearch[];
-};
-
-type WorkspaceSourceHealthPayload = {
-  items: WorkspaceSourceHealthEntry[];
-};
-
-type WorkspaceSourceGroupListPayload = {
-  items: WorkspaceSourceGroup[];
-};
-
-type WorkspaceSourceGroupMutationPayload = {
-  group: WorkspaceSourceGroup;
-};
-
-type WorkspaceChannelControlPayload = {
-  control: WorkspaceSourceHealthEntry["control"];
-};
-
-type WorkspaceStoryClusterPayload = {
-  items: WorkspaceStoryCluster[];
-};
-
-type WorkspaceCapturePayload = {
-  item: WorkspaceItemCard;
-};
-
-type WorkspaceContinuityItem = WorkspaceItemCard & {
-  is_archived: boolean;
-};
-
-type WorkspaceItemTagAssignment = {
-  item_id: string;
-  tag_id: string;
-  tag_name: string;
-};
-
-type WorkspaceCollectionItemAssignment = {
-  collection_id: string;
-  item_id: string;
-};
-
-type WorkspaceExportPayload = {
-  exported_at: string;
-  profile: WorkspaceProfile;
-  sources_opml: string;
-  annotations: WorkspaceAnnotation[];
-  tags: WorkspaceTag[];
-  collections: WorkspaceCollection[];
-  saved_searches: WorkspaceSavedSearch[];
-  saved_items: WorkspaceItemCard[];
-  continuity_items: WorkspaceContinuityItem[];
-  item_tags: WorkspaceItemTagAssignment[];
-  collection_items: WorkspaceCollectionItemAssignment[];
-};
-
-type WorkspaceContinuityImportPayload = {
-  imported_source_count: number;
-  duplicate_source_count: number;
-  matched_item_count: number;
-  unmatched_item_count: number;
-  restored_read_count: number;
-  restored_saved_count: number;
-  restored_digest_count: number;
-  restored_archive_count: number;
-  restored_annotation_count: number;
-  restored_tag_assignment_count: number;
-  restored_collection_count: number;
-  restored_collection_item_count: number;
-  restored_saved_search_count: number;
-  matched_items: Array<{
-    source_url: string;
-    item_id: string;
-    title: string;
-    matched_by: "normalized_source_url";
-  }>;
-  unmatched_source_urls: string[];
-};
-
-type WorkspaceOpmlImportPayload = {
-  imported_count: number;
-  duplicate_count: number;
-  channels: string[];
-};
-
-type FeedbackState =
-  | {
-      tone: "idle";
-      title: string;
-      lines: string[];
-    }
-  | {
-      tone: "success" | "error";
-      title: string;
-      lines: string[];
-    };
-
-type ArticleKindleFeedbackState = FeedbackState & {
+import type {
+  Channel,
+  LibraryView,
+  Item,
+  ItemDetail,
+  DigestPreview,
+  DigestHistory,
+  AISettings,
+  AISettingsDraft,
+  AISettingsPreflight,
+  DeliverySettings,
+  DeliverySettingsDraft,
+  DeliveryPreflight,
+  DeliveryLog,
+  SyncRun,
+  WorkspaceInterest,
+  WorkspaceProfile,
+  WorkspaceRankingItem,
+  WorkspaceBriefing,
+  WorkspaceAnnotation,
+  WorkspaceTag,
+  WorkspaceCollection,
+  WorkspaceSavedSearch,
+  WorkspaceSourceGroup,
+  WorkspaceStoryCluster,
+  ListPage,
+  AuthSessionPayload,
+  AuthStatus,
+  ChannelListPayload,
+  ChannelMutationPayload,
+  ChannelPreviewCandidate,
+  ChannelPreviewPayload,
+  SourceOpmlImportPayload,
+  SourceOpmlPreviewPayload,
+  SourceCreatePayload,
+  SourceSyncPayload,
+  SourceSurfaceMode,
+  SyncRunPayload,
+  SyncRunListPayload,
+  ItemListPayload,
+  ItemDetailPayload,
+  ItemReextractPayload,
+  DigestPreviewPayload,
+  DigestHistoryListPayload,
+  DigestHistoryPayload,
+  AISettingsPayload,
+  AISettingsPreflightPayload,
+  DeliverySettingsPayload,
+  DeliverySettingsPreflightPayload,
+  DeliveryPreflightPayload,
+  DeliveryDispatchPayload,
+  DeliveryLogListPayload,
+  ItemStatePatch,
+  ItemMutationPayload,
+  WorkspaceProfilePayload,
+  ReaderFeedbackAction,
+  ReaderFeedbackPayload,
+  WorkspaceBriefingPayload,
+  WorkspaceRankingPayload,
+  WorkspaceAnnotationListPayload,
+  WorkspaceAnnotationMutationPayload,
+  WorkspaceTagListPayload,
+  WorkspaceItemTagPayload,
+  WorkspaceCollectionListPayload,
+  WorkspaceCollectionMutationPayload,
+  WorkspaceSavedSearchListPayload,
+  WorkspaceSourceHealthPayload,
+  WorkspaceSourceGroupListPayload,
+  WorkspaceSourceGroupMutationPayload,
+  WorkspaceChannelControlPayload,
+  WorkspaceStoryClusterPayload,
+  WorkspaceCapturePayload,
+  WorkspaceExportPayload,
+  WorkspaceContinuityImportPayload,
+  FeedbackState,
+  ArticleKindleFeedbackState,
+  ItemSortMode,
+  ViewDensity,
+  ReaderWidthMode,
+  ReaderTextMode,
+  ReaderImageMode,
+  RecallWindow,
+  FeedFilter,
+  ReadSurfaceMode,
+  ReaderCommandGroup,
+  UndoOperation,
+  UndoEntry,
+} from "./lib/channel-lab-types";
+
+type DeliveryDigestTarget = Pick<DigestHistory, "id" | "title">;
+
+type MagazineArticleHydration = {
   itemId: string;
-};
-
-type ItemSortMode = ReaderItemSortMode;
-type ViewDensity = "comfortable" | "compact";
-type ReaderWidthMode = ReaderDisplayWidthMode;
-type ReaderTextMode = ReaderDisplayTextMode;
-type ReaderImageMode = ReaderDisplayImageMode;
-type RecallWindow = ReaderRecallWindow;
-type FeedFilter = ReaderFeedFilter;
-type ReadSurfaceMode = ReaderReadSurfaceMode;
-
-type ReaderCommandGroup = {
-  title: string;
-  items: Array<{
-    keys: string;
-    label: string;
-    note: string;
-  }>;
-};
-
-type UndoOperation = {
-  item: Item;
-  patch: ItemStatePatch;
-};
-
-type UndoEntry = {
-  id: string;
-  label: string;
-  operations: UndoOperation[];
+  author: string | null;
+  channelTitle: string | null;
+  category: string | null;
+  contentHtml: string | null;
+  excerpt: string | null;
+  wordCount: number | null;
 };
 
 const initialFeedback: FeedbackState = {
   tone: "idle",
-  title: "Import feedow gotowy",
+  title: "Dodawanie źródeł gotowe",
   lines: [
-    "Dodaj adres feedu albo strony glownej, a potem uruchom reczny sync.",
-    "Kolejka czytnika po lewej wypelni sie po pierwszym udanym syncu.",
+    "Dodaj adres feedu albo strony głównej, a potem pobierz pierwsze wpisy.",
+    "Kolejka czytnika wypełni się po pierwszym udanym pobraniu.",
   ],
 };
 
@@ -904,538 +332,80 @@ function isTypingTarget(target: EventTarget | null) {
   return tagName === "input" || tagName === "textarea" || tagName === "select";
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
+function escapeReaderPreviewHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return character;
+    }
+  });
 }
 
-function splitReaderParagraphs(text: string | null | undefined) {
-  if (!text) {
-    return [];
-  }
-
-  return text
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
+function paragraphsToReaderPreviewHtml(paragraphs: string[]) {
+  return paragraphs.map((paragraph) => `<p>${escapeReaderPreviewHtml(paragraph)}</p>`).join("");
 }
 
-function countWords(text: string | null | undefined) {
-  if (!text) {
-    return 0;
-  }
-
-  return text
-    .split(/\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean).length;
+function countWordsFromHtml(value: string | null | undefined) {
+  return countWords(value ? value.replace(/<[^>]+>/g, " ") : null);
 }
 
-function getSearchFieldLabel(field: NonNullable<Item["search_match"]>["fields"][number]) {
-  if (field === "body") {
-    return "Tresc";
-  }
-  if (field === "excerpt") {
-    return "Skrot";
-  }
-  if (field === "author") {
-    return "Autor";
-  }
-  if (field === "category") {
-    return "Kategoria";
-  }
-  if (field === "source") {
-    return "Zrodlo";
-  }
-  if (field === "organization") {
-    return "Tagi / kolekcje";
-  }
-  if (field === "annotation") {
-    return "Notatki / podkreslenia";
-  }
-  return "Tytul";
-}
+function buildMagazineArticleHydration(detail: ItemDetail, snapshotTitle: string): MagazineArticleHydration {
+  const sanitizedHtml = sanitizeReaderHtml(detail.cleaned_html, snapshotTitle);
+  const fallbackParagraphs = sanitizedHtml
+    ? []
+    : sanitizeReaderParagraphs(splitReaderParagraphs(detail.content_text ?? detail.excerpt), snapshotTitle);
+  const fallbackHtml = fallbackParagraphs.length > 0 ? paragraphsToReaderPreviewHtml(fallbackParagraphs) : null;
+  const contentHtml = sanitizedHtml ?? fallbackHtml;
+  const wordCount = contentHtml ? countWordsFromHtml(contentHtml) : countWords(detail.content_text ?? detail.excerpt);
 
-function getSortLabel(sort: ItemSortMode) {
-  return sort === "oldest" ? "Od najstarszych" : "Od najnowszych";
-}
-
-function getChannelHealthTone(status: ChannelHealth["status"] | undefined) {
-  if (status === "healthy") {
-    return "active";
-  }
-  if (status === "warning") {
-    return "inactive";
-  }
-  if (status === "error") {
-    return "archived";
-  }
-  return "";
-}
-
-function getPreviewTitle(payload: ChannelPreviewPayload) {
-  if (payload.status === "already_subscribed") {
-    return "Źródło już istnieje";
-  }
-  if (payload.status === "multiple_candidates") {
-    return "Wybierz wykryty feed";
-  }
-  return "Podgląd źródła gotowy";
-}
-
-function getSourceDiscoveryModeLabel(mode: ChannelPreviewPayload["discovery"]["mode"] | undefined) {
-  if (mode === "direct") {
-    return "Bezpośredni feed";
-  }
-  if (mode === "head_metadata") {
-    return "Autodetect w stronie";
-  }
-  if (mode === "heuristic") {
-    return "Heurystyka";
-  }
-  return "Autodetect";
-}
-
-function getSourceLanguageLabel(language: string | null | undefined) {
-  if (!language) {
-    return "Bez oznaczenia języka";
-  }
-  const normalized = language.trim().toLowerCase();
-  if (!normalized) {
-    return "Bez oznaczenia języka";
-  }
-  if (normalized === "pl" || normalized === "pl-pl") {
-    return "Polski";
-  }
-  if (normalized === "en" || normalized === "en-us" || normalized === "en-gb") {
-    return "English";
-  }
-  if (normalized === "de" || normalized === "de-de") {
-    return "Deutsch";
-  }
-  if (normalized === "fr" || normalized === "fr-fr") {
-    return "Francais";
-  }
-  return normalized.toUpperCase();
-}
-
-function getSourceHostLabel(value: string | null | undefined) {
-  if (!value) {
-    return null;
-  }
-
-  return (
-    getDomainLabel(value) ??
-    value
-      .replace(/^https?:\/\//i, "")
-      .replace(/^www\./i, "")
-      .split("/")[0]
-      ?.trim() ??
-    null
-  );
-}
-
-function SourceIdentityMark({
-  label,
-  siteUrl,
-}: {
-  label: string;
-  siteUrl?: string | null;
-}) {
-  const iconUrl = buildFeedIconUrl(siteUrl);
-
-  return (
-    <span aria-hidden="true" className="source-result-mark">
-      {iconUrl ? (
-        <img
-          alt=""
-          className="source-result-mark-image"
-          loading="lazy"
-          onError={(event) => {
-            event.currentTarget.style.display = "none";
-          }}
-          src={iconUrl}
-        />
-      ) : null}
-      <span className="source-result-mark-fallback">{getFeedGlyph(label)}</span>
-    </span>
-  );
-}
-
-function getChannelStateLabel(state: Channel["state"]) {
-  if (state === "active") {
-    return "Aktywny";
-  }
-  if (state === "inactive") {
-    return "Nieaktywny";
-  }
-  return "Zarchiwizowany";
-}
-
-function getHealthStatusLabel(status: ChannelHealth["status"] | WorkspaceSourceHealthEntry["health_status"] | undefined) {
-  if (status === "healthy") {
-    return "Zdrowe";
-  }
-  if (status === "warning") {
-    return "Uwaga";
-  }
-  if (status === "error") {
-    return "Blad";
-  }
-  return "Nieznany";
-}
-
-function getSyncRunStatusLabel(status: SyncRun["status"] | string) {
-  switch (status) {
-    case "queued":
-      return "W kolejce";
-    case "running":
-      return "W toku";
-    case "completed":
-      return "Ukonczony";
-    case "failed":
-      return "Blad";
-    case "partial_success":
-      return "Czesciowy sukces";
-    case "canceled":
-      return "Anulowany";
-    default:
-      return status;
-  }
-}
-
-function getSyncRunSummaryLine(run: SyncRun | null) {
-  if (!run) {
-    return "Jeszcze nie masz zakonczonego syncu dla tej biblioteki.";
-  }
-
-  if (run.status === "completed") {
-    return `Ostatni sync zakonczyl sie sukcesem: ${run.channels_succeeded}/${run.channels_total} kanalow zakonczonych poprawnie.`;
-  }
-
-  if (run.status === "partial_success") {
-    return `Ostatni sync zakonczyl sie czesciowym sukcesem: ${run.channels_failed}/${run.channels_total} kanalow wymaga uwagi.`;
-  }
-
-  if (run.status === "failed") {
-    return run.error_message ?? `Ostatni sync zakonczyl sie bledem dla ${run.channels_failed}/${run.channels_total} kanalow.`;
-  }
-
-  if (run.status === "running") {
-    return "Ostatni sync nadal trwa i odswieza biblioteke w tle.";
-  }
-
-  if (run.status === "pending") {
-    return "Ostatni sync czeka jeszcze w kolejce backendu.";
-  }
-
-  if (run.status === "canceled") {
-    return "Ostatni sync zostal anulowany przed zakonczeniem.";
-  }
-
-  return `Ostatni sync ma status ${run.status}.`;
-}
-
-function countKnownSourceItems(entry: WorkspaceSourceHealthEntry) {
-  return entry.total_items ?? entry.items_last_7d ?? entry.readable_items_7d ?? entry.unread_count ?? null;
-}
-
-function mapHealthEntryToReaderEmptySource(entry: WorkspaceSourceHealthEntry): ReaderEmptySourceLookupCandidate {
   return {
-    title: entry.title,
-    feedUrl: entry.feed_url,
-    category: entry.category,
-    groupName: entry.group_name,
-    itemCount: countKnownSourceItems(entry),
-    lastFetchAt: entry.last_fetch_at ?? null,
-    lastSuccessfulFetchAt: entry.last_successful_fetch_at ?? null,
-    lastErrorMessage: entry.last_error_message ?? null,
+    itemId: detail.id,
+    author: detail.author,
+    category: detail.channel.category,
+    channelTitle: detail.channel.title,
+    contentHtml,
+    excerpt: detail.excerpt,
+    wordCount: wordCount > 0 ? wordCount : null,
   };
 }
 
-function mapChannelToReaderEmptySource(channel: Channel): ReaderEmptySourceLookupCandidate {
-  const healthErrorMessage =
-    channel.health?.status === "error" ? channel.health.last_error_message ?? channel.health.summary : channel.last_error ?? null;
+import {
+  clamp,
+  splitReaderParagraphs,
+  countWords,
+  getSearchFieldLabel,
+  getSortLabel,
+  getChannelHealthTone,
+  getPreviewTitle,
+  getSourceDiscoveryModeLabel,
+  getSourceLanguageLabel,
+  getSyncRunSummaryLine,
+  countKnownSourceItems,
+  mapHealthEntryToReaderEmptySource,
+  mapChannelToReaderEmptySource,
+  getDeliveryStatusLabel,
+  getExtractionStatusLabel,
+  mapProfileToRankingPreferences,
+  mapSavedSearchToChip,
+  mapAnnotationsToPanel,
+  applyItemPatch,
+  buildUndoPatch,
+  describeItemMutation,
+  isDigestSelectionEmptyPayload,
+  isAuthSessionPayload,
+  formatTimestamp,
+} from "./lib/channel-lab-presenters";
 
-  return {
-    title: channel.title,
-    feedUrl: channel.feed_url,
-    siteUrl: channel.site_url,
-    category: channel.category,
-    itemCount: channel.unread_count,
-    lastFetchAt: channel.last_fetch_at ?? channel.health?.last_fetch_at ?? null,
-    lastSuccessfulFetchAt: channel.health?.last_successful_fetch_at ?? null,
-    lastErrorMessage: healthErrorMessage,
-  };
-}
-
-function getDeliveryStatusLabel(status: string) {
-  switch (status) {
-    case "ready":
-      return "Gotowe";
-    case "needs_configuration":
-      return "Wymaga konfiguracji";
-    case "missing_artifact":
-      return "Brak artefaktu";
-    case "connection_failed":
-      return "Blad polaczenia";
-    case "completed":
-      return "Ukonczono";
-    case "failed":
-      return "Blad";
-    case "queued":
-      return "W kolejce";
-    case "running":
-      return "W toku";
-    case "sent":
-      return "Wyslano";
-    default:
-      return status;
-  }
-}
-
-function getExtractionStatusLabel(status: string) {
-  switch (status) {
-    case "pending":
-      return "Oczekuje";
-    case "completed":
-      return "Ukonczona";
-    case "failed":
-      return "Blad";
-    case "skipped":
-      return "Pominieta";
-    default:
-      return status;
-  }
-}
-
-function mapProfileToRankingPreferences(profile: WorkspaceProfile | null): RankingPreference<string>[] {
-  if (!profile) {
-    return [];
-  }
-
-  return [
-    {
-      id: "candidate_window_hours",
-      label: "Okno kandydatow",
-      description: "Jak daleko wstecz siega rekomendacja, zanim zacznie liczyc scoring.",
-      value: String(profile.candidate_window_hours),
-      defaultValue: "72",
-      scope: "freshness",
-      options: [
-        { value: "24", label: "24h", shortLabel: "24h" },
-        { value: "48", label: "48h", shortLabel: "48h" },
-        { value: "72", label: "72h", shortLabel: "72h" },
-        { value: "120", label: "5d", shortLabel: "5d" },
-      ],
-    },
-    {
-      id: "default_source_cap",
-      label: "Domyslny limit zrodla",
-      description: "Maksymalna liczba kandydatow, ktore zwykly feed moze wepchnac do rankingu.",
-      value: String(profile.default_source_cap),
-      defaultValue: "30",
-      scope: "source",
-      options: [
-        { value: "15", label: "15 pozycji", shortLabel: "15" },
-        { value: "30", label: "30 pozycji", shortLabel: "30" },
-        { value: "45", label: "45 pozycji", shortLabel: "45" },
-        { value: "60", label: "60 pozycji", shortLabel: "60" },
-      ],
-    },
-    {
-      id: "priority_source_cap",
-      label: "Limit zrodel priorytetowych",
-      description: "Wyzej ustawiony limit dla zaufanych feedow, ktore chcesz widziec czesciej.",
-      value: String(profile.priority_source_cap),
-      defaultValue: "45",
-      scope: "source",
-      options: [
-        { value: "30", label: "30 pozycji", shortLabel: "30" },
-        { value: "45", label: "45 pozycji", shortLabel: "45" },
-        { value: "60", label: "60 pozycji", shortLabel: "60" },
-        { value: "90", label: "90 pozycji", shortLabel: "90" },
-      ],
-    },
-    {
-      id: "daily_reading_goal",
-      label: "Dzienny cel czytania",
-      description: "Pod ile mocnych rekomendacji aplikacja ma optymalizowac briefing.",
-      value: String(profile.daily_reading_goal),
-      defaultValue: "12",
-      scope: "manual",
-      options: [
-        { value: "8", label: "8 lektur", shortLabel: "8" },
-        { value: "12", label: "12 lektur", shortLabel: "12" },
-        { value: "20", label: "20 lektur", shortLabel: "20" },
-        { value: "30", label: "30 lektur", shortLabel: "30" },
-      ],
-    },
-  ];
-}
-
-function mapSavedSearchToChip(
-  search: WorkspaceSavedSearch,
-  activeQuery: string,
-  libraryView: LibraryView,
-): SavedViewChipModel {
-  const active = activeQuery.trim() === search.query.trim() && libraryView === search.default_view;
-  return {
-    id: search.id,
-    label: search.name,
-    description: search.query,
-    kind: "custom",
-    resultCount: undefined,
-    unreadCount: undefined,
-    isActive: active,
-    isPinned: search.default_view === "saved" || search.default_view === "digest",
-  };
-}
-
-function mapAnnotationsToPanel(
-  item: Item | null,
-  annotations: WorkspaceAnnotation[],
-  selectedTextQuote: string,
-): AnnotationPanelModel {
-  return {
-    id: item?.id ?? "reader-annotations",
-    title: "Notatki czytelnika",
-    storyTitle: item?.title,
-    selectionLabel: selectedTextQuote ? "Zaznaczenie gotowe" : undefined,
-    status: annotations.length > 0 ? "active" : "draft",
-    updatedAt: annotations[0]?.updated_at ?? item?.published_at ?? null,
-    entries: annotations.map((annotation) => ({
-      id: annotation.id,
-      authorLabel: annotation.kind === "highlight" ? "Podkreslenie" : "Notatka",
-      body: annotation.note_text ?? annotation.quote_text ?? "Brak zapisanej tresci.",
-      createdAt: annotation.created_at,
-      kind: annotation.kind === "highlight" ? "highlight" : "note",
-      status: "active",
-      quote: annotation.quote_text ?? undefined,
-      tags: annotation.color ? [annotation.color] : undefined,
-    })),
-    emptyState: {
-      title: "Brak adnotacji",
-      body: item
-        ? "Zaznacz tekst w artykule albo dopisz notatke, aby budowac wlasna warstwe wiedzy."
-        : "Wybierz artykul, aby zaczac anotowac.",
-    },
-  };
-}
-
-function applyItemPatch<T extends Item | ItemDetail>(item: T, patch: ItemStatePatch): T {
-  const now = new Date().toISOString();
-  let nextFavorite = "is_favorite" in patch && typeof patch.is_favorite === "boolean" ? patch.is_favorite : item.is_favorite;
-  let nextArchived = "is_archived" in patch && typeof patch.is_archived === "boolean" ? patch.is_archived : item.is_archived;
-
-  if (patch.library_action === "save") {
-    nextFavorite = true;
-    nextArchived = false;
-  } else if (patch.library_action === "unsave") {
-    nextFavorite = false;
-  } else if (patch.library_action === "archive") {
-    nextArchived = true;
-    nextFavorite = false;
-  } else if (patch.library_action === "restore") {
-    nextArchived = false;
-  }
-
-  const nextDigestCandidate =
-    "digest_candidate" in patch && typeof patch.digest_candidate === "boolean"
-      ? patch.digest_candidate
-      : item.digest_candidate;
-  const nextLibraryState: ItemLibrary["state"] = nextArchived ? "archived" : nextFavorite ? "saved" : "inbox";
-
-  return {
-    ...item,
-    ...patch,
-    is_favorite: nextFavorite,
-    is_archived: nextArchived,
-    digest_candidate: nextDigestCandidate,
-    library: {
-      ...item.library,
-      state: nextLibraryState,
-      is_saved: nextFavorite,
-      is_archived: nextArchived,
-      saved_at: nextFavorite ? item.library.saved_at ?? now : null,
-      archived_at: nextArchived ? item.library.archived_at ?? now : null,
-    },
-    digest: {
-      ...item.digest,
-      is_candidate: nextDigestCandidate,
-    },
-  };
-}
-
-function buildUndoPatch(before: Item, after: Item): ItemStatePatch | null {
-  const patch: ItemStatePatch = {};
-
-  if (before.is_read !== after.is_read) {
-    patch.is_read = before.is_read;
-  }
-  if (before.is_favorite !== after.is_favorite) {
-    patch.is_favorite = before.is_favorite;
-  }
-  if (before.is_archived !== after.is_archived) {
-    patch.is_archived = before.is_archived;
-  }
-  if (before.digest_candidate !== after.digest_candidate) {
-    patch.digest_candidate = before.digest_candidate;
-  }
-
-  return Object.keys(patch).length > 0 ? patch : null;
-}
-
-function describeItemMutation(patch: ItemStatePatch) {
-  if (patch.library_action === "save" || patch.is_favorite === true) {
-    return "Zapisano artykul";
-  }
-  if (patch.library_action === "unsave" || patch.is_favorite === false) {
-    return "Usunieto artykul z zapisanych";
-  }
-  if (patch.library_action === "archive" || patch.is_archived === true) {
-    return "Zarchiwizowano artykul";
-  }
-  if (patch.library_action === "restore" || patch.is_archived === false) {
-    return "Przywrocono artykul";
-  }
-  if (patch.is_read === true) {
-    return "Oznaczono artykul jako przeczytany";
-  }
-  if (patch.is_read === false) {
-    return "Oznaczono artykul jako nieprzeczytany";
-  }
-  if (patch.digest_candidate === true) {
-    return "Dodano artykul do kolejki digestu";
-  }
-  if (patch.digest_candidate === false) {
-    return "Usunieto artykul z kolejki digestu";
-  }
-  return "Zaktualizowano artykul";
-}
-
-function isDigestSelectionEmptyPayload(payload: unknown): payload is ApiErrorEnvelope {
-  return isErrorEnvelope(payload) && payload.error?.code === "digest_selection_empty";
-}
-
-function isAuthSessionPayload(payload: unknown): payload is AuthSessionPayload {
-  return typeof payload === "object" && payload !== null && "auth_required" in payload && "has_accounts" in payload;
-}
-
-function formatTimestamp(value: string | null | undefined, fallback: string) {
-  if (!value) {
-    return fallback;
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("pl", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
-}
 
 export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const router = useRouter();
@@ -1456,6 +426,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [sourceAddMode, setSourceAddMode] = useState<SourceAddModeId>("website");
   const [showSourceOptions, setShowSourceOptions] = useState(false);
   const [sourceLanguageFilter, setSourceLanguageFilter] = useState("all");
+  const [lastAddedSource, setLastAddedSource] = useState<Channel | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([]);
@@ -1530,11 +501,16 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [digestCandidateStatus, setDigestCandidateStatus] = useState<DigestCandidatePreviewStatus>("idle");
   const [digestCandidateMessage, setDigestCandidateMessage] = useState<string | null>(null);
   const [digestHistory, setDigestHistory] = useState<DigestHistory[]>([]);
+  const [selectedMagazineIssueId, setSelectedMagazineIssueId] = useState<string | null>(null);
+  const [aiSettings, setAISettings] = useState<AISettings | null>(null);
+  const [aiSettingsMessage, setAISettingsMessage] = useState<string | null>(null);
+  const [aiPreflight, setAIPreflight] = useState<AISettingsPreflight | null>(null);
+  const [aiSettingsDraft, setAISettingsDraft] = useState<AISettingsDraft>(() => createAISettingsDraft(null));
   const [deliverySettings, setDeliverySettings] = useState<DeliverySettings | null>(null);
   const [deliverySettingsMessage, setDeliverySettingsMessage] = useState<string | null>(null);
   const [deliveryPreflight, setDeliveryPreflight] = useState<DeliveryPreflight | null>(null);
   const [deliveryLogs, setDeliveryLogs] = useState<DeliveryLog[]>([]);
-  const [settingsDraft, setSettingsDraft] = useState({
+  const [settingsDraft, setSettingsDraft] = useState<DeliverySettingsDraft>({
     smtp_host: "",
     smtp_port: "587",
     smtp_username: "",
@@ -1544,6 +520,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   });
   const [digestBusy, setDigestBusy] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [aiSettingsBusy, setAISettingsBusy] = useState(false);
+  const [aiPreflightBusy, setAIPreflightBusy] = useState(false);
   const [deliveryBusy, setDeliveryBusy] = useState(false);
   const [articleKindleBusyId, setArticleKindleBusyId] = useState<string | null>(null);
   const [articleKindleFeedback, setArticleKindleFeedback] = useState<ArticleKindleFeedbackState | null>(null);
@@ -1558,6 +536,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [workspaceProfile, setWorkspaceProfile] = useState<WorkspaceProfile | null>(null);
   const [workspaceBriefing, setWorkspaceBriefing] = useState<WorkspaceBriefing | null>(null);
   const [rankingItems, setRankingItems] = useState<WorkspaceRankingItem[]>([]);
+  const [hiddenRankingItems, setHiddenRankingItems] = useState<WorkspaceRankingItem[]>([]);
+  const [readerQueueMode, setReaderQueueMode] = useState<AppReaderMode>("for_you");
   const [sourceHealthEntries, setSourceHealthEntries] = useState<WorkspaceSourceHealthEntry[]>([]);
   const [sourceGroups, setSourceGroups] = useState<WorkspaceSourceGroup[]>([]);
   const [storyClusters, setStoryClusters] = useState<WorkspaceStoryCluster[]>([]);
@@ -1579,6 +559,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [sourceGroupColor, setSourceGroupColor] = useState("#155e75");
   const [captureUrl, setCaptureUrl] = useState("");
   const [opmlDraft, setOpmlDraft] = useState("");
+  const [opmlPreview, setOpmlPreview] = useState<SourceOpmlPreviewPayload | null>(null);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [opmlImportBusy, setOpmlImportBusy] = useState(false);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
@@ -1597,6 +578,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const requestedReadSurface = useMemo(() => {
     return parseReadRouteSearch(searchParams).surface ?? null;
   }, [searchParams]);
+  const requestedMagazineIssueId = useMemo(() => {
+    return parseMagazineRouteSearch(searchParams).issue ?? null;
+  }, [searchParams]);
 
   const deferredItemSearch = useDeferredValue(itemSearch);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1611,6 +595,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const sourcePreviewRequestIdRef = useRef(0);
   const sourcePreviewAbortRef = useRef<AbortController | null>(null);
   const lastSourcePreviewKeyRef = useRef<string | null>(null);
+  const magazineHydrationAttemptedRef = useRef(new Set<string>());
 
   function getReaderScrollSnapshot(surface: HTMLDivElement) {
     const computedStyle = window.getComputedStyle(surface);
@@ -1691,18 +676,46 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }),
     [feedFilter, libraryScopedItems],
   );
-  const queueItems = useMemo(
-    () =>
-      dedupeStoryQueue(
-        orderQueueItemsWithRanking(visibleItems, rankingItems, {
-          deferredSearch: deferredItemSearch,
-          libraryView: libraryView === "continue" ? "inbox" : libraryView,
+  const queueItems = useMemo(() => {
+    const rankingLibraryView = libraryView === "continue" ? "inbox" : libraryView;
+    const canUseCuratedQueue = rankingLibraryView === "inbox" && itemSortMode === "newest";
+    const queueRankingItems = readerQueueMode === "hidden" ? hiddenRankingItems : rankingItems;
+    const rankedIds = new Set(queueRankingItems.map((entry) => entry.item.id));
+    const rankedPool = visibleItems.filter((item) => rankedIds.has(item.id));
+    const shouldDedupe =
+      storyQueueGrouped &&
+      (libraryView === "inbox" || libraryView === "continue") &&
+      !deferredItemSearch.trim();
+
+    if ((readerQueueMode === "for_you" || readerQueueMode === "hidden") && canUseCuratedQueue) {
+      return dedupeStoryQueue(
+        orderQueueItemsWithRanking(rankedPool, queueRankingItems, {
+          deferredSearch: "",
+          libraryView: rankingLibraryView,
           itemSortMode,
         }),
-        storyQueueGrouped && (libraryView === "inbox" || libraryView === "continue") && !deferredItemSearch.trim(),
-      ),
-    [deferredItemSearch, itemSortMode, libraryView, rankingItems, storyQueueGrouped, visibleItems],
-  );
+        shouldDedupe,
+      );
+    }
+
+    return dedupeStoryQueue(
+      orderQueueItemsWithRanking(visibleItems, rankingItems, {
+        deferredSearch: readerQueueMode === "latest" ? "latest" : deferredItemSearch,
+        libraryView: rankingLibraryView,
+        itemSortMode,
+      }),
+      shouldDedupe,
+    );
+  }, [
+    deferredItemSearch,
+    hiddenRankingItems,
+    itemSortMode,
+    libraryView,
+    rankingItems,
+    readerQueueMode,
+    storyQueueGrouped,
+    visibleItems,
+  ]);
   const visibleUnreadCount = useMemo(
     () => queueItems.filter((item) => !item.is_read).length,
     [queueItems],
@@ -1710,6 +723,24 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const visibleFavoriteCount = useMemo(
     () => queueItems.filter((item) => item.is_favorite).length,
     [queueItems],
+  );
+  const rankingExplanations = useMemo(
+    () =>
+      Object.fromEntries(
+        [...hiddenRankingItems, ...rankingItems].map((entry) => [
+          entry.item.id,
+          {
+            negativeSignals: entry.breakdown.matched_negative_signals ?? [],
+            positiveSignals: entry.breakdown.matched_positive_signals ?? entry.breakdown.matched_interests ?? [],
+            qualityFlags: entry.quality_flags ?? entry.breakdown.quality_flags ?? [],
+            reason: entry.breakdown.reason,
+            score: entry.breakdown.final_score,
+            visibility: entry.visibility ?? entry.breakdown.visibility,
+            visibilityReason: entry.visibility_reason ?? entry.breakdown.visibility_reason,
+          },
+        ]),
+      ),
+    [hiddenRankingItems, rankingItems],
   );
   const totalUnreadCount = channels.reduce((sum, channel) => sum + channel.unread_count, 0);
   const continueReadingCount = useMemo(
@@ -1784,6 +815,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     );
   }, [channels, feedCountsByChannelId]);
   const latestDigest = digestHistory[0] ?? null;
+  const selectedMagazineIssue = useMemo(
+    () => digestHistory.find((issue) => issue.id === selectedMagazineIssueId) ?? digestHistory[0] ?? null,
+    [digestHistory, selectedMagazineIssueId],
+  );
   const selectedBulkItems = useMemo(
     () => queueItems.filter((item) => selectedItemIds.includes(item.id)),
     [queueItems, selectedItemIds],
@@ -1867,6 +902,19 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         smtp_from: payload.settings.smtp_from ?? "",
         kindle_email: payload.settings.kindle_email ?? "",
       });
+    });
+    return payload.settings;
+  }
+
+  async function loadAISettings() {
+    const { response, payload } = await fetchApi<AISettingsPayload>("/api/v1/settings/ai");
+    if (!response.ok || isErrorEnvelope(payload)) {
+      throw new Error(getPayloadMessage(payload, "Nie udało się wczytać ustawień AI."));
+    }
+
+    startTransition(() => {
+      setAISettings(payload.settings);
+      setAISettingsDraft(createAISettingsDraft(payload.settings));
     });
     return payload.settings;
   }
@@ -2059,6 +1107,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       profileResult,
       briefingResult,
       rankingResult,
+      hiddenRankingResult,
       sourceHealthResult,
       sourceGroupResult,
       storyResult,
@@ -2068,7 +1117,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     ] = await Promise.allSettled([
       fetchWorkspace<WorkspaceProfilePayload>("/api/v1/workspace/profile"),
       fetchWorkspace<WorkspaceBriefingPayload>("/api/v1/workspace/briefing"),
-      fetchWorkspace<WorkspaceRankingPayload>("/api/v1/workspace/ranking?limit=14"),
+      fetchWorkspace<WorkspaceRankingPayload>("/api/v1/workspace/ranking?limit=14&mode=for_you"),
+      fetchWorkspace<WorkspaceRankingPayload>("/api/v1/workspace/ranking?limit=30&mode=hidden&include_hidden=true"),
       fetchWorkspace<WorkspaceSourceHealthPayload>("/api/v1/workspace/source-health"),
       fetchWorkspace<WorkspaceSourceGroupListPayload>("/api/v1/workspace/source-groups"),
       fetchWorkspace<WorkspaceStoryClusterPayload>("/api/v1/workspace/stories?limit=6"),
@@ -2086,6 +1136,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
       if (rankingResult.status === "fulfilled") {
         setRankingItems(rankingResult.value.items);
+      }
+      if (hiddenRankingResult.status === "fulfilled") {
+        setHiddenRankingItems(hiddenRankingResult.value.items);
       }
       if (sourceHealthResult.status === "fulfilled") {
         setSourceHealthEntries(sourceHealthResult.value.items);
@@ -2691,31 +1744,122 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }
 
-  async function handleImportOpml() {
+  function handleOpmlDraftChange(value: string) {
+    setOpmlDraft(value);
+    setOpmlPreview(null);
+  }
+
+  async function handlePreviewOpmlImport() {
     if (!opmlDraft.trim()) {
       return;
     }
     setOpmlImportBusy(true);
     try {
-      const payload = await fetchWorkspace<WorkspaceOpmlImportPayload>("/api/v1/workspace/opml/import", {
+      const { response, payload } = await fetchApi<SourceOpmlPreviewPayload>("/api/v1/source-management/opml/import/preview", {
         method: "POST",
-        body: JSON.stringify({ opml: opmlDraft.trim() }),
+        body: JSON.stringify({ opml_content: opmlDraft.trim() }),
       });
-      setOpmlDraft("");
-      await Promise.all([loadChannels(), loadWorkspaceOverview()]);
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się sprawdzić OPML."));
+      }
+      setOpmlPreview(payload);
       setFeedback({
         tone: "success",
-        title: "Import OPML zakonczony",
+        title: "Podgląd OPML gotowy",
         lines: [
-          `Zaimportowano ${payload.imported_count} ${payload.imported_count === 1 ? "zrodlo" : "zrodla"}.`,
-          `Pominieto ${payload.duplicate_count} ${payload.duplicate_count === 1 ? "duplikat" : "duplikatow"}.`,
+          `Nowe źródła: ${payload.summary.new_feeds}, duplikaty: ${payload.summary.existing_feeds + payload.summary.duplicate_feeds}.`,
+          `Foldery: ${payload.summary.folder_count}, błędne wpisy: ${payload.summary.invalid_feeds}.`,
         ],
       });
     } catch (error) {
       setFeedback({
         tone: "error",
-        title: "Nie udalo sie zaimportowac OPML",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Nie udało się sprawdzić OPML",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+      });
+    } finally {
+      setOpmlImportBusy(false);
+    }
+  }
+
+  async function handleReaderFeedback(itemId: string, action: ReaderFeedbackAction) {
+    const item = items.find((entry) => entry.id === itemId) ?? (selectedItem?.id === itemId ? selectedItem : null);
+    if (!item) {
+      return;
+    }
+    setItemActionId(itemId);
+    try {
+      await fetchWorkspace<ReaderFeedbackPayload>("/api/v1/workspace/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          action,
+          item_id: itemId,
+          source_id: item.channel_id,
+          reason: "reader_action",
+        }),
+      });
+      await loadWorkspaceOverview();
+      setFeedback({
+        tone: "success",
+        title:
+          action === "more_like_this" || action === "important"
+            ? "Zapamietalem, ze to jest wazne"
+            : action === "mute_source"
+              ? "Zrodlo zostalo wyciszone"
+              : action === "hide_topic"
+                ? "Temat zostal ukryty"
+                : "Podobne wpisy beda ukrywane",
+        lines: [
+          action === "more_like_this" || action === "important"
+            ? "Ranking Dla mnie bedzie mocniej szukal podobnych tekstow."
+            : "Ranking Dla mnie odswiezyl sygnaly i ograniczy podobny szum.",
+        ],
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        title: "Nie udalo sie zapisac feedbacku czytelnika",
+        lines: [error instanceof Error ? error.message : "Nieznany blad rankingu."],
+      });
+    } finally {
+      setItemActionId(null);
+    }
+  }
+
+  async function handleImportOpml() {
+    if (!opmlDraft.trim()) {
+      return;
+    }
+    if (!opmlPreview) {
+      await handlePreviewOpmlImport();
+      return;
+    }
+    setOpmlImportBusy(true);
+    try {
+      const { response, payload } = await fetchApi<SourceOpmlImportPayload>("/api/v1/source-management/opml/import", {
+        method: "POST",
+        body: JSON.stringify({ opml_content: opmlDraft.trim() }),
+      });
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się zaimportować OPML."));
+      }
+      setOpmlDraft("");
+      setOpmlPreview(null);
+      await Promise.all([loadChannels(), loadWorkspaceOverview()]);
+      setFeedback({
+        tone: "success",
+        title: "Import OPML zakończony",
+        lines: [
+          `Zaimportowano ${payload.summary.new_feeds} ${payload.summary.new_feeds === 1 ? "źródło" : "źródła"}.`,
+          `Pominięto ${payload.summary.existing_feeds + payload.summary.duplicate_feeds} duplikatów.`,
+          "Możesz teraz pobrać wpisy z aktywnych źródeł.",
+        ],
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        title: "Nie udało się zaimportować OPML",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     } finally {
       setOpmlImportBusy(false);
@@ -2836,6 +1980,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           loadChannels(),
           loadSyncRuns(),
           loadDigestHistory(),
+          loadAISettings(),
           loadDeliverySettings(),
           loadWorkspaceOverview(),
           loadAnnotationHub(""),
@@ -2860,7 +2005,113 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [apiBaseUrl, authStatus, latestDigest?.id]);
 
   useEffect(() => {
-    if (authStatus !== "ready" || currentSection !== "digest") {
+    setSelectedMagazineIssueId((current) => {
+      const requestedIssue =
+        currentSection === "magazines" && requestedMagazineIssueId && digestHistory.some((issue) => issue.id === requestedMagazineIssueId)
+          ? requestedMagazineIssueId
+          : null;
+      if (requestedIssue) {
+        return requestedIssue;
+      }
+
+      if (current && digestHistory.some((issue) => issue.id === current)) {
+        return current;
+      }
+
+      return digestHistory[0]?.id ?? null;
+    });
+  }, [currentSection, digestHistory, requestedMagazineIssueId]);
+
+  useEffect(() => {
+    if (authStatus !== "ready" || currentSection !== "magazines" || !selectedMagazineIssue) {
+      return;
+    }
+
+    const articlesToHydrate = selectedMagazineIssue.selection_snapshot.filter((article) => {
+      const hydrationKey = `${selectedMagazineIssue.id}:${article.item_id}`;
+      return article.item_id && !article.content_html && !magazineHydrationAttemptedRef.current.has(hydrationKey);
+    });
+
+    if (articlesToHydrate.length === 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    for (const article of articlesToHydrate) {
+      magazineHydrationAttemptedRef.current.add(`${selectedMagazineIssue.id}:${article.item_id}`);
+    }
+
+    async function hydrateMagazineIssueArticles() {
+      const hydratedEntries = await Promise.all(
+        articlesToHydrate.map(async (article) => {
+          try {
+            const { response, payload } = await fetchApi<ItemDetailPayload>(`/api/v1/items/${encodeURIComponent(article.item_id)}`, {
+              signal: controller.signal,
+            });
+            if (!response.ok || isErrorEnvelope(payload)) {
+              return null;
+            }
+
+            return buildMagazineArticleHydration(payload.item, article.title);
+          } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") {
+              throw error;
+            }
+            return null;
+          }
+        }),
+      );
+
+      const hydrationByItemId = new Map(
+        hydratedEntries
+          .filter((entry): entry is MagazineArticleHydration => Boolean(entry?.contentHtml || entry?.excerpt))
+          .map((entry) => [entry.itemId, entry]),
+      );
+
+      if (hydrationByItemId.size === 0 || controller.signal.aborted) {
+        return;
+      }
+
+      startTransition(() => {
+        setDigestHistory((current) =>
+          current.map((issue) => {
+            if (issue.id !== selectedMagazineIssue.id) {
+              return issue;
+            }
+
+            return {
+              ...issue,
+              selection_snapshot: issue.selection_snapshot.map((article) => {
+                const hydrated = hydrationByItemId.get(article.item_id);
+                if (!hydrated) {
+                  return article;
+                }
+
+                return {
+                  ...article,
+                  author: article.author ?? hydrated.author,
+                  category: article.category ?? hydrated.category,
+                  channel_title: article.channel_title ?? hydrated.channelTitle,
+                  content_html: article.content_html ?? hydrated.contentHtml,
+                  excerpt: article.excerpt ?? hydrated.excerpt,
+                  word_count: article.word_count ?? hydrated.wordCount,
+                };
+              }),
+            };
+          }),
+        );
+      });
+    }
+
+    void hydrateMagazineIssueArticles();
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, authStatus, currentSection, selectedMagazineIssue]);
+
+  useEffect(() => {
+    if (authStatus !== "ready" || (currentSection !== "digest" && currentSection !== "magazines")) {
       return;
     }
     const controller = new AbortController();
@@ -2940,8 +2191,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       location: window.location,
       storage: window.localStorage,
     });
+    const bootReadSearch = parseReadRouteSearch(window.location.search);
 
     setPreferredSection(bootState.preferredSection);
+    setReaderQueueMode(bootReadSearch.mode ?? (bootReadSearch.scope === "all" ? "all" : "for_you"));
     setViewPreferences(bootState.viewPreferences);
     dispatchReaderDisplay({
       type: "restore_display_state",
@@ -3205,6 +2458,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       readSurfaceMode === "article" &&
       (readingItemId === activeItemId || requestedReadSurface === "article");
 
+    if (currentSection === "magazines" && requestedMagazineIssueId && !selectedMagazineIssueId) {
+      return;
+    }
+
     const nextUrl = buildAppHref({
       section: currentSection,
       libraryView,
@@ -3213,6 +2470,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       q: itemSearch.trim() || null,
       item: activeItemId,
       surface: shouldPersistArticleSurface ? "article" : null,
+      issue: currentSection === "magazines" ? selectedMagazineIssueId : null,
+      mode: currentSection === "read" ? readerQueueMode : null,
     });
     if (currentUrl !== nextUrl) {
       window.history.replaceState(null, "", nextUrl);
@@ -3226,7 +2485,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     preferencesReady,
     readSurfaceMode,
     readingItemId,
+    requestedMagazineIssueId,
     requestedReadSurface,
+    readerQueueMode,
+    selectedMagazineIssueId,
     showReadItems,
   ]);
 
@@ -3243,6 +2505,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         sort: itemSortMode,
         q: itemSearch.trim() || null,
         item: activeItemId,
+        mode: preferredSection === "read" ? readerQueueMode : null,
         surface:
           preferredSection === "read" && readSurfaceMode === "article" && readingItemId && readingItemId === activeItemId
             ? "article"
@@ -3258,6 +2521,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     preferencesReady,
     preferredSection,
     readSurfaceMode,
+    readerQueueMode,
     readingItemId,
     router,
     showReadItems,
@@ -3479,7 +2743,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         setFeedback({
           tone: "idle",
           title: "Podgląd źródła",
-          lines: ["Sprawdzam bezpośredni feed, autodiscovery na stronie i heurystyki RSS. Nic nie zapisuję bez potwierdzenia."],
+          lines: ["Sprawdzam bezpośredni feed, wykrywanie na stronie i heurystyki RSS. Nic nie zapisuję bez potwierdzenia."],
         });
       }
 
@@ -3538,7 +2802,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           setFeedback({
             tone: "error",
             title: "channel_preview_failed",
-            lines: [isErrorEnvelope(payload) ? payload.error?.message ?? "Podgląd kanału nie powiódł się." : "Podgląd kanału nie powiódł się."],
+            lines: [isErrorEnvelope(payload) ? payload.error?.message ?? "Podgląd źródła nie powiódł się." : "Podgląd źródła nie powiódł się."],
           });
           if (origin === "manual") {
             pendingSourceFocusTargetRef.current = "results";
@@ -3580,8 +2844,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         setChannelPreview(null);
         setFeedback({
           tone: "error",
-          title: "Zadanie nie powiodlo sie",
-          lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+          title: "Zadanie nie powiodło się",
+          lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
         });
         if (origin === "manual") {
           pendingSourceFocusTargetRef.current = "results";
@@ -3607,6 +2871,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     cancelSourcePreviewRequest();
     lastSourcePreviewKeyRef.current = null;
     setChannelPreview(null);
+    setLastAddedSource(null);
     setSourceLanguageFilter("all");
     setShowSourceOptions(false);
     setSourceSurfaceMode("add");
@@ -3619,6 +2884,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   function handleSourceDraftInputChange(nextValue: string) {
     setInputUrl(nextValue);
+    setLastAddedSource(null);
 
     const previewMode = sourceAddMode === "web_feed" ? "web_feed" : "website";
     const nextRequestKey = buildSourcePreviewRequestKey(previewMode, nextValue);
@@ -3690,22 +2956,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     setFeedback({
       tone: "idle",
       title: "Zapisywanie źródła",
-      lines: ["Wybrany feed jest teraz dodawany do Twojej biblioteki. Po zapisie pokażemy kolejny krok: sync."],
+      lines: ["Wybrany feed jest teraz dodawany do biblioteki. Po zapisie pokażemy kolejny krok: pobranie wpisów."],
     });
 
     try {
-      const { response, payload } = await fetchApi<ChannelCreatePayload>("/api/v1/channels", {
+      const { response, payload } = await fetchApi<SourceCreatePayload>("/api/v1/source-management/sources", {
         method: "POST",
         body: JSON.stringify({
-          input_url: resolvedUrl,
+          ...(feedUrl || channelPreview?.feed?.feed_url
+            ? { feed_url: resolvedUrl }
+            : { input_url: resolvedUrl }),
           category: category || undefined,
+          initial_sync: "none",
+          on_duplicate: "return_existing",
         }),
       });
       if (!response.ok || isErrorEnvelope(payload)) {
         setFeedback({
           tone: "error",
           title: isErrorEnvelope(payload) ? payload.error?.code ?? "channel_add_failed" : "channel_add_failed",
-          lines: [getPayloadMessage(payload, "Dodanie kanału nie powiodło się.")],
+          lines: [getPayloadMessage(payload, "Dodanie źródła nie powiodło się.")],
         });
         return;
       }
@@ -3716,24 +2986,108 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       resetSourcePreviewState();
       setShowSourceOptions(false);
       setSourceSurfaceMode("add");
-      pendingSourceFocusTargetRef.current = "input";
+      setLastAddedSource(payload.source);
       setFeedback({
         tone: "success",
-        title: "Kanał zapisany",
+        title:
+          payload.status === "existing"
+            ? "Źródło jest już w bibliotece"
+            : payload.status === "reactivated"
+              ? "Źródło przywrócone"
+              : "Źródło zapisane",
         lines: [
-          `Tryb wykrywania: ${payload.discovery.mode}`,
-          `Rozwiązany feed: ${payload.discovery.resolved_feed_url}`,
-          "Najlepszy następny krok: uruchom sync, aby pobrać najnowsze wpisy i policzyć czytelność feedu.",
+          `Wykrywanie feedu: ${payload.discovery.mode}.`,
+          `Adres feedu: ${payload.discovery.resolved_feed_url ?? payload.source.feed_url}.`,
+          "Teraz pobierz pierwsze wpisy, żeby źródło pojawiło się w czytniku i w stanie zdrowia.",
         ],
       });
     } catch (error) {
       setFeedback({
         tone: "error",
-        title: "Zadanie nie powiodlo sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Zadanie nie powiodło się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     } finally {
       setSubscribeBusy(false);
+    }
+  }
+
+  function handleSourceSuccessAddNext() {
+    setLastAddedSource(null);
+    setInputUrl("");
+    setCategory("");
+    resetSourcePreviewState();
+    setShowSourceOptions(false);
+    setSourceSurfaceMode("add");
+    setSourceAddMode("website");
+    pendingSourceFocusTargetRef.current = "input";
+    setFeedback(initialFeedback);
+    window.setTimeout(() => {
+      sourceInputRef.current?.focus();
+    }, 0);
+  }
+
+  function handleSourceSuccessOpen() {
+    if (!lastAddedSource) {
+      return;
+    }
+    setReaderFeedFilter({ kind: "channel", value: lastAddedSource.id });
+    router.push(
+      buildAppHref({
+        section: "read",
+        libraryView: "inbox",
+        scope: "all",
+        sort: itemSortMode,
+        q: null,
+      }),
+    );
+  }
+
+  async function handleSourceSuccessSync() {
+    if (!lastAddedSource) {
+      return;
+    }
+    setIsSyncing(true);
+    setFeedback({
+      tone: "idle",
+      title: "Pobieranie pierwszych wpisów",
+      lines: [`Tworzę zadanie pobierania tylko dla źródła: ${lastAddedSource.title}.`],
+    });
+
+    try {
+      const { response, payload } = await fetchApi<SourceSyncPayload>(
+        `/api/v1/source-management/sources/${lastAddedSource.id}/sync`,
+        {
+          method: "POST",
+        },
+      );
+      if (!response.ok || isErrorEnvelope(payload)) {
+        setIsSyncing(false);
+        setFeedback({
+          tone: "error",
+          title: isErrorEnvelope(payload) ? payload.error?.code ?? "source_sync_failed" : "source_sync_failed",
+          lines: [getPayloadMessage(payload, "Nie udało się pobrać pierwszych wpisów.")],
+        });
+        return;
+      }
+
+      upsertRun(payload.run);
+      setFeedback({
+        tone: "idle",
+        title: "Pobieranie wpisów uruchomione",
+        lines: [
+          `Zadanie ${payload.run.id} zostało zapisane i działa w tle.`,
+          "Po zakończeniu odświeżymy kolejkę czytnika i status źródła.",
+        ],
+      });
+      void pollRun(payload.run.id);
+    } catch (error) {
+      setIsSyncing(false);
+      setFeedback({
+        tone: "error",
+        title: "Pobieranie wpisów nie powiodło się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+      });
     }
   }
 
@@ -3761,17 +3115,17 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
         const summaryLine =
           payload.run.status === "completed"
-            ? `Sync finished cleanly. ${payload.run.items_created} new item(s) from ${payload.run.channels_succeeded} channel(s).`
+            ? `Pobieranie zakończone. Nowe wpisy: ${payload.run.items_created}, źródła OK: ${payload.run.channels_succeeded}.`
             : payload.run.status === "partial_success"
-              ? `Sync finished with mixed results. ${payload.run.channels_failed} channel(s) failed and ${payload.run.items_created} new item(s) were still saved.`
-              : payload.run.error_message ?? "Sync did not finish cleanly.";
+              ? `Pobieranie zakończone częściowo. Nieudane źródła: ${payload.run.channels_failed}, zapisane nowe wpisy: ${payload.run.items_created}.`
+              : payload.run.error_message ?? "Pobieranie nie zakończyło się poprawnie.";
 
         setFeedback({
           tone: payload.run.status === "completed" ? "success" : "error",
-          title: `Sync ${payload.run.status}`,
+          title: payload.run.status === "completed" ? "Pierwsze wpisy pobrane" : `Pobieranie: ${payload.run.status}`,
           lines: [
             summaryLine,
-            `Items seen: ${payload.run.items_seen}, items skipped: ${payload.run.items_skipped}.`,
+            `Widziane wpisy: ${payload.run.items_seen}, pominięte: ${payload.run.items_skipped}.`,
             ...payload.run.errors.slice(0, 3).map((error) => `${error.channel_title}: ${error.message}`),
           ],
         });
@@ -3784,10 +3138,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     setIsSyncing(false);
     setFeedback({
       tone: "error",
-      title: "Oczekiwanie na sync przekroczylo czas",
+      title: "Oczekiwanie na pobieranie przekroczyło czas",
       lines: [
-        "Uruchomienie zostalo przyjete, ale przegladarka nie zobaczyla jeszcze stanu koncowego.",
-        "Uzyj panelu ostatnich syncow, aby sprawdzic zapisany status.",
+        "Uruchomienie zostało przyjęte, ale przeglądarka nie zobaczyła jeszcze stanu końcowego.",
+        "Użyj panelu ostatnich zadań, aby sprawdzić zapisany status.",
       ],
     });
   }
@@ -3797,11 +3151,11 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     setIsSyncing(true);
     setFeedback({
       tone: "idle",
-      title: "Kolejkowanie syncu",
+      title: "Kolejkowanie pobierania",
       lines: [
         channelIds.length > 0
-          ? `Backend tworzy zapisany run syncu dla: ${options.label ?? channelIds.join(", ")}.`
-          : "Backend tworzy zapisany run syncu i pobierze w tle kazdy aktywny kanal.",
+          ? `Backend tworzy zapisane zadanie pobierania dla: ${options.label ?? channelIds.join(", ")}.`
+          : "Backend tworzy zapisane zadanie i pobierze w tle każde aktywne źródło.",
       ],
     });
 
@@ -3818,7 +3172,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         setFeedback({
           tone: "error",
           title: isErrorEnvelope(payload) ? payload.error?.code ?? "sync_queue_failed" : "sync_queue_failed",
-          lines: [getPayloadMessage(payload, "Nie udalo sie uruchomic syncu.")],
+          lines: [getPayloadMessage(payload, "Nie udało się uruchomić pobierania.")],
         });
         return;
       }
@@ -3826,10 +3180,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       upsertRun(payload.run);
       setFeedback({
         tone: "idle",
-        title: "Sync przyjety",
+        title: "Pobieranie przyjęte",
         lines: [
-          `Run ${payload.run.id} zostal zapisany i czeka na zakonczenie.`,
-          "Lista runow i kolejka czytnika odswieza sie po zakonczeniu pracy w tle.",
+          `Zadanie ${payload.run.id} zostało zapisane i czeka na zakończenie.`,
+          "Lista zadań i kolejka czytnika odświeżą się po zakończeniu pracy w tle.",
         ],
       });
       void pollRun(payload.run.id);
@@ -3837,8 +3191,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       setIsSyncing(false);
       setFeedback({
         tone: "error",
-        title: "Zadanie nie powiodlo sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Zadanie nie powiodło się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     }
   }
@@ -3953,7 +3307,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
       if ("digest_candidate" in patch) {
         setDigestPreview(null);
-        if (currentSection === "digest") {
+        if (currentSection === "digest" || currentSection === "magazines") {
           void loadDigestCandidatePreview();
         }
       }
@@ -4117,9 +3471,44 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   function buildDigestSelectionPayload() {
+    const now = new Date();
     return buildPersistedDigestSelectionPayload({
       limit: 25,
+      now,
+      title: currentSection === "magazines" ? `Magazyn RSSmaster ${now.toISOString().slice(0, 10)}` : undefined,
     });
+  }
+
+  function markDigestCandidatesEmpty(message = "Nie ma jeszcze zapisanych kandydatów digestu.") {
+    startTransition(() => {
+      setDigestPreview(null);
+      setDigestCandidatePreview(null);
+    });
+    setDigestCandidateStatus("empty");
+    setDigestCandidateMessage(message);
+  }
+
+  async function getPersistedDigestCandidatePresence(options: { signal?: AbortSignal } = {}) {
+    try {
+      const params = new URLSearchParams({
+        digest_candidate: "true",
+        limit: "1",
+      });
+      const { response, payload } = await fetchApi<ItemListPayload>(`/api/v1/items?${params.toString()}`, {
+        signal: options.signal,
+      });
+
+      if (!response.ok || isErrorEnvelope(payload) || !payload || !Array.isArray(payload.items)) {
+        return null;
+      }
+
+      return payload.items.length > 0;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw error;
+      }
+      return null;
+    }
   }
 
   async function loadDigestCandidatePreview(options: { signal?: AbortSignal } = {}) {
@@ -4127,6 +3516,12 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     setDigestCandidateMessage(null);
 
     try {
+      const hasPersistedCandidates = await getPersistedDigestCandidatePresence(options);
+      if (hasPersistedCandidates === false) {
+        markDigestCandidatesEmpty();
+        return null;
+      }
+
       const { response, payload } = await fetchApi<DigestPreviewPayload>("/api/v1/digests/preview", {
         method: "POST",
         signal: options.signal,
@@ -4135,11 +3530,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       if (!response.ok || isErrorEnvelope(payload)) {
         if (isDigestSelectionEmptyPayload(payload)) {
-          startTransition(() => {
-            setDigestCandidatePreview(null);
-          });
-          setDigestCandidateStatus("empty");
-          setDigestCandidateMessage(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
+          markDigestCandidatesEmpty(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
           return null;
         }
         throw new Error(getPayloadMessage(payload, "Nie udało się sprawdzić kolejki digestu."));
@@ -4167,18 +3558,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   async function handleDigestPreview() {
     setDigestBusy(true);
     try {
+      const hasPersistedCandidates = await getPersistedDigestCandidatePresence();
+      if (hasPersistedCandidates === false) {
+        markDigestCandidatesEmpty();
+        setFeedback({
+          tone: "idle",
+          title: "Brak kandydatów do digestu",
+          lines: [
+            "Oznacz artykuł przyciskiem Digest w czytniku. Podgląd korzysta z trwałej kolejki, a nie z aktualnie widocznych filtrów.",
+          ],
+        });
+        return;
+      }
+
       const { response, payload } = await fetchApi<DigestPreviewPayload>("/api/v1/digests/preview", {
         method: "POST",
         body: JSON.stringify(buildDigestSelectionPayload()),
       });
       if (!response.ok || isErrorEnvelope(payload)) {
         if (isDigestSelectionEmptyPayload(payload)) {
-          startTransition(() => {
-            setDigestPreview(null);
-            setDigestCandidatePreview(null);
-          });
-          setDigestCandidateStatus("empty");
-          setDigestCandidateMessage(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
+          markDigestCandidatesEmpty(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
           setFeedback({
             tone: "idle",
             title: "Brak kandydatów do digestu",
@@ -4219,14 +3618,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   async function handleDigestBuild() {
     setDigestBusy(true);
     try {
+      const hasPersistedCandidates = await getPersistedDigestCandidatePresence();
+      if (hasPersistedCandidates === false) {
+        markDigestCandidatesEmpty();
+        setFeedback({
+          tone: "idle",
+          title: "Nie ma czego zbudować",
+          lines: [
+            "Najpierw oznacz artykuły jako Digest. Build używa trwałych kandydatów z biblioteki, więc wyszukiwanie i filtr czytnika nie tworzą już ukrytej selekcji.",
+          ],
+        });
+        return;
+      }
+
       const { response, payload } = await fetchApi<DigestHistoryPayload>("/api/v1/digests/build", {
         method: "POST",
         body: JSON.stringify(buildDigestSelectionPayload()),
       });
       if (!response.ok || isErrorEnvelope(payload)) {
         if (isDigestSelectionEmptyPayload(payload)) {
-          setDigestCandidateStatus("empty");
-          setDigestCandidateMessage(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
+          markDigestCandidatesEmpty(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
           setFeedback({
             tone: "idle",
             title: "Nie ma czego zbudować",
@@ -4240,11 +3651,15 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
 
       await Promise.all([loadDigestHistory(), loadDeliveryLogs(payload.digest.id), loadDigestCandidatePreview()]);
+      setSelectedMagazineIssueId(payload.digest.id);
+      if (currentSection === "magazines") {
+        router.push(buildAppHref({ section: "magazines", issue: payload.digest.id }));
+      }
       setFeedback({
         tone: "success",
-        title: "Artefakt digestu utworzony",
+        title: "Wydanie magazynu utworzone",
         lines: [
-          `${payload.digest.title} z ${payload.digest.article_count} artykulami zostal zapisany lokalnie.`,
+          `${payload.digest.title} z ${payload.digest.article_count} artykułami zostało zapisane lokalnie.`,
           payload.digest.artifact.path ? `Artefakt: ${payload.digest.artifact.path}` : "Metadane artefaktu jeszcze czekaja.",
         ],
       });
@@ -4256,6 +3671,64 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       });
     } finally {
       setDigestBusy(false);
+    }
+  }
+
+  async function handleSaveAISettings() {
+    const patch = buildAISettingsPatch(aiSettingsDraft, aiSettings);
+    if (Object.keys(patch).length === 0) {
+      setAISettingsMessage("Brak zmian w ustawieniach AI.");
+      return;
+    }
+
+    setAISettingsBusy(true);
+    setAISettingsMessage(null);
+    try {
+      const { response, payload } = await fetchApi<AISettingsPayload>("/api/v1/settings/ai", {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się zapisać ustawień AI."));
+      }
+
+      startTransition(() => {
+        setAISettings(payload.settings);
+        setAISettingsDraft(createAISettingsDraft(payload.settings));
+      });
+      setAISettingsMessage("Ustawienia AI zapisane.");
+    } catch (error) {
+      setAISettingsMessage(error instanceof Error ? error.message : "Nie udało się zapisać ustawień AI.");
+    } finally {
+      setAISettingsBusy(false);
+    }
+  }
+
+  async function handleAISettingsPreflight() {
+    setAIPreflightBusy(true);
+    setAISettingsMessage(null);
+    try {
+      const { response, payload } = await fetchApi<AISettingsPreflightPayload>("/api/v1/settings/ai/preflight", {
+        method: "POST",
+      });
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się sprawdzić konfiguracji AI."));
+      }
+
+      setAIPreflight(payload);
+      setFeedback({
+        tone: payload.can_use_ai ? "success" : "error",
+        title: `Preflight AI: ${payload.status}`,
+        lines: payload.checks.map((check) => `${check.name}: ${check.message}`),
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        title: "Preflight AI nie powiódł się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+      });
+    } finally {
+      setAIPreflightBusy(false);
     }
   }
 
@@ -4320,12 +3793,12 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }
 
-  async function handleDeliveryPreflight(targetKind: "kindle" | "smtp") {
-    if (!latestDigest) {
+  async function handleDeliveryPreflight(targetKind: "kindle" | "smtp", digest: DeliveryDigestTarget | null = latestDigest) {
+    if (!digest) {
       setFeedback({
         tone: "error",
-        title: "Brak dostepnego digestu",
-        lines: ["Zbuduj artefakt digestu przed uruchomieniem preflightu wysylki."],
+        title: "Brak dostępnego wydania",
+        lines: ["Zbuduj artefakt magazynu przed uruchomieniem preflightu wysyłki."],
       });
       return;
     }
@@ -4335,7 +3808,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       const { response, payload } = await fetchApi<DeliveryPreflightPayload>("/api/v1/delivery/preflight", {
         method: "POST",
         body: JSON.stringify({
-          digest_id: latestDigest.id,
+          digest_id: digest.id,
           target_kind: targetKind,
         }),
       });
@@ -4348,26 +3821,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       });
       setFeedback({
         tone: payload.preflight.can_send ? "success" : "error",
-        title: `Preflight wysylki: ${payload.preflight.status}`,
+        title: `Preflight wydania: ${payload.preflight.status}`,
         lines: payload.preflight.checks.map((check) => `${check.name}: ${check.message}`),
       });
     } catch (error) {
       setFeedback({
         tone: "error",
-        title: "Preflight wysylki nie powiodl sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Preflight wysyłki nie powiódł się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     } finally {
       setDeliveryBusy(false);
     }
   }
 
-  async function handleSendDigest(mode: "dry_run" | "send", targetKind: "kindle" | "smtp") {
-    if (!latestDigest) {
+  async function handleSendDigest(mode: "dry_run" | "send", targetKind: "kindle" | "smtp", digest: DeliveryDigestTarget | null = latestDigest) {
+    if (!digest) {
       setFeedback({
         tone: "error",
-        title: "Brak dostepnego digestu",
-        lines: ["Zbuduj artefakt digestu przed wysylka."],
+        title: "Brak dostępnego wydania",
+        lines: ["Zbuduj artefakt magazynu przed wysyłką."],
       });
       return;
     }
@@ -4377,32 +3850,32 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       const { response, payload } = await fetchApi<DeliveryDispatchPayload>("/api/v1/delivery/send", {
         method: "POST",
         body: JSON.stringify({
-          digest_id: latestDigest.id,
+          digest_id: digest.id,
           target_kind: targetKind,
           mode,
         }),
       });
       if (!response.ok || isErrorEnvelope(payload)) {
-        throw new Error(getPayloadMessage(payload, "Nie udalo sie wyslac digestu."));
+        throw new Error(getPayloadMessage(payload, "Nie udało się wysłać wydania."));
       }
 
       startTransition(() => {
         setDeliveryPreflight(payload.preflight);
       });
-      await Promise.all([loadDeliveryLogs(latestDigest.id), loadDigestHistory()]);
+      await Promise.all([loadDeliveryLogs(digest.id), loadDigestHistory()]);
       setFeedback({
         tone: payload.run.status === "completed" ? "success" : "error",
-        title: `Wysylka ${payload.run.status}`,
+        title: `Wysyłka wydania ${payload.run.status}`,
         lines: [
           `${payload.log.status} dla ${payload.log.target_kind} ${payload.log.recipient ?? "odbiorca jeszcze nieustalony"}.`,
-          payload.log.provider_message_id ? `Id wiadomosci dostawcy: ${payload.log.provider_message_id}` : "Brak identyfikatora od dostawcy.",
+          payload.log.provider_message_id ? `Id wiadomości dostawcy: ${payload.log.provider_message_id}` : "Brak identyfikatora od dostawcy.",
         ],
       });
     } catch (error) {
       setFeedback({
         tone: "error",
-        title: "Wysylka nie powiodla sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Wysyłka nie powiodła się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     } finally {
       setDeliveryBusy(false);
@@ -5494,7 +4967,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     });
   }, [category, currentSourceAddMode.label, inputUrl, primarySourceCandidate, sourceExistingChannel, sourceGroups]);
   const shouldShowSourceFeedback =
-    (feedback.tone !== "idle" && sourcePreviewState !== "error") || subscribeBusy || opmlImportBusy || captureBusy;
+    (!lastAddedSource && feedback.tone !== "idle" && sourcePreviewState !== "error") ||
+    subscribeBusy ||
+    opmlImportBusy ||
+    captureBusy;
   const hasReaderSearch = deferredItemSearch.trim().length > 0;
 
   useEffect(() => {
@@ -5611,7 +5087,12 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     sources: {
       eyebrow: "Źródła",
       title: "Dodawanie źródeł",
-      description: "Dodaj stronę albo feed, zobacz wynik discovery i dopiero wtedy zapisz źródło do biblioteki.",
+      description: "Dodaj stronę albo feed, zobacz wynik wykrywania i dopiero wtedy zapisz źródło do biblioteki.",
+    },
+    magazines: {
+      eyebrow: "Magazyny",
+      title: "Magazyny",
+      description: "Archiwum numerów Kindle z najciekawszymi artykułami z Twoich źródeł.",
     },
     digest: {
       eyebrow: "Digest",
@@ -5638,6 +5119,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         sort: itemSortMode,
         q: itemSearch.trim() || null,
         item: activeItemId,
+        mode: readerQueueMode,
       }),
       meta: totalUnreadCount,
     },
@@ -5666,6 +5148,14 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       meta: persistedDigestCandidateCount ?? digestCandidateIds.length,
     },
     {
+      id: "magazines" as const,
+      shortLabel: "M",
+      label: "Magazyny",
+      icon: <KindleIcon className="app-icon workspace-nav-rail-glyph" />,
+      href: buildAppHref({ section: "magazines" }),
+      meta: digestHistory.length,
+    },
+    {
       id: "settings" as const,
       shortLabel: "U",
       label: "Ustawienia",
@@ -5681,9 +5171,19 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       : feedFilter.kind === "category"
         ? feedFilter.value
         : "Wszystkie feedy";
+  const readerQueueModeLabel =
+    readerQueueMode === "for_you"
+      ? "Dla mnie"
+      : readerQueueMode === "latest"
+        ? "Najnowsze"
+        : readerQueueMode === "hidden"
+          ? "Ukryte"
+          : "Wszystkie";
   const activeFeedScopeLabel =
     libraryView === "inbox"
-      ? activeFeedScopeBaseLabel
+      ? feedFilter.kind === "all"
+        ? readerQueueModeLabel
+        : `${readerQueueModeLabel} - ${activeFeedScopeBaseLabel}`
       : feedFilter.kind === "all"
         ? getLibraryViewLabel(libraryView)
         : `${getLibraryViewLabel(libraryView)} - ${activeFeedScopeBaseLabel}`;
@@ -5700,11 +5200,13 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       showReadItems?: boolean;
       sort?: ItemSortMode;
       surface?: "article" | "browse";
+      mode?: AppReaderMode;
     },
   ) {
     const hasSearchOverride = options?.search !== undefined;
     const nextShowReadItems = options?.showReadItems ?? viewPreferences[nextLibraryView]?.showReadItems ?? showReadItems;
     const nextSort = options?.sort ?? itemSortMode;
+    const nextReaderQueueMode = options?.mode ?? readerQueueMode;
     const nextItemId = options?.itemId ?? null;
     const nextSearchText = (hasSearchOverride ? (options?.search ?? "") : itemSearch).trim();
     const shouldOpenArticle = options?.surface === "article" && Boolean(nextItemId);
@@ -5725,6 +5227,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       q: nextSearchText || null,
       item: nextItemId,
       surface: shouldOpenArticle ? "article" : null,
+      mode: nextReaderQueueMode,
     });
 
     pendingContinuityRouteRestoreRef.current = {
@@ -5739,6 +5242,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }),
     );
     setPreferredSection("read");
+    setReaderQueueMode(nextReaderQueueMode);
     dispatchReader({
       type: "navigate_library_view",
       activeItemId: nextItemId,
@@ -6175,6 +5679,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           kindleReady={Boolean(deliverySettings?.smtp_ready)}
           onBackToFeed={() => dispatchReader({ type: "show_browse" })}
           onReextract={() => void handleReextractItem(selectedItem, "write")}
+          onReaderFeedback={(action) => void handleReaderFeedback(selectedItem.id, action)}
           onSendToKindle={() => void handleSendArticleToKindle(selectedItem)}
           onToggleArchive={() =>
             void mutateItemState(selectedItem, {
@@ -6360,9 +5865,20 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         items={queueItems}
         message={itemsMessage}
         messageTone={itemsStatus === "error" ? "error" : "default"}
+        rankingExplanations={rankingExplanations}
         onItemSearchChange={setReaderItemSearch}
         onOpenItem={(itemId) => dispatchReader({ type: "open_item", itemId })}
         onRefresh={() => void loadItems()}
+        onReaderFeedback={(itemId, action) => void handleReaderFeedback(itemId, action)}
+        onReaderQueueModeChange={(mode) => {
+          const nextShowReadItems = mode === "all" ? true : mode === "for_you" || mode === "hidden" ? false : showReadItems;
+          navigateToReadLibraryView("inbox", {
+            mode,
+            search: "",
+            showReadItems: nextShowReadItems,
+            sort: "newest",
+          });
+        }}
         onSelectItem={(itemId) => dispatchReader({ type: "select_item", itemId })}
         onShowReadItemsChange={setReaderShowReadItems}
         onSortModeChange={setReaderItemSortMode}
@@ -6387,6 +5903,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         }}
         showMessage={Boolean(itemsMessage && itemsStatus !== "unsupported")}
         showReadItems={showReadItems}
+        readerQueueMode={readerQueueMode}
         visibleUnreadCount={visibleUnreadCount}
       />
     );
@@ -6618,775 +6135,32 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   function renderUiSourcesSection() {
-    const sourceModePlaceholder =
-      currentSourceAddMode.id === "web_feed"
-        ? "https://example.com/feed.xml albo bezpośredni adres RSS"
-        : "xyz.pl albo https://xyz.pl";
-    const sourceResultsCount = channelPreview
-      ? channelPreview.status === "multiple_candidates"
-        ? visibleSourceCandidates.length
-        : primarySourceCandidate
-          ? 1
-          : 0
-      : 0;
-    const showSourceImportMode = currentSourceAddMode.id === "import_feeds";
-    const showWebsiteMode = currentSourceAddMode.id === "website";
-    const showBackoffice = sourceSurfaceMode === "manage";
-    const sourceInputDescribedBy = showSourceOptions ? `${sourceSearchHintId} ${sourceSearchOptionsNoteId}` : sourceSearchHintId;
-    const enabledSourceAddModes = sourceAddModes.filter((mode) => mode.enabled);
-    const primarySourceAddModes = enabledSourceAddModes.filter((mode) => mode.id === "website" || mode.id === "web_feed");
-    const importSourceAddMode = enabledSourceAddModes.find((mode) => mode.id === "import_feeds") ?? null;
-    const upcomingSourceAddModes = sourceAddModes.filter((mode) => !mode.enabled);
-    const showTopicSuggestions =
-      showWebsiteMode && Boolean(inputUrl.trim() || category.trim() || primarySourceCandidate || sourceExistingChannel);
-    const sourceHeroTitle = showSourceImportMode
-      ? "Zaimportuj źródła z OPML"
-      : showWebsiteMode
-        ? "Dodaj stronę i sprawdź wykryty feed"
-        : "Dodaj bezpośredni RSS lub Atom";
-    const sourceHeroDescription = showSourceImportMode
-      ? "Przenieś feedy z innego czytnika bez ręcznego przepisywania adresów i od razu przygotuj bibliotekę do syncu."
-      : showWebsiteMode
-        ? "Wklej domenę albo adres strony. Najpierw pokażemy wynik discovery, a dopiero potem zapiszesz źródło."
-        : "Wklej bezpośredni RSS albo Atom. Najpierw zobaczysz podgląd, a dopiero potem zapiszesz źródło.";
-    const sourceSearchHint = showWebsiteMode
-      ? "Podgląd uruchamia się automatycznie po chwili. Enter sprawdza od razu."
-      : "Enter sprawdza podany adres i pokazuje podgląd przed zapisem.";
-
     return (
-      <section className="section-screen section-screen-sources">
-        <div className="section-screen-header">
-          <div>
-            <span className="panel-badge panel-badge-with-icon">
-              <SourcesIcon className="app-icon app-icon-xs" />
-              {uiSectionCopy.sources.eyebrow}
-            </span>
-            <h1>{uiSectionCopy.sources.title}</h1>
-            <p>{uiSectionCopy.sources.description}</p>
-          </div>
-          <div className="section-screen-header-actions">
-            <button
-              aria-controls={sourceBackofficeRegionId}
-              aria-expanded={showBackoffice}
-              className="secondary-button compact-button"
-              data-testid="source-manage-toggle"
-              onClick={() => {
-                setSourceSurfaceMode((current) => {
-                  const nextMode = current === "manage" ? "add" : "manage";
-                  pendingSourceFocusTargetRef.current =
-                    nextMode === "manage" ? "backoffice" : sourceAddMode === "import_feeds" ? "import" : "input";
-                  return nextMode;
-                });
-              }}
-              type="button"
-            >
-              <span className="button-with-icon">
-                <BackofficeIcon className="app-icon button-inline-icon" />
-                {showBackoffice ? "Wróć do dodawania" : "Zarządzaj źródłami"}
-              </span>
-            </button>
-            <button className="action-button compact-button" disabled={isSyncing || channels.length === 0} onClick={() => void handleSyncAll()} type="button">
-              <span className="button-with-icon">
-                <SyncIcon className="app-icon button-inline-icon" />
-                {isSyncing ? "Syncowanie..." : "Sync aktywnych"}
-              </span>
-            </button>
-          </div>
-        </div>
-
-        <div className="source-follow-layout">
-          <SourceAddModeNav
-            activeModeId={sourceAddMode}
-            importMode={importSourceAddMode}
-            onCapture={() => router.push("/capture")}
-            onModeSelect={activateSourceAddMode}
-            primaryModes={primarySourceAddModes}
-            primaryModesLabelId={sourcePrimaryModesLabelId}
-            secondaryActionsLabelId={sourceSecondaryActionsLabelId}
-            upcomingModes={upcomingSourceAddModes}
-          />
-
-          <div className="source-follow-main">
-            <div className="source-follow-hero">
-              <span className="panel-badge panel-badge-with-icon">
-                <SourceModeIcon modeId={currentSourceAddMode.id} />
-                {currentSourceAddMode.label}
-              </span>
-              <h3 data-testid="source-main-heading">{sourceHeroTitle}</h3>
-              <p>{sourceHeroDescription}</p>
-              {!showSourceImportMode ? (
-                <ol className="source-flow-steps" aria-label="Jak RSSmaster dodaje źródło">
-                  <li>
-                    <strong>1</strong>
-                    <span>Wklejasz stronę albo RSS</span>
-                  </li>
-                  <li>
-                    <strong>2</strong>
-                    <span>Sprawdzamy feed i pokazujemy preview</span>
-                  </li>
-                  <li>
-                    <strong>3</strong>
-                    <span>Klikasz Obserwuj i dopiero wtedy zapisujemy</span>
-                  </li>
-                </ol>
-              ) : null}
-            </div>
-
-            {showSourceImportMode ? (
-              <div className="source-import-shell">
-                  <label className="source-import-field">
-                    <span>Wklej OPML albo listę feedów</span>
-                    <textarea
-                      ref={sourceImportTextareaRef}
-                      onChange={(event) => setOpmlDraft(event.target.value)}
-                      placeholder="Wklej tutaj OPML, aby przenieść feedy z innego czytnika RSS"
-                      rows={9}
-                    value={opmlDraft}
-                  />
-                </label>
-                <div className="source-import-actions">
-                  <button className="action-button" disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handleImportOpml()} type="button">
-                    {opmlImportBusy ? "Importowanie..." : "Importuj feedy"}
-                  </button>
-                  <span>RSSmaster zachowa adresy feedów i po imporcie od razu uruchomisz ręczny sync.</span>
-                </div>
-              </div>
-            ) : (
-              <>
-                <form
-                  aria-describedby={sourceSearchHintId}
-                  aria-label="Dodaj źródło przez preview"
-                  className={`source-search-shell ${showWebsiteMode ? "source-search-shell-website" : ""}`}
-                  data-testid="source-search-form"
-                  onSubmit={handleSubmit}
-                  role="search"
-                >
-                  <label className="source-search-field">
-                    <span className="sr-only">Adres strony lub feedu</span>
-                    <span className="source-search-icon" aria-hidden="true">
-                      <svg viewBox="0 0 20 20">
-                        <circle cx="8.75" cy="8.75" fill="none" r="5.5" stroke="currentColor" strokeWidth="1.55" />
-                        <path d="m12.9 12.9 3.35 3.35" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.55" />
-                      </svg>
-                    </span>
-                    <input
-                      aria-describedby={sourceInputDescribedBy}
-                      ref={sourceInputRef}
-                      autoComplete="off"
-                      data-testid="source-input"
-                      name="inputUrl"
-                      onChange={(event) => {
-                        handleSourceDraftInputChange(event.target.value);
-                      }}
-                      placeholder={sourceModePlaceholder}
-                      required
-                      value={inputUrl}
-                    />
-                    {inputUrl.trim() ? (
-                      <button
-                        aria-label="Wyczyść adres"
-                        className="source-search-clear"
-                        data-testid="source-input-clear"
-                        onClick={() => {
-                          handleSourceDraftInputChange("");
-                          pendingSourceFocusTargetRef.current = "input";
-                        }}
-                        type="button"
-                      >
-                        <DismissIcon className="app-icon" />
-                      </button>
-                    ) : null}
-                  </label>
-
-                  <select
-                    aria-label="Filtr wyników po języku"
-                    className="source-search-select"
-                    data-testid="source-language-filter"
-                    onChange={(event) => setSourceLanguageFilter(event.target.value)}
-                    title="Filtr wyników po języku"
-                    value={sourceLanguageFilter}
-                  >
-                    {sourceLanguageOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  {!showWebsiteMode ? (
-                    <button className="source-search-submit" disabled={previewBusy || subscribeBusy || isPending} type="submit">
-                      {previewBusy ? "Szukam..." : "Znajdź"}
-                    </button>
-                  ) : null}
-                </form>
-
-                <div className="source-search-subline">
-                  <span className="source-search-hint" id={sourceSearchHintId}>
-                    {sourceSearchHint}
-                  </span>
-                  <button
-                    aria-controls={sourceSearchOptionsId}
-                    aria-expanded={showSourceOptions}
-                    className="source-options-toggle"
-                    data-testid="source-options-toggle"
-                    onClick={() =>
-                      setShowSourceOptions((current) => {
-                        const nextValue = !current;
-                        if (nextValue) {
-                          pendingSourceFocusTargetRef.current = "category";
-                        }
-                        return nextValue;
-                      })
-                    }
-                    type="button"
-                  >
-                    <span className="button-with-icon">
-                      <SettingsIcon className="app-icon button-inline-icon" />
-                      {showSourceOptions ? "Ukryj opcje" : "Opcje"}
-                    </span>
-                  </button>
-                </div>
-
-                {showSourceOptions ? (
-                  <div aria-label="Opcje zapisu źródła" className="source-search-meta" id={sourceSearchOptionsId} role="group">
-                    <label className="source-search-category">
-                      <span>Kategoria opcjonalna</span>
-                      <input
-                        aria-describedby={sourceSearchOptionsNoteId}
-                        autoComplete="off"
-                        data-testid="source-category-input"
-                        name="category"
-                        ref={sourceCategoryInputRef}
-                        onChange={(event) => setCategory(event.target.value)}
-                        placeholder="rynek, design, research"
-                        value={category}
-                      />
-                    </label>
-                    <span className="source-search-meta-note" id={sourceSearchOptionsNoteId}>
-                      Kategoria zapisze się razem z feedem, ale nie blokuje prostego flow dodawania strony.
-                    </span>
-                  </div>
-                ) : null}
-              </>
-            )}
-
-            {shouldShowSourceFeedback ? (
-              <div className="source-feedback-card">
-                {renderUiFeedbackCard({ live: true, regionId: sourceFeedbackRegionId, testId: "source-feedback-card" })}
-              </div>
-            ) : null}
-
-            {!showSourceImportMode ? (
-              <div
-                aria-busy={sourcePreviewState === "loading"}
-                aria-labelledby={sourceResultsHeadingId}
-                className="source-results-section"
-                data-testid="source-results-region"
-                id={sourceResultsRegionId}
-                ref={sourceResultsRegionRef}
-                role="region"
-                tabIndex={-1}
-              >
-                <p aria-atomic="true" aria-live={sourcePreviewState === "error" ? "assertive" : "polite"} className="sr-only" data-testid="source-live-region">
-                  {sourcePreviewAnnouncement}
-                </p>
-              <div className="source-results-header">
-                <div>
-                    <strong id={sourceResultsHeadingId}>Wyniki</strong>
-                    <span>
-                      {channelPreview
-                        ? `${sourceResultsCount} znalezionych`
-                        : showWebsiteMode
-                          ? "Wklej adres strony, aby zobaczyć podgląd"
-                          : "Wklej bezpośredni RSS lub Atom, aby zobaczyć podgląd"}
-                    </span>
-                  </div>
-                  {channelPreview ? <span className="source-result-chip">{getSourcePreviewStatusLabel(channelPreview.status)}</span> : null}
-                </div>
-
-                {sourcePreviewState === "loading" ? (
-                  <div aria-live="polite" className="source-empty-state source-loading-state-card" data-testid="source-loading-state" role="status">
-                    <strong>Szukam feedu dla podanego adresu</strong>
-                    <p>
-                      {sourcePreviewSlow
-                        ? "To trwa dłużej niż zwykle. Zwykle oznacza to wolną stronę, blokadę po stronie źródła albo konieczność użycia bezpośredniego RSS."
-                        : "Sprawdzam adres bez zapisywania go do biblioteki. Jeśli strona ma RSS/Atom, za chwilę zobaczysz preview i przycisk Obserwuj."}
-                    </p>
-                    <ol className="source-discovery-steps" aria-label="Postęp sprawdzania źródła">
-                      <li className="source-discovery-step-active">
-                        <strong>Adres</strong>
-                        <span>Normalizacja URL</span>
-                      </li>
-                      <li className="source-discovery-step-active">
-                        <strong>Discovery</strong>
-                        <span>RSS, Atom i znaczniki strony</span>
-                      </li>
-                      <li className={sourcePreviewSlow ? "source-discovery-step-waiting" : ""}>
-                        <strong>Preview</strong>
-                        <span>Próbka najnowszych wpisów</span>
-                      </li>
-                    </ol>
-                    {sourcePreviewSlow ? (
-                      <div className="source-loading-actions">
-                        <button
-                          className="source-result-secondary-action"
-                          onClick={() => resetSourcePreviewState({ clearFeedbackError: true })}
-                          type="button"
-                        >
-                          Anuluj sprawdzanie
-                        </button>
-                        <span>Najpewniejszy fallback: wybierz tryb RSS / Atom i wklej bezpośredni adres feedu.</span>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : sourcePreviewState === "multiple_candidates" ? (
-                  visibleSourceCandidates.length > 0 ? (
-                    <div className="source-candidate-grid">
-                      {visibleSourceCandidates.map((candidate) => {
-                        const existingChannel =
-                          candidate.existing_channel_id ? channels.find((channel) => channel.id === candidate.existing_channel_id) ?? null : null;
-                        const candidateMetrics = buildSourcePreviewMetrics({
-                          candidate,
-                          unreadCount: existingChannel?.unread_count ?? null,
-                          languageLabel: getSourceLanguageLabel(candidate.language),
-                        });
-                        return (
-                          <article className="source-candidate-card" data-testid="source-result-card" key={candidate.feed_url}>
-                            <div className="source-candidate-card-head">
-                              <SourceIdentityMark label={candidate.title} siteUrl={candidate.site_url ?? candidate.feed_url} />
-                              <div className="source-candidate-copy">
-                                <strong>{candidate.title}</strong>
-                                <span>
-                                  {[getSourceHostLabel(candidate.site_url ?? candidate.feed_url), getSourceLanguageLabel(candidate.language)]
-                                    .filter(Boolean)
-                                    .join(" | ")}
-                                </span>
-                                {candidateMetrics.length > 0 ? (
-                                  <div className="source-result-metrics">
-                                    {candidateMetrics.map((metric) => (
-                                      <span className="source-metric-chip" key={`${candidate.feed_url}-${metric}`}>
-                                        {metric}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
-                            <p>{candidate.description ?? candidate.feed_url}</p>
-                            {candidate.sample_items.length > 0 ? (
-                              <div className="source-candidate-preview-list">
-                                {candidate.sample_items.slice(0, 2).map((item) => (
-                                  <span className="source-candidate-preview-item" key={`${candidate.feed_url}-${item.url}`}>
-                                    {item.title}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-                            <div className="source-candidate-footer">
-                              <span>{candidate.feed_url}</span>
-                              {candidate.already_subscribed && existingChannel ? (
-                                <button className="secondary-button" onClick={() => focusFirstItemFromChannel(existingChannel)} type="button">
-                                  Przejdź do feedu
-                                </button>
-                              ) : (
-                                <button className="action-button compact-button" disabled={subscribeBusy} onClick={() => void handleConfirmChannelAdd(candidate.feed_url)} type="button">
-                                  {subscribeBusy ? "Zapisywanie..." : "Obserwuj"}
-                                </button>
-                              )}
-                            </div>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="source-empty-state" data-testid="source-filter-empty-state">
-                      <strong>Ten filtr ukrył wszystkie wyniki</strong>
-                      <p>Na stronie znaleźliśmy feedy, ale żaden nie pasuje do wybranego języka. Zmień filtr, aby zobaczyć wszystkie kandydatury.</p>
-                    </div>
-                  )
-                ) : primarySourceCandidate ? (
-                  <article className="source-result-card" data-testid="source-result-card">
-                    <div className="source-result-header">
-                      <div className="source-result-headline">
-                        <SourceIdentityMark
-                          label={getSourceHostLabel(primarySourceCandidate.site_url ?? primarySourceCandidate.feed_url) ?? primarySourceCandidate.title}
-                          siteUrl={primarySourceCandidate.site_url ?? primarySourceCandidate.feed_url}
-                        />
-                        <div className="source-result-copy">
-                          <div className="source-result-title-row">
-                            <h3>{primarySourceCandidate.title}</h3>
-                            <p>{getSourceHostLabel(primarySourceCandidate.site_url ?? primarySourceCandidate.feed_url) ?? primarySourceCandidate.feed_url}</p>
-                          </div>
-                          {sourcePrimaryMetrics.length > 0 ? (
-                            <div className="source-result-metrics">
-                              {sourcePrimaryMetrics.map((metric) => (
-                                <span className="source-metric-chip" key={`${primarySourceCandidate.feed_url}-${metric}`}>
-                                  {metric}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                          <span>{primarySourceCandidate.description ?? primarySourceCandidate.feed_url}</span>
-                        </div>
-                      </div>
-                      <div className="source-result-actions">
-                        {sourceExistingChannel ? (
-                          <>
-                            <span className={`source-result-chip ${sourceExistingChannel.state === "archived" ? "source-result-chip-muted" : ""}`}>
-                              {sourceExistingChannel.state === "archived" ? "Zarchiwizowane" : "Już obserwujesz"}
-                            </span>
-                            {sourceExistingChannel.state !== "archived" ? (
-                              <>
-                                <button className="secondary-button" onClick={() => focusFirstItemFromChannel(sourceExistingChannel)} type="button">
-                                  Przejdź do feedu
-                                </button>
-                                <button className="source-result-secondary-action" disabled={activeChannelId === sourceExistingChannel.id} onClick={() => void handleArchive(sourceExistingChannel)} type="button">
-                                  <span className="button-with-icon">
-                                    <ArchiveIcon className="app-icon button-inline-icon" />
-                                    Przestań obserwować
-                                  </span>
-                                </button>
-                              </>
-                            ) : null}
-                          </>
-                        ) : (
-                          <button className="action-button compact-button" disabled={subscribeBusy} onClick={() => void handleConfirmChannelAdd(primarySourceCandidate.feed_url)} type="button">
-                            {subscribeBusy ? "Zapisywanie..." : "Obserwuj"}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="source-result-guidance" aria-label="Co stanie się po dodaniu źródła">
-                      <span>Gotowe do zapisu</span>
-                      <strong>Preview jest wykryte. Dodanie źródła nie uruchomi jeszcze masowego importu bez Twojej decyzji.</strong>
-                      <p>Po kliknięciu Obserwuj możesz od razu uruchomić sync i sprawdzić czytelność feedu w backoffice źródeł.</p>
-                    </div>
-
-                    {sourcePreviewItems.length > 0 ? (
-                      <div className="source-result-preview-grid">
-                        {sourcePreviewItems.map((item) => (
-                          <article className="source-preview-card source-preview-card-article" key={`${primarySourceCandidate.feed_url}-${item.url}`}>
-                            {item.image_url ? <img alt="" className="source-preview-image" loading="lazy" src={item.image_url} /> : null}
-                            <div className="source-preview-content">
-                              <strong>{item.title}</strong>
-                              <p>{formatRelativeDate(item.published_at, new Date(), "Nowy wpis")}</p>
-                            </div>
-                            <a className="source-preview-link" href={item.url} rel="noreferrer" target="_blank">
-                              Otwórz wpis
-                            </a>
-                          </article>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="source-empty-state" data-testid="source-preview-empty-state">
-                        <strong>Feed gotowy do obserwowania</strong>
-                        <p>
-                          {sourceExistingChannel
-                            ? "To źródło jest już w bibliotece, ale ten feed nie udostępnił krótkiego preview ostatnich wpisów."
-                            : "Feed został wykryty poprawnie, ale nie zwrócił krótkiego preview ostatnich wpisów."}
-                        </p>
-                      </div>
-                    )}
-                  </article>
-                ) : (
-                  <div
-                    aria-live={sourcePreviewState === "error" ? "polite" : undefined}
-                    className="source-empty-state"
-                    data-testid="source-empty-state"
-                    role={sourcePreviewState === "error" ? "status" : undefined}
-                  >
-                    <strong>{sourcePreviewState === "error" ? feedback.title : "Zacznij od adresu strony"}</strong>
-                    <p>
-                      {sourcePreviewState === "error"
-                        ? feedback.lines[0] ?? "Nie udało się wykryć poprawnego feedu dla podanego adresu."
-                        : "Wklej adres strony lub feedu. Najpierw pokażemy wykryty wynik, a dopiero potem zapiszesz źródło do biblioteki."}
-                    </p>
-                  </div>
-                )}
-              </div>
-            ) : null}
-          </div>
-
-          <aside className="source-follow-aside">
-            <section className="source-aside-card source-aside-card-subtle">
-              <span className="panel-badge panel-badge-with-icon">
-                <TopicIcon className="app-icon app-icon-xs" />
-                {showTopicSuggestions ? "Podpowiedzi kategorii" : "Na start"}
-              </span>
-              {showTopicSuggestions ? (
-                <>
-                  <p>Klik ustawia kategorie pomocnicza. Nie zmienia wykrywania feedu ani samego preview.</p>
-                  <div className="source-topic-list">
-                    {sourceTopicChips.map((chip) => (
-                      <button
-                        className="source-topic-chip"
-                        key={chip}
-                        onClick={() => {
-                          setShowSourceOptions(true);
-                          setCategory(chip.replace(/^#/, "").replace(/-/g, ", "));
-                          pendingSourceFocusTargetRef.current = "category";
-                        }}
-                        type="button"
-                      >
-                        {chip}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p>Wklej adres strony, a po wykryciu feedu podpowiemy kilka kategorii do zapisania razem ze źródłem.</p>
-              )}
-            </section>
-
-            <section className="source-aside-card source-aside-card-quiet">
-              <span className="panel-badge panel-badge-with-icon">
-                <StatusIcon className="app-icon app-icon-xs" />
-                Szybki stan
-              </span>
-              <strong>{activeChannelCount} aktywnych źródeł</strong>
-              <p>
-                {latestRun
-                  ? `Ostatni sync: ${formatTimestamp(latestRun.completed_at ?? latestRun.created_at, "brak znacznika czasu")}.`
-                  : "Jeszcze nie masz zakończonego syncu dla tej biblioteki."}
-              </p>
-              <p>{latestRunSummaryLine}</p>
-              <div className="source-aside-metrics">
-                <span>{formatCompactNumber(channels.length)} wszystkich źródeł</span>
-                <span>{formatCompactNumber(archivedChannelCount)} zarchiwizowanych</span>
-                {latestRun ? <span>{getSyncRunStatusLabel(latestRun.status)}</span> : null}
-              </div>
-              <button className="secondary-button" disabled={isSyncing || channels.length === 0} onClick={() => void handleSyncAll()} type="button">
-                <span className="button-with-icon">
-                  <SyncIcon className="app-icon button-inline-icon" />
-                  {isSyncing ? "Syncowanie..." : "Uruchom sync"}
-                </span>
-              </button>
-            </section>
-          </aside>
-        </div>
-
-        <div className="source-ops-divider">
-          <div>
-            <span className="panel-badge panel-badge-with-icon">
-              <BackofficeIcon className="app-icon app-icon-xs" />
-              Backoffice źródeł
-            </span>
-            <h3 id={sourceBackofficeHeadingId}>Stan, pakiety i reczne operacje</h3>
-          </div>
-          <button
-            aria-controls={sourceBackofficeRegionId}
-            aria-expanded={showBackoffice}
-            className="secondary-button compact-button"
-            data-testid="source-backoffice-toggle"
-            onClick={() => {
-              setSourceSurfaceMode((current) => {
-                const nextMode = current === "manage" ? "add" : "manage";
-                pendingSourceFocusTargetRef.current =
-                  nextMode === "manage" ? "backoffice" : sourceAddMode === "import_feeds" ? "import" : "input";
-                return nextMode;
-              });
-            }}
-            type="button"
-          >
-            {showBackoffice ? "Ukryj backoffice" : "Pokaż backoffice"}
-          </button>
-        </div>
-
-        <div
-          aria-labelledby={sourceBackofficeHeadingId}
-          className="source-backoffice-region"
-          id={sourceBackofficeRegionId}
-          ref={sourceBackofficeRegionRef}
-          role="region"
-          tabIndex={-1}
-        >
-        {showBackoffice ? (
-          <div className="section-grid section-grid-two">
-            <div className="screen-stack">
-              <WorkspacePanel eyebrow="Zdrowie źródeł" title="Grupuj i wyciszaj źródła" description="Pakiety źródeł, priorytety i czasowe wyciszanie bez ryzyka zgubienia zawartości." tone="success">
-                <div style={{ display: "grid", gap: "0.55rem" }}>
-                  <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                    <input onChange={(event) => setSourceGroupDraft(event.target.value)} placeholder="Utwórz pakiet: rynki, longform, research" value={sourceGroupDraft} />
-                    <input onChange={(event) => setSourceGroupColor(event.target.value)} type="color" value={sourceGroupColor} />
-                    <WorkspaceButton disabled={!sourceGroupDraft.trim() || workspaceBusy} onClick={() => void handleCreateSourceGroup()} tone="accent">
-                      Utwórz pakiet
-                    </WorkspaceButton>
-                  </div>
-                  <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                    {sourceGroups.map((group) => (
-                      <WorkspaceChip key={group.id}>{group.name} ({group.channel_count})</WorkspaceChip>
-                    ))}
-                    {sourceGroups.length === 0 ? <WorkspaceChip>Brak pakietów</WorkspaceChip> : null}
-                  </div>
-                </div>
-              </WorkspacePanel>
-
-              {sourceHealthEntries.slice(0, 6).map((entry) => (
-                <SourceHealthCard
-                  actions={
-                    <div style={{ display: "grid", gap: "0.55rem" }}>
-                      <select onChange={(event) => void handleSourceControlUpdate(entry.channel_id, { group_id: event.target.value || null })} value={entry.control.group_id ?? ""}>
-                        <option value="">Bez pakietu</option>
-                        {sourceGroups.map((group) => (
-                          <option key={group.id} value={group.id}>
-                            {group.name}
-                          </option>
-                        ))}
-                      </select>
-                      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                        <WorkspaceButton
-                          disabled={isSyncing || entry.state !== "active"}
-                          onClick={() => void handleSyncAll({ channelIds: [entry.channel_id], label: entry.title })}
-                          tone={entry.reading_readiness === "blocked" || entry.health_status === "error" ? "accent" : "default"}
-                        >
-                          Syncuj teraz
-                        </WorkspaceButton>
-                        <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { snoozed_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })}>
-                          Wstrzymaj na 1d
-                        </WorkspaceButton>
-                        <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { paused_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() })}>
-                          Pauza 7d
-                        </WorkspaceButton>
-                        <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { paused_until: null, snoozed_until: null })}>
-                          <span className="button-with-icon">
-                            <DismissIcon className="app-icon button-inline-icon" />
-                            Wyczyść timery
-                          </span>
-                        </WorkspaceButton>
-                      </div>
-                      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                        <WorkspaceButton active={entry.control.tier === "priority"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "priority")} tone="accent">
-                          Priorytet
-                        </WorkspaceButton>
-                        <WorkspaceButton active={entry.control.tier === "default"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "default")}>
-                          Domyślnie
-                        </WorkspaceButton>
-                        <WorkspaceButton active={entry.control.tier === "muted"} disabled={workspaceBusy} onClick={() => void handleSourceTierChange(entry.channel_id, "muted")} tone="danger">
-                          Wycisz
-                        </WorkspaceButton>
-                      </div>
-                    </div>
-                  }
-                  key={entry.channel_id}
-                  source={mapSourceHealthCard(entry)}
-                />
-              ))}
-            </div>
-
-            <div className="screen-stack">
-              <WorkspacePanel eyebrow="Migracje" title="Przechwytywanie i eksport" description="Capture i migracje z innych czytników są tutaj, z dala od głównego flow dodawania źródeł." tone="success">
-                <div style={{ display: "grid", gap: "0.55rem" }}>
-                  <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                    <WorkspaceButton onClick={() => router.push("/capture")} tone="accent">
-                      Otwórz szybki capture
-                    </WorkspaceButton>
-                    <WorkspaceButton disabled={workspaceExportBusy} onClick={() => void handleExportWorkspace()}>
-                      {workspaceExportBusy ? "Przygotowywanie..." : "Eksportuj continuity bundle"}
-                    </WorkspaceButton>
-                    <WorkspaceButton disabled={workspaceImportBusy} onClick={() => continuityImportInputRef.current?.click()} tone="accent">
-                      {workspaceImportBusy ? "Odtwarzanie..." : "Odtwórz continuity bundle"}
-                    </WorkspaceButton>
-                  </div>
-                  <WorkspaceChip>Dedykowany ekran capture obsługuje deep link, bookmarklet i systemowe udostępnianie.</WorkspaceChip>
-                  <WorkspaceChip>Continuity bundle przywraca feedy, stany biblioteki i lokalny kontekst czytania.</WorkspaceChip>
-                  <textarea onChange={(event) => setOpmlDraft(event.target.value)} placeholder="Wklej tutaj OPML, aby przenieść feedy z innego czytnika RSS" rows={5} value={opmlDraft} />
-                  <WorkspaceButton disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handleImportOpml()} tone="accent">
-                    {opmlImportBusy ? "Importowanie..." : "Importuj OPML"}
-                  </WorkspaceButton>
-                </div>
-              </WorkspacePanel>
-
-              <section className="ops-section">
-                <div className="ops-section-header">
-                  <div>
-                    <span className="panel-badge">Ręczny sync</span>
-                    <h3>Ostatnie runy</h3>
-                  </div>
-                  <span>{syncRuns.length} runów</span>
-                </div>
-
-                {syncRuns.length === 0 ? (
-                  <p className="empty-state">Brak runów syncu. Dodaj źródło i uruchom pierwszy ręczny sync.</p>
-                ) : (
-                  <ul className="ops-list">
-                    {syncRuns.map((run) => (
-                      <li className="ops-row" key={run.id}>
-                        <div className="ops-row-top">
-                          <strong>{getSyncRunStatusLabel(run.status)}</strong>
-                          <span>{formatTimestamp(run.completed_at ?? run.created_at, "Brak znacznika czasu")}</span>
-                        </div>
-                        <span>Kanały {run.channels_succeeded}/{run.channels_total} ok, {run.channels_failed} nieudanych</span>
-                        <span>Artykuły {run.items_created} nowych, {run.items_seen} widzianych, {run.items_skipped} pominiętych</span>
-                        {run.error_message ? <span>{run.error_message}</span> : null}
-                        {run.errors.length > 0 ? (
-                          <ul className="run-error-list">
-                            {run.errors.slice(0, 2).map((error) => (
-                              <li key={`${run.id}-${error.channel_id}-${error.code}`}>
-                                <strong>{error.channel_title}</strong>: {error.message}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-
-              <section className="ops-section">
-                <div className="ops-section-header">
-                  <div>
-                    <span className="panel-badge">Źródła</span>
-                    <h3>Zarządzaj kanałami</h3>
-                  </div>
-                  <span>{archivedChannelCount} zarchiwizowanych</span>
-                </div>
-                {channels.length === 0 ? (
-                  <p className="empty-state">Brak zapisanych kanałów. Użyj formularza powyżej, aby utworzyć pierwszy.</p>
-                ) : (
-                  <ul className="ops-list">
-                    {channels.map((channel) => (
-                      <li className="ops-row" key={channel.id}>
-                        <div className="ops-row-top">
-                          <strong>{channel.title}</strong>
-                          <span className={`channel-state channel-state-${channel.state}`}>{getChannelStateLabel(channel.state)}</span>
-                        </div>
-                        <span>{channel.feed_url}</span>
-                        <span>{channel.category ? `Kategoria: ${channel.category}` : "Brak kategorii"}</span>
-                        <span>Nieprzeczytane artykuły: {channel.unread_count}</span>
-                        {channel.health ? <span>{`Stan: ${getHealthStatusLabel(channel.health.status)} | ${channel.health.summary}`}</span> : null}
-                        <span>{channel.last_fetch_at ? `Ostatni fetch: ${formatTimestamp(channel.last_fetch_at, "nigdy nie synchronizowano")}` : "Ostatni fetch: nigdy nie synchronizowano"}</span>
-                        <span>{channel.last_error ? `Ostatni błąd: ${channel.last_error}` : "Ostatni błąd: brak"}</span>
-                        <div className="channel-actions">
-                          <input className="channel-inline-input" onChange={(event) => setDraftCategories((current) => ({ ...current, [channel.id]: event.target.value }))} placeholder="Zmień kategorię" value={draftCategories[channel.id] ?? ""} />
-                          <button className="secondary-button" disabled={activeChannelId === channel.id} onClick={() => void handleCategorySave(channel.id)} type="button">
-                            Zapisz kategorię
-                          </button>
-                          <button className="secondary-button" disabled={activeChannelId === channel.id || channel.state === "archived"} onClick={() => void handleStateToggle(channel)} type="button">
-                            {channel.state === "active" ? "Wyłącz" : channel.state === "inactive" ? "Włącz" : "Zarchiwizowany"}
-                          </button>
-                          <button className="danger-button" disabled={activeChannelId === channel.id || channel.state === "archived"} onClick={() => void handleArchive(channel)} type="button">
-                            Archiwizuj
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            </div>
-          </div>
-        ) : (
-          <div className="source-backoffice-collapsed">
-            <strong>Backoffice zostaje w tle</strong>
-            <p>Pakiety źródeł, ręczne synchronizacje, capture i zarządzanie kanałami są schowane, aby pierwszy ekran został skupiony na prostym dodawaniu strony.</p>
-          </div>
-        )}
-        </div>
-      </section>
+      <WorkspaceSourcesSection
+        {...{
+          activeChannelCount, activeChannelId, activateSourceAddMode, archivedChannelCount, category, channelPreview,
+          channels, continuityImportInputRef, currentSourceAddMode, draftCategories, feedback, focusFirstItemFromChannel, handleArchive,
+          handleCategorySave, handleConfirmChannelAdd, handleCreateSourceGroup, handleExportWorkspace, handleImportOpml, handleOpmlDraftChange, handlePreviewOpmlImport,
+          handleSourceControlUpdate, handleSourceDraftInputChange, handleSourceTierChange, handleStateToggle, handleSubmit,
+          handleSyncAll, inputUrl, isPending, isSyncing, lastAddedSource, latestRun, latestRunSummaryLine, opmlDraft, opmlImportBusy, opmlPreview,
+          onSourceSuccessAddNext: handleSourceSuccessAddNext, onSourceSuccessOpen: handleSourceSuccessOpen,
+          onSourceSuccessSync: handleSourceSuccessSync,
+          pendingSourceFocusTargetRef, previewBusy, primarySourceCandidate, renderUiFeedbackCard, resetSourcePreviewState,
+          setCategory, setDraftCategories, setShowSourceOptions, setSourceGroupColor, setSourceGroupDraft,
+          setSourceLanguageFilter, setSourceSurfaceMode, shouldShowSourceFeedback, showSourceOptions, sourceAddMode,
+          sourceBackofficeHeadingId, sourceBackofficeRegionId, sourceBackofficeRegionRef, sourceCategoryInputRef,
+          sourceExistingChannel, sourceFeedbackRegionId, sourceGroupColor, sourceGroupDraft, sourceGroups, sourceHealthEntries,
+          sourceImportTextareaRef, sourceInputRef, sourceLanguageFilter, sourceLanguageOptions, sourcePreviewAnnouncement,
+          sourcePreviewItems, sourcePrimaryMetrics, sourcePreviewSlow, sourcePreviewState, sourcePrimaryModesLabelId, sourceResultsHeadingId, sourceResultsRegionId,
+          sourceResultsRegionRef, sourceSearchHintId, sourceSearchOptionsId, sourceSearchOptionsNoteId,
+          sourceSecondaryActionsLabelId, sourceSurfaceMode, sourceTopicChips,
+          subscribeBusy, syncRuns, visibleSourceCandidates, workspaceBusy, workspaceExportBusy, workspaceImportBusy,
+        }}
+        copy={uiSectionCopy.sources}
+        onCapture={() => router.push("/capture")}
+      />
     );
   }
-
   function renderUiDigestSection() {
     return (
       <DigestSection
@@ -7425,187 +6199,107 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     );
   }
 
-  function handleDeliverySettingsDraftChange(field: keyof typeof settingsDraft, value: string) {
+  function handleSelectMagazineIssue(issueId: string) {
+    setSelectedMagazineIssueId(issueId);
+    router.push(buildAppHref({ section: "magazines", issue: issueId }));
+  }
+
+  function renderUiMagazineSection() {
+    return (
+      <MagazineSection
+        activeIssueId={selectedMagazineIssueId}
+        buildDisabled={digestBusy || digestCandidateStatus === "loading"}
+        busy={digestBusy}
+        copy={uiSectionCopy.magazines}
+        countLabel={`${persistedDigestCandidateCount ?? digestCandidateIds.length} zapisanych`}
+        deliveryBusy={deliveryBusy}
+        deliveryPreflight={deliveryPreflight}
+        deliverySettings={deliverySettings}
+        feedbackCard={renderUiFeedbackCard()}
+        formatDeliveryStatus={getDeliveryStatusLabel}
+        formatTimestamp={formatTimestamp}
+        history={digestHistory}
+        message={digestCandidateMessage}
+        onBackToReader={() => router.push(buildAppHref({ section: "read" }))}
+        onBuild={() => void handleDigestBuild()}
+        onDeliveryPreflight={(digest) => void handleDeliveryPreflight("kindle", digest)}
+        onPreview={() => void handleDigestPreview()}
+        onSelectIssue={handleSelectMagazineIssue}
+        onSendDigestDryRun={(digest) => void handleSendDigest("dry_run", "kindle", digest)}
+        onSendDigestLive={(digest) => void handleSendDigest("send", "kindle", digest)}
+        onShowDigestQueue={() =>
+          navigateToReadLibraryView("digest", {
+            search: "",
+            showReadItems: true,
+          })
+        }
+        preview={digestPreview ?? digestCandidatePreview}
+        previewDisabled={digestBusy || digestCandidateStatus === "loading"}
+        status={digestCandidateStatus}
+      />
+    );
+  }
+
+  function handleDeliverySettingsDraftChange(field: keyof DeliverySettingsDraft, value: string) {
     setSettingsDraft((current) => ({
       ...current,
       [field]: value,
     }));
   }
 
-  function renderUiSettingsSection() {
-    return (
-      <section className="section-screen">
-        <div className="section-screen-header">
-          <div>
-            <span className="panel-badge panel-badge-with-icon">
-              <SettingsIcon className="app-icon app-icon-xs" />
-              {uiSectionCopy.settings.eyebrow}
-            </span>
-            <h1>{uiSectionCopy.settings.title}</h1>
-            <p>{uiSectionCopy.settings.description}</p>
-          </div>
-        </div>
-
-        <div className="section-grid section-grid-two">
-          <div className="screen-stack">
-            {renderUiFeedbackCard()}
-
-            <section className="ops-section">
-              <div className="ops-section-header">
-                <div>
-                  <span className="panel-badge panel-badge-with-icon">
-                    <LibraryIcon className="app-icon app-icon-xs" />
-                    Konto lokalne
-                  </span>
-                  <h3>Sesja operatora</h3>
-                </div>
-                <span>{authenticatedAccount ? "zalogowane" : authRequired ? "wymaga logowania" : "tryb otwarty"}</span>
-              </div>
-              <AccountStatus
-                account={authenticatedAccount}
-                authRequired={authRequired}
-                busy={authBusy}
-                formatTimestamp={formatTimestamp}
-                hasLocalAccounts={hasLocalAccounts}
-                onLogin={() => openAuthScreen(hasLocalAccounts ? "login" : "register")}
-                onLogout={() => void handleLogout()}
-              />
-            </section>
-
-            <section className="ops-section">
-              <div className="ops-section-header">
-                <div>
-                  <span className="panel-badge panel-badge-with-icon">
-                    <DeliveryIcon className="app-icon app-icon-xs" />
-                    Delivery
-                  </span>
-                  <h3>SMTP i Kindle</h3>
-                </div>
-                <span>{deliverySettings?.smtp_ready ? "gotowe" : "wymaga konfiguracji"}</span>
-              </div>
-              <DeliverySettingsPanel
-                deliveryBusy={deliveryBusy}
-                draft={settingsDraft}
-                message={deliverySettingsMessage}
-                onDraftChange={handleDeliverySettingsDraftChange}
-                onPreflight={() => void handleDeliverySettingsPreflight()}
-                onSave={() => void handleSaveDeliverySettings()}
-                settings={deliverySettings}
-                settingsBusy={settingsBusy}
-                showButtonIcons
-              />
-            </section>
-
-            <WorkspacePanel
-              eyebrow={
-                <span className="workspace-eyebrow-with-icon">
-                  <StatusIcon className="app-icon app-icon-xs" />
-                  Diagnostyka
-                </span>
-              }
-              title="Stan aplikacji"
-              description="Narzedia diagnostyczne i szybkie wejscie do healthcheckow po przebudowie shellu."
-            >
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.55rem" }}>
-                {uiRuntimeLinks.map((item) => (
-                  <a className="app-inline-link" href={item.href} key={item.href} target={item.href.startsWith("http") ? "_blank" : undefined}>
-                    {item.label}
-                  </a>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
-                <WorkspaceChip active tone="accent">
-                  API {apiBaseUrl.replace(/^https?:\/\//, "")}
-                </WorkspaceChip>
-                <WorkspaceChip>{activeChannelCount} aktywnych zrodel</WorkspaceChip>
-              </div>
-            </WorkspacePanel>
-          </div>
-
-          <div className="screen-stack">
-            <section className="ops-section">
-              <RankingPreferencesPanel
-                actions={
-                  workspaceProfile ? (
-                    <WorkspaceChip active tone="accent">
-                      Limit awaryjny {workspaceProfile.emergency_source_cap}
-                    </WorkspaceChip>
-                  ) : null
-                }
-                onPreferenceChange={(preferenceId, nextValue) =>
-                  void saveWorkspaceProfile({
-                    [preferenceId]: Number.parseInt(nextValue, 10),
-                  } as Partial<WorkspaceProfile>)
-                }
-                preferences={rankingPreferences}
-              />
-            </section>
-
-            <WorkspacePanel
-              eyebrow={
-                <span className="workspace-eyebrow-with-icon">
-                  <TopicIcon className="app-icon app-icon-xs" />
-                  Profil
-                </span>
-              }
-              title="Zainteresowania tematyczne"
-              description="Deklaruj trwale tematy, aby korygowac ranking kolejki i ograniczac przeciazenie czytnikiem."
-              tone="accent"
-            >
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.75rem" }}>
-                {workspaceProfile?.interests.map((interest) => (
-                  <WorkspaceButton key={interest.id} onClick={() => void saveWorkspaceProfile({ interests: workspaceProfile.interests.filter((entry) => entry.id !== interest.id) })} tone={interest.weight > 0 ? "accent" : interest.weight < 0 ? "danger" : "default"}>
-                    {interest.label} {interest.weight > 0 ? "wzmacniaj" : interest.weight < 0 ? "tlum" : "neutralnie"}
-                  </WorkspaceButton>
-                ))}
-                {!workspaceProfile?.interests.length ? <WorkspaceChip>Brak skonfigurowanych zainteresowan</WorkspaceChip> : null}
-              </div>
-              <div style={{ display: "grid", gap: "0.55rem" }}>
-                <input onChange={(event) => setInterestDraft(event.target.value)} placeholder="szachy, AI, ksiazki, security" value={interestDraft} />
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.55rem" }}>
-                  <select onChange={(event) => setInterestWeight(Number.parseInt(event.target.value, 10) as WorkspaceInterest["weight"])} value={interestWeight}>
-                    <option value={2}>Wzmacniaj</option>
-                    <option value={1}>Preferuj</option>
-                    <option value={0}>Neutralnie</option>
-                    <option value={-1}>Tlum</option>
-                  </select>
-                  <WorkspaceButton
-                    disabled={!interestDraft.trim() || !workspaceProfile || workspaceBusy}
-                    onClick={() =>
-                      workspaceProfile
-                        ? void saveWorkspaceProfile({
-                            interests: [
-                              ...workspaceProfile.interests.filter((entry) => entry.label.toLowerCase() !== interestDraft.trim().toLowerCase()),
-                              {
-                                id: `draft_${interestDraft.trim().toLowerCase()}`,
-                                label: interestDraft.trim(),
-                                normalized_topic: interestDraft.trim().toLowerCase(),
-                                kind: "topic",
-                                weight: interestWeight,
-                              },
-                            ],
-                          }).then(() => {
-                            setInterestDraft("");
-                            setInterestWeight(1);
-                          })
-                        : undefined
-                    }
-                    tone="accent"
-                  >
-                    <span className="button-with-icon">
-                      <TopicIcon className="app-icon button-inline-icon" />
-                      Dodaj zainteresowanie
-                    </span>
-                  </WorkspaceButton>
-                </div>
-              </div>
-            </WorkspacePanel>
-          </div>
-        </div>
-      </section>
-    );
+  function handleAISettingsDraftChange(field: keyof AISettingsDraft, value: string | boolean) {
+    setAISettingsDraft((current) => ({
+      ...current,
+      [field]: value,
+      ...(field === "openai_api_key" && typeof value === "string" && value.trim()
+        ? { clear_openai_api_key: false }
+        : {}),
+    }));
   }
 
+  function renderUiSettingsSection() {
+    return (
+      <WorkspaceSettingsSection
+        activeChannelCount={activeChannelCount}
+        aiPreflight={aiPreflight}
+        aiPreflightBusy={aiPreflightBusy}
+        aiSettings={aiSettings}
+        aiSettingsBusy={aiSettingsBusy}
+        aiSettingsDraft={aiSettingsDraft}
+        aiSettingsMessage={aiSettingsMessage}
+        apiBaseUrl={apiBaseUrl}
+        authenticatedAccount={authenticatedAccount}
+        authBusy={authBusy}
+        authRequired={authRequired}
+        copy={uiSectionCopy.settings}
+        deliveryBusy={deliveryBusy}
+        deliverySettings={deliverySettings}
+        deliverySettingsMessage={deliverySettingsMessage}
+        feedbackCard={renderUiFeedbackCard()}
+        formatTimestamp={formatTimestamp}
+        hasLocalAccounts={hasLocalAccounts}
+        interestDraft={interestDraft}
+        interestWeight={interestWeight}
+        onAISettingsDraftChange={handleAISettingsDraftChange}
+        onAISettingsPreflight={() => void handleAISettingsPreflight()}
+        onAISettingsSave={() => void handleSaveAISettings()}
+        onDeliverySettingsDraftChange={handleDeliverySettingsDraftChange}
+        onDeliverySettingsPreflight={() => void handleDeliverySettingsPreflight()}
+        onDeliverySettingsSave={() => void handleSaveDeliverySettings()}
+        onInterestDraftChange={setInterestDraft}
+        onInterestWeightChange={setInterestWeight}
+        onLogin={() => openAuthScreen(hasLocalAccounts ? "login" : "register")}
+        onLogout={() => void handleLogout()}
+        onSaveWorkspaceProfile={saveWorkspaceProfile}
+        rankingPreferences={rankingPreferences}
+        runtimeLinks={uiRuntimeLinks}
+        settingsBusy={settingsBusy}
+        settingsDraft={settingsDraft}
+        workspaceBusy={workspaceBusy}
+        workspaceProfile={workspaceProfile}
+      />
+    );
+  }
   const uiShellContent =
     currentSection === "discover"
       ? renderUiDiscoverSection()
@@ -7613,10 +6307,21 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           ? renderUiSourcesSection()
         : currentSection === "digest"
           ? renderUiDigestSection()
-          : currentSection === "settings"
-            ? renderUiSettingsSection()
-            : renderUiReadSection();
+          : currentSection === "magazines"
+            ? renderUiMagazineSection()
+            : currentSection === "settings"
+              ? renderUiSettingsSection()
+              : renderUiReadSection();
   const isReadFeedSection = currentSection === "read";
+  const readerArticleShellActive = isReadFeedSection && readSurfaceMode !== "browse";
+  const readerFocusShellActive = isReadFeedSection && readSurfaceMode !== "browse" && isFocusedMode;
+  const appShellClassName = [
+    `app-shell-${currentSection}`,
+    readerArticleShellActive ? "app-shell-reader-article" : "",
+    readerFocusShellActive ? "app-shell-reader-focus" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const authReturnContext =
     currentSection === "sources"
       ? {
@@ -7629,20 +6334,25 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
             label: "Digest",
             description: "Po zalogowaniu wrócisz do przygotowania digestu z zapisanych kandydatów.",
           }
-        : currentSection === "settings"
+        : currentSection === "magazines"
           ? {
-              label: "Ustawienia",
-              description: "Po zalogowaniu wrócisz do konfiguracji lokalnej biblioteki i dostawy.",
+              label: "Magazyny",
+              description: "Po zalogowaniu wrócisz do pakowania kandydatów digestu w wydania Kindle.",
             }
-          : currentSection === "discover"
+          : currentSection === "settings"
             ? {
-                label: "Odkrywaj",
-                description: "Po zalogowaniu wrócisz do przeglądania odkryć i rekomendowanych historii.",
+                label: "Ustawienia",
+                description: "Po zalogowaniu wrócisz do konfiguracji lokalnej biblioteki i dostawy.",
               }
-            : {
-                label: "Czytnik",
-                description: "Po zalogowaniu wrócisz do swojej kolejki czytania z zachowanym adresem widoku.",
-              };
+            : currentSection === "discover"
+              ? {
+                  label: "Odkrywaj",
+                  description: "Po zalogowaniu wrócisz do przeglądania odkryć i rekomendowanych historii.",
+                }
+              : {
+                  label: "Czytnik",
+                  description: "Po zalogowaniu wrócisz do swojej kolejki czytania z zachowanym adresem widoku.",
+                };
 
   if (authStatus !== "ready") {
     return (
@@ -7692,6 +6402,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         type="file"
       />
       <AppShell
+        className={appShellClassName || undefined}
         navRail={
           <div className="workspace-nav-rail">
             <div className="workspace-nav-rail-brand">
@@ -7755,7 +6466,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                   <span className="workspace-appbar-mark">{currentSectionNavItem.icon}</span>
                   <div>
                     <strong>{currentSection === "read" ? activeFeedScopeLabel : uiSectionCopy[currentSection].title}</strong>
-                    <span>{currentSection === "read" ? "Czytnik feedow" : uiSectionCopy[currentSection].description}</span>
+                    <span>{currentSection === "read" ? "Czytnik źródeł" : uiSectionCopy[currentSection].description}</span>
                   </div>
                 </div>
               </div>
@@ -7776,8 +6487,13 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </span>
                 </button>
                 {currentSection === "read" ? (
-                  <button className={`mini-button ${isFocusedMode ? "mini-button-accent" : ""}`} onClick={() => setIsFocusedMode((current) => !current)} type="button">
-                    {isFocusedMode ? "Wyjdz z trybu skupienia" : "Tryb skupienia"}
+                  <button
+                    className={`mini-button reader-focus-toggle ${isFocusedMode ? "mini-button-accent" : ""}`}
+                    data-testid="reader-focus-toggle"
+                    onClick={() => setIsFocusedMode((current) => !current)}
+                    type="button"
+                  >
+                    {isFocusedMode ? "Wyjdź z trybu skupienia" : "Tryb skupienia"}
                   </button>
                 ) : null}
                 <AccountStatus
@@ -7790,7 +6506,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                   onLogin={() => openAuthScreen(hasLocalAccounts ? "login" : "register")}
                   onLogout={() => void handleLogout()}
                 />
-                <span className="runtime-pill runtime-pill-ok">API {apiBaseUrl.replace(/^https?:\/\//, "")}</span>
+                <span className="runtime-pill runtime-pill-ok" title={`API ${apiBaseUrl.replace(/^https?:\/\//, "")}`}>
+                  API online
+                </span>
               </div>
             </div>
           </div>
@@ -7913,1392 +6631,4 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     </>
   );
 
-  /* Legacy dashboard layout retained temporarily for reference during the reader-first rebuild.
-            onClick={() => setIsFocusedMode((current) => !current)}
-            type="button"
-          >
-            {isFocusedMode ? "Wyjdz z trybu focus" : "Tryb focus"}
-          </button>
-        </div>
-
-        <section className="nav-section">
-          <div className="nav-section-header">
-            <span className="panel-badge">Biblioteka</span>
-            <span>{queueItems.length} widoczne</span>
-          </div>
-
-          <div className="nav-primary-list">
-            <button
-              className={`nav-primary-item ${libraryView === "inbox" ? "nav-primary-item-active" : ""}`}
-              onClick={() => navigateToReadLibraryView("inbox")}
-              type="button"
-            >
-              <span>Skrzynka</span>
-              <strong>{libraryView === "inbox" ? queueItems.length : totalUnreadCount}</strong>
-            </button>
-
-            <button
-              className={`nav-primary-item ${libraryView === "saved" ? "nav-primary-item-active" : ""}`}
-              onClick={() => navigateToReadLibraryView("saved")}
-              type="button"
-            >
-              <span>Zapisane</span>
-              <strong>{libraryView === "saved" ? queueItems.length : visibleFavoriteCount}</strong>
-            </button>
-
-            <button
-              className={`nav-primary-item ${libraryView === "archive" ? "nav-primary-item-active" : ""}`}
-              onClick={() => navigateToReadLibraryView("archive")}
-              type="button"
-            >
-              <span>Archiwum</span>
-              <strong>{libraryView === "archive" ? queueItems.length : 0}</strong>
-            </button>
-
-            <button
-              className={`nav-primary-item ${libraryView === "digest" ? "nav-primary-item-active" : firstDigestCandidate ? "nav-primary-item-highlight" : ""}`}
-              onClick={() => {
-                if (firstDigestCandidate) {
-                  navigateToReadLibraryView("digest", {
-                    itemId: firstDigestCandidate.id,
-                  });
-                } else {
-                  setFeedback({
-                    tone: "idle",
-                    title: "Kolejka digestu jest pusta",
-                    lines: ["Oznacz artykuly klawiszem D, aby zbudowac krotka liste do kolejnego podgladu digestu."],
-                  });
-                }
-              }}
-              type="button"
-            >
-              <span>Kolejka digestu</span>
-              <strong>{libraryView === "digest" ? queueItems.length : persistedDigestCandidateCount ?? digestCandidateIds.length}</strong>
-            </button>
-          </div>
-        </section>
-
-        <section className="nav-section">
-          <div className="nav-section-header">
-            <span className="panel-badge">Przeglad</span>
-            <span>{currentSection === "read" ? (hasReaderSearch ? "Wyszukiwanie aktywne" : "Kolejka na zywo") : "Stan czytnika"}</span>
-          </div>
-
-          <div className="nav-metric-grid">
-            <div>
-              <span>Kolejka</span>
-              <strong>{getLibraryViewLabel(libraryView)}</strong>
-              <small>{libraryView === "archive" ? "Biblioteka historyczna" : showReadItems ? "Przeczytane + nieprzeczytane" : "Najpierw nieprzeczytane"}</small>
-            </div>
-            <div>
-              <span>Ostatni sync</span>
-              <strong>{latestRun ? getSyncRunStatusLabel(latestRun.status) : "Bezczynny"}</strong>
-              <small>{latestRun ? formatTimestamp(latestRun.completed_at ?? latestRun.created_at, "Nigdy") : "Nigdy"}</small>
-            </div>
-            <div>
-              <span>Szukaj</span>
-              <strong>{currentSection === "read" ? (hasReaderSearch ? "Zawazone" : "Globalne") : "Czytaj"}</strong>
-              <small>{currentSection === "read" ? (deferredItemSearch.trim() || "Tytul, autor, zrodlo") : "Filtr kolejki jest aktywny tylko w sekcji Czytaj"}</small>
-            </div>
-          </div>
-        </section>
-
-        {workspaceBriefing ? (
-          <section className="nav-section">
-            <WorkspacePanel
-              description="Zwarty poranny lub wieczorny przeglad zbudowany z rankingu artykulow, stanu zrodel i biezacej biblioteki."
-              eyebrow="Briefing"
-              title="Dzis w skrocie"
-              tone="accent"
-            >
-              <div
-                style={{
-                  display: "grid",
-                  gap: "0.55rem",
-                }}
-              >
-                {workspaceBriefing.summary_lines.map((line, lineIndex) => (
-                  <span key={`${line}-${lineIndex}`} style={{ fontSize: "0.88rem", lineHeight: 1.5 }}>
-                    {line}
-                  </span>
-                ))}
-              </div>
-
-              {workspaceBriefing.resume_item ? (
-                <WorkspaceButton
-                  onClick={() => {
-                    navigateToReadLibraryView("inbox", {
-                      itemId: workspaceBriefing.resume_item!.id,
-                      showReadItems: true,
-                      surface: "article",
-                    });
-                  }}
-                  style={{ marginTop: "0.75rem", width: "100%", justifyContent: "space-between" }}
-                  tone="accent"
-                >
-                  <span>Wznow czytanie</span>
-                  <strong>{workspaceBriefing.resume_item.title}</strong>
-                </WorkspaceButton>
-              ) : null}
-
-              {workspaceBriefing.recommended.length > 0 ? (
-                <div
-                  style={{
-                    display: "grid",
-                    gap: "0.55rem",
-                    marginTop: "0.75rem",
-                  }}
-                >
-                  {workspaceBriefing.recommended.slice(0, 3).map((entry) => (
-                    <WorkspaceButton
-                      key={entry.item.id}
-                      onClick={() =>
-                        navigateToReadLibraryView("inbox", {
-                          itemId: entry.item.id,
-                        })
-                      }
-                      style={{ justifyContent: "space-between", textAlign: "left" }}
-                    >
-                      <span style={{ display: "grid", gap: "0.18rem" }}>
-                        <strong>{entry.item.title}</strong>
-                        <small>{entry.item.channel_title}</small>
-                      </span>
-                      <WorkspaceChip active tone="accent">
-                        {Math.round(entry.breakdown.final_score)}
-                      </WorkspaceChip>
-                    </WorkspaceButton>
-                  ))}
-                </div>
-              ) : null}
-            </WorkspacePanel>
-          </section>
-        ) : null}
-
-        <section className="nav-section">
-          <WorkspacePanel
-            description="Wchodz od razu w przydatne wycinki biblioteki, zamiast zawsze zaczynac od surowej chronologii."
-            eyebrow="Powroty"
-            title="Szybkie sciezki"
-            tone="success"
-          >
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "0.5rem",
-              }}
-            >
-              <WorkspaceButton
-                active={recallWindow === "all" && libraryView === "inbox"}
-                onClick={() => {
-                  setReaderRecallWindow("all");
-                  navigateToReadLibraryView("inbox", { showReadItems: true });
-                }}
-              >
-                Cala kolejka
-              </WorkspaceButton>
-              <WorkspaceButton
-                active={recallWindow === "today"}
-                onClick={() => {
-                  setReaderRecallWindow("today");
-                  navigateToReadLibraryView("inbox", { showReadItems: true });
-                }}
-                tone="accent"
-              >
-                Dzis
-              </WorkspaceButton>
-              <WorkspaceButton
-                active={recallWindow === "week"}
-                onClick={() => {
-                  setReaderRecallWindow("week");
-                  navigateToReadLibraryView("inbox", { showReadItems: true });
-                }}
-              >
-                Ten tydzien
-              </WorkspaceButton>
-              <WorkspaceButton
-                active={libraryView === "saved" && itemSortMode === "newest"}
-                onClick={() => {
-                  setReaderRecallWindow("all");
-                  navigateToReadLibraryView("saved", {
-                    showReadItems: true,
-                    sort: "newest",
-                  });
-                }}
-              >
-                Ostatnio zapisane
-              </WorkspaceButton>
-            </div>
-
-            {tagCatalog.length > 0 ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "0.45rem",
-                  marginTop: "0.8rem",
-                }}
-              >
-                {tagCatalog.slice(0, 6).map((tag) => (
-                  <WorkspaceButton
-                    key={tag.id}
-                    onClick={() => {
-                      setReaderRecallWindow("all");
-                      navigateToReadLibraryView("saved", {
-                        search: tag.name,
-                        showReadItems: true,
-                      });
-                    }}
-                    title={`Otworz artykuly oznaczone tagiem ${tag.name}`}
-                  >
-                    {tag.name} ({tag.item_count})
-                  </WorkspaceButton>
-                ))}
-              </div>
-            ) : null}
-          </WorkspacePanel>
-        </section>
-
-        {currentSection !== "sources" ? (
-          <section className="nav-section">
-            <div className="nav-section-header">
-              <span className="panel-badge">Szybkie dodawanie</span>
-              <span>{activeChannelCount} aktywnych</span>
-            </div>
-
-            <form className="channel-form" onSubmit={handleSubmit}>
-              <label className="field field-wide">
-                <span>Adres zrodla</span>
-                <input
-                  autoComplete="off"
-                  name="inputUrl"
-                  onChange={(event) => {
-                    handleSourceDraftInputChange(event.target.value);
-                  }}
-                  placeholder="https://example.com lub https://example.com/feed.xml"
-                  required
-                  value={inputUrl}
-                />
-              </label>
-
-              <label className="field">
-                <span>Kategoria</span>
-                <input
-                  autoComplete="off"
-                  name="category"
-                  onChange={(event) => setCategory(event.target.value)}
-                  placeholder="inzynieria, design, research"
-                  value={category}
-                />
-              </label>
-
-              <button className="action-button" disabled={previewBusy || subscribeBusy || isPending} type="submit">
-                {previewBusy ? "Podglad..." : "Podejrzyj zrodlo"}
-              </button>
-
-              {channelPreview ? (
-                <div className="ops-row nav-preview-card">
-                  <div className="ops-row-top">
-                    <strong>{getPreviewTitle(channelPreview)}</strong>
-                    <span>{channelPreview.discovery.mode}</span>
-                  </div>
-                  <span>
-                    {channelPreview.discovery.resolved_feed_url
-                      ? `Rozwiazano: ${channelPreview.discovery.resolved_feed_url}`
-                      : "Wybierz jeden z wykrytych feedow ponizej."}
-                  </span>
-
-                  {channelPreview.status === "already_subscribed" && channelPreview.existing_channel ? (
-                    <>
-                      <span>{channelPreview.existing_channel.title}</span>
-                      <div className="channel-actions">
-                        <button
-                          className="secondary-button"
-                          onClick={() => focusFirstItemFromChannel(channelPreview.existing_channel!)}
-                          type="button"
-                        >
-                          Przejdz do zrodla
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
-
-                  {channelPreview.feed ? (
-                    <>
-                      <span>{channelPreview.feed.title}</span>
-                      <span>{channelPreview.feed.description ?? channelPreview.feed.site_url ?? channelPreview.feed.feed_url}</span>
-                      <div className="channel-actions">
-                        <button
-                          className="secondary-button"
-                          disabled={subscribeBusy || channelPreview.status === "already_subscribed"}
-                          onClick={() => void handleConfirmChannelAdd(channelPreview.feed?.feed_url)}
-                          type="button"
-                        >
-                          {subscribeBusy ? "Zapisywanie..." : "Subskrybuj"}
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
-
-                  {channelPreview.candidates.length > 0 ? (
-                    <div className="nav-preview-candidates">
-                      {channelPreview.candidates.map((candidate) => (
-                        <div className="nav-preview-candidate" key={candidate.feed_url}>
-                          <strong>{candidate.title}</strong>
-                          <span>{candidate.description ?? candidate.feed_url}</span>
-                          <div className="channel-actions">
-                            <button
-                              className="secondary-button"
-                              disabled={subscribeBusy || candidate.already_subscribed}
-                              onClick={() => void handleConfirmChannelAdd(candidate.feed_url)}
-                              type="button"
-                            >
-                              {candidate.already_subscribed ? "Juz dodane" : subscribeBusy ? "Zapisywanie..." : "Subskrybuj"}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </form>
-          </section>
-        ) : null}
-
-        <section className="nav-section nav-section-scroll">
-          <div className="nav-section-header">
-            <span className="panel-badge">Zrodla</span>
-            <button
-              className="mini-button"
-              disabled={isSyncing || channels.length === 0}
-              onClick={() => void handleSyncAll()}
-              type="button"
-            >
-              {isSyncing ? "Syncowanie..." : "Synchronizuj"}
-            </button>
-          </div>
-
-          {channels.length === 0 ? (
-            <p className="nav-empty">Brak zapisanych zrodel.</p>
-          ) : (
-            <ul className="nav-source-list">
-              {channels.map((channel) => {
-                const isChannelSelected = Boolean(selectedItem && selectedItem.channel_id === channel.id);
-
-                return (
-                  <li key={channel.id}>
-                    <button
-                      className={`nav-source-button ${isChannelSelected ? "nav-source-button-active" : ""}`}
-                      onClick={() => focusFirstItemFromChannel(channel)}
-                      type="button"
-                    >
-                      <div className="nav-source-copy">
-                        <strong>{channel.title}</strong>
-                        <span>{channel.category ? channel.category : channel.feed_url}</span>
-                        {channel.health ? <span>{channel.health.summary}</span> : null}
-                      </div>
-                      <div className="nav-source-meta">
-                        {channel.health ? (
-                          <span className={`channel-state ${getChannelHealthTone(channel.health.status) ? `channel-state-${getChannelHealthTone(channel.health.status)}` : ""}`}>
-                            {getHealthStatusLabel(channel.health.status)}
-                          </span>
-                        ) : null}
-                        <span className={`channel-state channel-state-${channel.state}`}>{getChannelStateLabel(channel.state)}</span>
-                        <strong>{channel.unread_count}</strong>
-                      </div>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-      </aside>
-
-      <section className={`reader-pane ${isFocusedMode ? "reader-pane-focused" : ""}`}>
-        <header className="reader-pane-header">
-          <div>
-            <span className="panel-badge">Artykuly</span>
-            <h2>{readerSectionLabel}</h2>
-            <p>
-              {deferredItemSearch.trim()
-                ? `Wyniki wyszukiwania dla "${deferredItemSearch.trim()}"`
-                : "Uklad dostrojony pod czytnik RSS z bocznymi panelami: zrodla po lewej, kolejka na srodku, czytanie po prawej."}
-            </p>
-          </div>
-
-          <div className="reader-header-side">
-            <div className="reader-stats">
-              <div>
-                <strong>{queueItems.length}</strong>
-                <span>widoczne</span>
-              </div>
-              <div>
-                <strong>{visibleUnreadCount}</strong>
-                <span>nieprzeczytane</span>
-              </div>
-              <div>
-                <strong>{visibleFavoriteCount}</strong>
-                <span>zapisane</span>
-              </div>
-            </div>
-
-            <div className="reader-mode-controls">
-              <button
-                className={`mini-button ${isCompactList ? "mini-button-accent" : ""}`}
-                onClick={() => setIsCompactList((current) => !current)}
-                type="button"
-              >
-                {isCompactList ? "Wygodna lista" : "Zwarta lista"}
-              </button>
-              <div className="segmented-control" aria-label="Kolejnosc sortowania">
-                <button
-                  className={itemSortMode === "newest" ? "segment-active" : ""}
-                  onClick={() => setReaderItemSortMode("newest")}
-                  type="button"
-                >
-                  Najnowsze
-                </button>
-                <button
-                  className={itemSortMode === "oldest" ? "segment-active" : ""}
-                  onClick={() => setReaderItemSortMode("oldest")}
-                  type="button"
-                >
-                  Najstarsze
-                </button>
-              </div>
-              <button
-                className={`mini-button ${libraryView === "saved" ? "mini-button-accent" : ""}`}
-                onClick={() => {
-                  const nextView = libraryView === "saved" ? "inbox" : "saved";
-                  navigateToReadLibraryView(nextView);
-                }}
-                type="button"
-              >
-                {libraryView === "saved" ? "Wroc do skrzynki" : "Widok zapisanych"}
-              </button>
-              <button
-                className={`mini-button ${storyQueueGrouped ? "mini-button-accent" : ""}`}
-                onClick={() => setReaderStoryQueueGrouped((current) => !current)}
-                type="button"
-              >
-                {storyQueueGrouped ? "Zgrupowane historie" : "Pokaz powtorki"}
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <div className="reader-toolbar">
-          <div className="segmented-control" aria-label="Filtr przeczytania">
-            <button
-              className={!showReadItems ? "segment-active" : ""}
-              onClick={() => setReaderShowReadItems(false)}
-              type="button"
-            >
-              Nieprzeczytane
-            </button>
-            <button
-              className={showReadItems ? "segment-active" : ""}
-              onClick={() => setReaderShowReadItems(true)}
-              type="button"
-            >
-              Wszystkie
-            </button>
-          </div>
-
-          <label className="search-field">
-            <span>Szukaj /</span>
-            <input
-              onChange={(event) => setReaderItemSearch(event.target.value)}
-              placeholder="Szukaj po tytule, autorze, zrodle"
-              ref={searchInputRef}
-              value={itemSearch}
-            />
-          </label>
-
-          <div className="reader-toolbar-actions">
-            <button
-              className={`mini-button ${selectedItemIds.length > 0 ? "mini-button-accent" : ""}`}
-              onClick={() => {
-                if (selectedItemIds.length === queueItems.length) {
-                  clearBulkSelection();
-                } else {
-                  selectVisibleItems();
-                }
-              }}
-              type="button"
-            >
-              {selectedItemIds.length === queueItems.length && queueItems.length > 0 ? "Wyczysc strone" : "Zaznacz strone"}
-            </button>
-            <button className="mini-button" onClick={() => setShowKeyboardHelp(true)} type="button">
-              <span className="button-with-icon">
-                <KeyboardIcon className="app-icon button-inline-icon" />
-                Skroty ?
-              </span>
-            </button>
-            <button className="mini-button" onClick={() => void loadItems()} type="button">
-              <span className="button-with-icon">
-                <SyncIcon className="app-icon button-inline-icon" />
-                Odswiez
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {selectedItemIds.length > 0 ? (
-          <div className="reader-bulk-bar" role="region" aria-label="Masowa selekcja">
-            <div className="reader-bulk-summary">
-              <strong>{selectedItemIds.length} zaznaczonych</strong>
-              <span>Akcje zbiorcze dotycza tylko aktualnie widocznego wycinka kolejki.</span>
-            </div>
-
-            <div className="reader-bulk-actions">
-              <button className="secondary-button" disabled={bulkBusy} onClick={() => void handleBulkAction("read")} type="button">
-                <span className="button-with-icon">
-                  <ReaderIcon className="app-icon button-inline-icon" />
-                  {bulkBusy ? "Praca..." : "Oznacz jako przeczytane"}
-                </span>
-              </button>
-              <button className="secondary-button" disabled={bulkBusy} onClick={() => void handleBulkAction("save")} type="button">
-                <span className="button-with-icon">
-                  <BookmarkIcon className="app-icon button-inline-icon" />
-                  Zapisz
-                </span>
-              </button>
-              <button className="secondary-button" disabled={bulkBusy} onClick={() => void handleBulkAction("digest")} type="button">
-                <span className="button-with-icon">
-                  <DigestIcon className="app-icon button-inline-icon" />
-                  Dodaj do digestu
-                </span>
-              </button>
-              <button className="mini-button" disabled={bulkBusy} onClick={() => void handleBulkAction("archive")} type="button">
-                <span className="button-with-icon">
-                  <ArchiveIcon className="app-icon button-inline-icon" />
-                  Archiwizuj
-                </span>
-              </button>
-              <button className="mini-button" disabled={bulkBusy} onClick={clearBulkSelection} type="button">
-                <span className="button-with-icon">
-                  <DismissIcon className="app-icon button-inline-icon" />
-                  Wyczysc
-                </span>
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="reader-shortcut-strip" role="note" aria-label="Skroty klawiaturowe">
-          {shortcutHints.map((hint) => (
-            <span className="reader-shortcut-chip" key={hint.key}>
-              <kbd>{hint.key}</kbd>
-              <span>{hint.label}</span>
-            </span>
-          ))}
-        </div>
-
-        <div className="reader-status-ribbon">
-          <span>
-            {libraryView === "saved"
-              ? "Aktywny jest widok zapisanych"
-              : libraryView === "digest"
-                ? "Aktywna jest kolejka digestu"
-                : libraryView === "archive"
-                  ? "Aktywny jest widok archiwum"
-                  : "Aktywna jest skrzynka"}
-          </span>
-          <span>{showReadItems ? "Pokazuje przeczytane i nieprzeczytane" : "Najpierw nieprzeczytane"}</span>
-          <span>{getSortLabel(itemSortMode)}</span>
-          <span>{storyQueueGrouped ? "Grupowanie historii wlaczone" : "Powtorki historii widoczne"}</span>
-          <span>{isCompactList ? "Zwarta gestosc" : "Wygodna gestosc"}</span>
-          <span>
-            {recallWindow === "today" ? "Powrot: dzis" : recallWindow === "week" ? "Powrot: ten tydzien" : "Powrot: cala kolejka"}
-          </span>
-          <span>
-            {selectedReadingProgress && selectedReadingProgress.progress > 2
-              ? `Dostepne wznowienie: ${selectedReadingProgress.progress}%`
-              : "Kontynuacja na urzadzeniu jest gotowa"}
-          </span>
-          <span>Zapisanie usuwa artykul ze skrzynki, archiwum ukrywa go do przywrocenia, a kolejka digestu pozostaje dodatkiem.</span>
-          <span>{itemsRefreshing ? "Odswiezanie listy artykulow..." : itemsPage?.has_more ? "Wyzej sa jeszcze kolejne artykuly" : "Biezacy wycinek jest aktualny"}</span>
-        </div>
-
-        {savedViewChips.length > 0 ? (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "0.75rem",
-              marginBottom: "0.85rem",
-            }}
-          >
-            {savedViewChips.map((chip) => (
-              <SavedViewChip
-                key={chip.id}
-                onClear={() => setReaderItemSearch("")}
-                onSelect={(viewId) => {
-                  const savedView = savedSearches.find((entry) => entry.id === viewId);
-                  if (!savedView) {
-                    return;
-                  }
-                  navigateToReadLibraryView(savedView.default_view, {
-                    search: savedView.query,
-                  });
-                }}
-                view={chip}
-              />
-            ))}
-            <WorkspaceButton disabled={!deferredItemSearch.trim()} onClick={() => void handleCreateSavedSearch()} tone="accent">
-              Zapisz biezace zapytanie
-            </WorkspaceButton>
-          </div>
-        ) : null}
-
-        {latestUndoEntry ? (
-          <div className="reader-undo-bar" role="status" aria-live="polite">
-            <div>
-              <strong>{latestUndoEntry.label}</strong>
-              <p>
-                Cofniecie jest gotowe dla {latestUndoEntry.operations.length} {latestUndoEntry.operations.length === 1 ? "pozycji" : "pozycji"}.
-              </p>
-            </div>
-            <div className="reader-undo-actions">
-              <button className="secondary-button" disabled={undoBusy} onClick={() => void handleUndo()} type="button">
-                {undoBusy ? "Cofanie..." : "Cofnij"}
-              </button>
-              <button className="mini-button" disabled={undoBusy} onClick={() => dismissUndoEntry(latestUndoEntry.id)} type="button">
-                Odrzuc
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {itemsMessage && itemsStatus !== "unsupported" ? (
-          <div className={`reader-inline-note ${itemsStatus === "error" ? "reader-inline-note-error" : ""}`}>
-            {itemsMessage}
-          </div>
-        ) : null}
-
-        {renderReaderContent()}
-      </section>
-
-      <aside className="ops-pane">
-        <section className={`feedback-card feedback-${feedback.tone}`}>
-          <strong>{feedback.title}</strong>
-          <ul className="feedback-list">
-            {feedback.lines.map((line, lineIndex) => (
-              <li key={`${line}-${lineIndex}`}>{line}</li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="ops-section">
-          <RankingPreferencesPanel
-            actions={
-              workspaceProfile ? (
-                <WorkspaceChip active tone="accent">
-                  Limit awaryjny {workspaceProfile.emergency_source_cap}
-                </WorkspaceChip>
-              ) : null
-            }
-            onPreferenceChange={(preferenceId, nextValue) =>
-              void saveWorkspaceProfile({
-                [preferenceId]: Number.parseInt(nextValue, 10),
-              } as Partial<WorkspaceProfile>)
-            }
-            preferences={rankingPreferences}
-          />
-
-          <WorkspacePanel
-            description="Deklaruj trwale tematy, aby korygowac ranking kolejki i ograniczac przeciazenie czytnikiem."
-            eyebrow="Profil"
-            title="Zainteresowania tematyczne"
-            tone="accent"
-          >
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "0.45rem",
-                marginBottom: "0.75rem",
-              }}
-            >
-              {workspaceProfile?.interests.map((interest) => (
-                <WorkspaceButton
-                  key={interest.id}
-                  onClick={() =>
-                    void saveWorkspaceProfile({
-                      interests: workspaceProfile.interests.filter((entry) => entry.id !== interest.id),
-                    })
-                  }
-                  tone={interest.weight > 0 ? "accent" : interest.weight < 0 ? "danger" : "default"}
-                >
-                  {interest.label} {interest.weight > 0 ? "wzmacniaj" : interest.weight < 0 ? "tlum" : "neutralnie"}
-                </WorkspaceButton>
-              ))}
-              {!workspaceProfile?.interests.length ? <WorkspaceChip>Brak skonfigurowanych zainteresowan</WorkspaceChip> : null}
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gap: "0.55rem",
-              }}
-            >
-              <input
-                onChange={(event) => setInterestDraft(event.target.value)}
-                placeholder="szachy, AI, ksiazki, security"
-                value={interestDraft}
-              />
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "0.55rem",
-                }}
-              >
-                <select
-                  onChange={(event) => setInterestWeight(Number.parseInt(event.target.value, 10) as WorkspaceInterest["weight"])}
-                  value={interestWeight}
-                >
-                  <option value={2}>Wzmacniaj</option>
-                  <option value={1}>Preferuj</option>
-                  <option value={0}>Neutralnie</option>
-                  <option value={-1}>Tlum</option>
-                </select>
-                <WorkspaceButton
-                  disabled={!interestDraft.trim() || !workspaceProfile || workspaceBusy}
-                  onClick={() =>
-                    workspaceProfile
-                      ? void saveWorkspaceProfile({
-                          interests: [
-                            ...workspaceProfile.interests.filter(
-                              (entry) => entry.label.toLowerCase() !== interestDraft.trim().toLowerCase(),
-                            ),
-                            {
-                              id: `draft_${interestDraft.trim().toLowerCase()}`,
-                              label: interestDraft.trim(),
-                              normalized_topic: interestDraft.trim().toLowerCase(),
-                              kind: "topic",
-                              weight: interestWeight,
-                            },
-                          ],
-                        }).then(() => {
-                          setInterestDraft("");
-                          setInterestWeight(1);
-                        })
-                      : undefined
-                  }
-                  tone="accent"
-                >
-                  Dodaj zainteresowanie
-                </WorkspaceButton>
-              </div>
-            </div>
-          </WorkspacePanel>
-        </section>
-
-        <section className="ops-section">
-          <WorkspacePanel
-            description={selectedItem ? `Uporzadkuj ${selectedItem.title} notatkami, tagami i kolekcjami.` : "Wybierz artykul, aby dodac notatki, tagi i kolekcje."}
-            eyebrow="Wiedza"
-            title="Notatki, tagi i kolekcje"
-            tone="warning"
-          >
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "0.45rem",
-                marginBottom: "0.75rem",
-              }}
-            >
-              {itemTags.map((tag) => (
-                <WorkspaceChip key={tag.id} active tone="accent">
-                  {tag.name}
-                </WorkspaceChip>
-              ))}
-              {!selectedItem ? <WorkspaceChip>Najpierw wybierz artykul</WorkspaceChip> : null}
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gap: "0.55rem",
-              }}
-            >
-              <input
-                onChange={(event) => setTagDraft(event.target.value)}
-                placeholder="Dodaj tagi: rynek, longform, explainery"
-                value={tagDraft}
-              />
-              <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                <WorkspaceButton disabled={!selectedItem || !tagDraft.trim() || workspaceBusy} onClick={() => void handleSaveTags()} tone="accent">
-                  Zapisz tagi
-                </WorkspaceButton>
-                <input
-                  onChange={(event) => setCollectionDraft(event.target.value)}
-                  placeholder="Nowa kolekcja"
-                  value={collectionDraft}
-                />
-                <WorkspaceButton disabled={!collectionDraft.trim() || workspaceBusy} onClick={() => void handleCreateCollection()}>
-                  Utworz kolekcje
-                </WorkspaceButton>
-              </div>
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
-                {collections.map((collection) => (
-                  <WorkspaceButton
-                    key={collection.id}
-                    disabled={!selectedItem || workspaceBusy}
-                    onClick={() => void handleAddToCollection(collection.id)}
-                  >
-                    {collection.name} ({collection.item_count})
-                  </WorkspaceButton>
-                ))}
-              </div>
-
-              {selectedTextQuote ? (
-                <blockquote
-                  style={{
-                    margin: 0,
-                    padding: "0.75rem 0.9rem",
-                    borderRadius: "0.9rem",
-                    background: "rgba(255,255,255,0.82)",
-                    border: "1px solid rgba(21, 94, 117, 0.12)",
-                  }}
-                >
-                  {selectedTextQuote}
-                </blockquote>
-              ) : null}
-
-              <textarea
-                onChange={(event) => setAnnotationDraft(event.target.value)}
-                placeholder="Napisz notatke albo dodaj komentarz do biezacego zaznaczenia"
-                rows={4}
-                value={annotationDraft}
-              />
-              <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                <WorkspaceButton disabled={!selectedItem || !annotationDraft.trim() || workspaceBusy} onClick={() => void handleCreateNote()} tone="accent">
-                  Zapisz notatke
-                </WorkspaceButton>
-                <WorkspaceButton disabled={!selectedItem || !selectedTextQuote.trim() || workspaceBusy} onClick={() => void handleCreateHighlight()} tone="warning">
-                  Zapisz podkreslenie
-                </WorkspaceButton>
-              </div>
-            </div>
-          </WorkspacePanel>
-
-          <AnnotationPanel panel={annotationPanelModel} />
-        </section>
-
-        <section className="ops-section">
-          <WorkspacePanel
-            description="Przeszukiwalne notatki i podkreslenia w calej bibliotece, nie tylko w biezacym artykule."
-            eyebrow="Centrum adnotacji"
-            title="Wroc do wlasnych mysli"
-            tone="accent"
-          >
-            <div style={{ display: "grid", gap: "0.65rem" }}>
-              <input
-                onChange={(event) => setAnnotationHubQuery(event.target.value)}
-                placeholder="Szukaj notatek, cytatow z podkreslen i tresci adnotacji"
-                value={annotationHubQuery}
-              />
-              {annotationHubLoading ? <WorkspaceChip>Szukanie adnotacji...</WorkspaceChip> : null}
-              <div style={{ display: "grid", gap: "0.55rem" }}>
-                {annotationHubItems.map((annotation) => (
-                  <WorkspaceButton
-                    key={annotation.id}
-                    onClick={() => void focusArticleById(annotation.item_id)}
-                    style={{ justifyContent: "space-between", textAlign: "left" }}
-                  >
-                    <span style={{ display: "grid", gap: "0.18rem" }}>
-                      <strong>{annotation.kind === "highlight" ? "Podkreslenie" : "Notatka"}</strong>
-                      <small>{annotation.note_text ?? annotation.quote_text ?? "Open linked article"}</small>
-                    </span>
-                    <WorkspaceChip active tone={annotation.kind === "highlight" ? "warning" : "accent"}>
-                      {annotation.kind}
-                    </WorkspaceChip>
-                  </WorkspaceButton>
-                ))}
-                {!annotationHubLoading && annotationHubItems.length === 0 ? (
-                  <WorkspaceChip>Brak pasujacych adnotacji</WorkspaceChip>
-                ) : null}
-              </div>
-            </div>
-          </WorkspacePanel>
-        </section>
-
-        {storyClusters.length > 0 ? (
-          <section className="ops-section">
-            <div className="ops-section-header">
-              <div>
-                <span className="panel-badge">Stories</span>
-                <h3>Deduplicated story clusters</h3>
-              </div>
-              <span>{storyClusters.length} groups</span>
-            </div>
-            <div style={{ display: "grid", gap: "0.85rem" }}>
-              {storyClusters.slice(0, 4).map((cluster) => (
-                <StoryClusterCard
-                  actions={
-                    <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                      <WorkspaceButton onClick={() => void focusArticleById(cluster.primary.id)} tone="accent">
-                        Open lead
-                      </WorkspaceButton>
-                      <WorkspaceButton
-                        onClick={() =>
-                          setExpandedStoryClusterIds((current) =>
-                            current.includes(cluster.id)
-                              ? current.filter((entry) => entry !== cluster.id)
-                              : [...current, cluster.id],
-                          )
-                        }
-                      >
-                        {expandedStoryClusterIds.includes(cluster.id) ? "Zwin" : `Pokaz alternatywy (${cluster.alternates.length})`}
-                      </WorkspaceButton>
-                    </div>
-                  }
-                  cluster={mapStoryClusterCard(cluster)}
-                  key={cluster.id}
-                  maxStories={expandedStoryClusterIds.includes(cluster.id) ? cluster.item_count : 3}
-                  onStorySelect={(storyId) => void focusArticleById(storyId)}
-                />
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {sourceHealthEntries.length > 0 ? (
-          <section className="ops-section">
-            <div className="ops-section-header">
-              <div>
-                <span className="panel-badge">Stan zrodel</span>
-                <h3>Priorytet i kontrola szumu</h3>
-              </div>
-              <span>{sourceHealthEntries.length} sledzonych</span>
-            </div>
-            <WorkspacePanel
-              description="Tworz wielokrotnego uzytku pakiety zrodel, podpina feedy i stosuj pauze lub wyciszenie bez destrukcyjnego sprzatania."
-              eyebrow="Pakiety"
-              title="Grupuj i wyciszaj zrodla"
-              tone="success"
-            >
-              <div style={{ display: "grid", gap: "0.55rem" }}>
-                <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                  <input
-                    onChange={(event) => setSourceGroupDraft(event.target.value)}
-                    placeholder="Utworz pakiet: rynki, longform, research"
-                    value={sourceGroupDraft}
-                  />
-                  <input onChange={(event) => setSourceGroupColor(event.target.value)} type="color" value={sourceGroupColor} />
-                  <WorkspaceButton disabled={!sourceGroupDraft.trim() || workspaceBusy} onClick={() => void handleCreateSourceGroup()} tone="accent">
-                    Utworz pakiet
-                  </WorkspaceButton>
-                </div>
-                <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                  {sourceGroups.map((group) => (
-                    <WorkspaceChip key={group.id}>{group.name} ({group.channel_count})</WorkspaceChip>
-                  ))}
-                  {sourceGroups.length === 0 ? <WorkspaceChip>Brak pakietow</WorkspaceChip> : null}
-                </div>
-              </div>
-            </WorkspacePanel>
-            <div style={{ display: "grid", gap: "0.85rem" }}>
-              {sourceHealthEntries.slice(0, 4).map((entry) => (
-                <SourceHealthCard
-                  actions={
-                    <div style={{ display: "grid", gap: "0.55rem" }}>
-                      <select
-                        onChange={(event) =>
-                          void handleSourceControlUpdate(entry.channel_id, {
-                            group_id: event.target.value || null,
-                          })
-                        }
-                        value={entry.control.group_id ?? ""}
-                      >
-                        <option value="">Bez pakietu</option>
-                        {sourceGroups.map((group) => (
-                          <option key={group.id} value={group.id}>
-                            {group.name}
-                          </option>
-                        ))}
-                      </select>
-                      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                        <WorkspaceButton
-                          disabled={isSyncing || entry.state !== "active"}
-                          onClick={() => void handleSyncAll({ channelIds: [entry.channel_id], label: entry.title })}
-                          tone={entry.reading_readiness === "blocked" || entry.health_status === "error" ? "accent" : "default"}
-                        >
-                          Syncuj teraz
-                        </WorkspaceButton>
-                        <WorkspaceButton
-                          disabled={workspaceBusy}
-                          onClick={() =>
-                            void handleSourceControlUpdate(entry.channel_id, {
-                              snoozed_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-                            })
-                          }
-                        >
-                          Wstrzymaj na 1d
-                        </WorkspaceButton>
-                        <WorkspaceButton
-                          disabled={workspaceBusy}
-                          onClick={() =>
-                            void handleSourceControlUpdate(entry.channel_id, {
-                              paused_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-                            })
-                          }
-                        >
-                          Pauza 7d
-                        </WorkspaceButton>
-                        <WorkspaceButton
-                          disabled={workspaceBusy}
-                          onClick={() =>
-                            void handleSourceControlUpdate(entry.channel_id, {
-                              paused_until: null,
-                              snoozed_until: null,
-                            })
-                          }
-                        >
-                          Wyczysc timery
-                        </WorkspaceButton>
-                      </div>
-                      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                      <WorkspaceButton
-                        active={entry.control.tier === "priority"}
-                        disabled={workspaceBusy}
-                        onClick={() => void handleSourceTierChange(entry.channel_id, "priority")}
-                        tone="accent"
-                      >
-                        Priorytet
-                      </WorkspaceButton>
-                      <WorkspaceButton
-                        active={entry.control.tier === "default"}
-                        disabled={workspaceBusy}
-                        onClick={() => void handleSourceTierChange(entry.channel_id, "default")}
-                      >
-                        Domyslnie
-                      </WorkspaceButton>
-                      <WorkspaceButton
-                        active={entry.control.tier === "muted"}
-                        disabled={workspaceBusy}
-                        onClick={() => void handleSourceTierChange(entry.channel_id, "muted")}
-                        tone="danger"
-                      >
-                        Wycisz
-                      </WorkspaceButton>
-                      </div>
-                    </div>
-                  }
-                  key={entry.channel_id}
-                  source={mapSourceHealthCard(entry)}
-                />
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        <section className="ops-section">
-          <WorkspacePanel
-            description="Zapisuj dowolne adresy artykulow bezposrednio do biblioteki i eksportuj caly workspace bez wychodzenia z aplikacji."
-            eyebrow="Ciaglosc"
-            title="Przechwytywanie i eksport"
-            tone="success"
-          >
-            <div style={{ display: "grid", gap: "0.55rem" }}>
-              <input
-                onChange={(event) => setCaptureUrl(event.target.value)}
-                placeholder="https://example.com/artykul-do-pozniejszego-czytania"
-                value={captureUrl}
-              />
-              <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                <WorkspaceButton disabled={!captureUrl.trim() || captureBusy} onClick={() => void handleCaptureUrl()} tone="accent">
-                  {captureBusy ? "Zapisywanie..." : "Zapisz URL"}
-                </WorkspaceButton>
-                <WorkspaceButton disabled={workspaceExportBusy} onClick={() => void handleExportWorkspace()}>
-                  {workspaceExportBusy ? "Przygotowywanie..." : "Eksportuj continuity bundle"}
-                </WorkspaceButton>
-                <WorkspaceButton disabled={workspaceImportBusy} onClick={() => continuityImportInputRef.current?.click()} tone="accent">
-                  {workspaceImportBusy ? "Odtwarzanie..." : "Odtwórz continuity bundle"}
-                </WorkspaceButton>
-              </div>
-              <textarea
-                onChange={(event) => setOpmlDraft(event.target.value)}
-                placeholder="Wklej tutaj OPML, aby przeniesc feedy z innego czytnika RSS"
-                rows={5}
-                value={opmlDraft}
-              />
-              <WorkspaceButton disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handleImportOpml()} tone="accent">
-                {opmlImportBusy ? "Importowanie..." : "Importuj OPML"}
-              </WorkspaceButton>
-            </div>
-          </WorkspacePanel>
-        </section>
-
-        <section className="ops-section">
-          <div className="ops-section-header">
-            <div>
-              <span className="panel-badge">Reczny sync</span>
-              <h3>Ostatnie runy</h3>
-            </div>
-            <button
-              className="action-button compact-button"
-              disabled={isSyncing || channels.length === 0}
-              onClick={() => void handleSyncAll()}
-              type="button"
-            >
-              {isSyncing ? "Syncowanie..." : "Sync aktywnych"}
-            </button>
-          </div>
-
-          {syncRuns.length === 0 ? (
-            <p className="empty-state">Brak runow syncu. Dodaj zrodlo i uruchom pierwszy reczny sync.</p>
-          ) : (
-            <ul className="ops-list">
-              {syncRuns.map((run) => (
-                <li className="ops-row" key={run.id}>
-                  <div className="ops-row-top">
-                    <strong>{getSyncRunStatusLabel(run.status)}</strong>
-                    <span>{formatTimestamp(run.completed_at ?? run.created_at, "Brak znacznika czasu")}</span>
-                  </div>
-                  <span>
-                    Kanaly {run.channels_succeeded}/{run.channels_total} ok, {run.channels_failed} nieudanych
-                  </span>
-                  <span>
-                    Artykuly {run.items_created} nowych, {run.items_seen} widzianych, {run.items_skipped} pominietych
-                  </span>
-                  {run.error_message ? <span>{run.error_message}</span> : null}
-                  {run.errors.length > 0 ? (
-                    <ul className="run-error-list">
-                      {run.errors.slice(0, 2).map((error) => (
-                        <li key={`${run.id}-${error.channel_id}-${error.code}`}>
-                          <strong>{error.channel_title}</strong>: {error.message}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="ops-section">
-          <div className="ops-section-header">
-            <div>
-              <span className="panel-badge">Zrodla</span>
-              <h3>Zarzadzaj kanalami</h3>
-            </div>
-            <span>{archivedChannelCount} zarchiwizowanych</span>
-          </div>
-
-          {channels.length === 0 ? (
-            <p className="empty-state">Brak zapisanych kanalow. Uzyj formularza powyzej, aby utworzyc pierwszy.</p>
-          ) : (
-            <ul className="ops-list">
-              {channels.map((channel) => (
-                <li className="ops-row" key={channel.id}>
-                  <div className="ops-row-top">
-                    <strong>{channel.title}</strong>
-                    <span className={`channel-state channel-state-${channel.state}`}>{getChannelStateLabel(channel.state)}</span>
-                  </div>
-                  <span>{channel.feed_url}</span>
-                  <span>{channel.category ? `Kategoria: ${channel.category}` : "Brak kategorii"}</span>
-                  <span>Nieprzeczytane artykuly: {channel.unread_count}</span>
-                  {channel.health ? <span>{`Stan: ${getHealthStatusLabel(channel.health.status)} | ${channel.health.summary}`}</span> : null}
-                  <span>
-                    {channel.last_fetch_at
-                      ? `Ostatni fetch: ${formatTimestamp(channel.last_fetch_at, "nigdy nie synchronizowano")}`
-                      : "Ostatni fetch: nigdy nie synchronizowano"}
-                  </span>
-                  <span>{channel.last_error ? `Ostatni blad: ${channel.last_error}` : "Ostatni blad: brak"}</span>
-                  <div className="channel-actions">
-                    <input
-                      className="channel-inline-input"
-                      onChange={(event) =>
-                        setDraftCategories((current) => ({
-                          ...current,
-                          [channel.id]: event.target.value,
-                        }))
-                      }
-                      placeholder="Zmien kategorie"
-                      value={draftCategories[channel.id] ?? ""}
-                    />
-                    <button
-                      className="secondary-button"
-                      disabled={activeChannelId === channel.id}
-                      onClick={() => void handleCategorySave(channel.id)}
-                      type="button"
-                    >
-                      Zapisz kategorie
-                    </button>
-                    <button
-                      className="secondary-button"
-                      disabled={activeChannelId === channel.id || channel.state === "archived"}
-                      onClick={() => void handleStateToggle(channel)}
-                      type="button"
-                    >
-                      {channel.state === "active" ? "Wylacz" : channel.state === "inactive" ? "Wlacz" : "Zarchiwizowany"}
-                    </button>
-                    <button
-                      className="danger-button"
-                      disabled={activeChannelId === channel.id || channel.state === "archived"}
-                      onClick={() => void handleArchive(channel)}
-                      type="button"
-                    >
-                      Archiwizuj
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <DigestBuildPanel
-          badgeLabel="Digest"
-          buildDisabled={digestBusy || digestCandidateStatus === "loading"}
-          busy={digestBusy}
-          countLabel={`${persistedDigestCandidateCount ?? digestCandidateIds.length} zapisanych`}
-          message={digestCandidateMessage}
-          onBackToReader={() => router.push(buildAppHref({ section: "read" }))}
-          onBuild={() => void handleDigestBuild()}
-          onPreview={() => void handleDigestPreview()}
-          onShowDigestQueue={() =>
-            navigateToReadLibraryView("digest", {
-              search: "",
-              showReadItems: true,
-            })
-          }
-          preview={digestPreview ?? digestCandidatePreview}
-          previewDisabled={digestBusy || digestCandidateStatus === "loading"}
-          queueCopy={digestQueueCopy}
-          showSummaryActions={hasDigestReaderFilter || digestCandidateStatus === "empty"}
-          status={digestCandidateStatus}
-        />
-
-        <section className="ops-section">
-          <div className="ops-section-header">
-            <div>
-              <span className="panel-badge">Historia</span>
-              <h3>Zbudowane wydania</h3>
-            </div>
-            <span>{digestHistory.length}</span>
-          </div>
-          <DigestHistoryList formatTimestamp={formatTimestamp} items={digestHistory} />
-        </section>
-
-        <section className="ops-section">
-          <div className="ops-section-header">
-            <div>
-              <span className="panel-badge">Delivery</span>
-              <h3>SMTP i Kindle</h3>
-            </div>
-            <span>{deliverySettings?.smtp_ready ? "gotowe" : "wymaga konfiguracji"}</span>
-          </div>
-
-          <DeliverySettingsPanel
-            deliveryBusy={deliveryBusy}
-            draft={settingsDraft}
-            message={deliverySettingsMessage}
-            onDraftChange={handleDeliverySettingsDraftChange}
-            onPreflight={() => void handleDeliverySettingsPreflight()}
-            onSave={() => void handleSaveDeliverySettings()}
-            settings={deliverySettings}
-            settingsBusy={settingsBusy}
-          />
-
-          <div className="channel-actions">
-            <button className="secondary-button" disabled={deliveryBusy || !latestDigest} onClick={() => void handleDeliveryPreflight("kindle")} type="button">
-              Preflight Kindle
-            </button>
-            <button className="secondary-button" disabled={deliveryBusy || !latestDigest} onClick={() => void handleSendDigest("dry_run", "kindle")} type="button">
-              Test na sucho
-            </button>
-            <button className="action-button compact-button" disabled={deliveryBusy || !latestDigest} onClick={() => void handleSendDigest("send", "kindle")} type="button">
-              Wyslij na Kindle
-            </button>
-          </div>
-
-          {deliveryPreflight ? (
-            <div className="ops-row">
-              <div className="ops-row-top">
-                <strong>{deliveryPreflight.artifact.title}</strong>
-                <span>{getDeliveryStatusLabel(deliveryPreflight.status)}</span>
-              </div>
-              <span>{deliveryPreflight.recipient ? `Odbiorca: ${deliveryPreflight.recipient}` : "Odbiorca nieustalony"}</span>
-              <span>{deliveryPreflight.artifact.artifact_exists ? `Rozmiar artefaktu: ${deliveryPreflight.artifact.artifact_bytes}` : "Brak artefaktu"}</span>
-              <span>{deliveryPreflight.checks.map((check) => `${check.name}:${check.status}`).join(" | ")}</span>
-            </div>
-          ) : null}
-
-          {deliveryLogs.length > 0 ? (
-            <ul className="ops-list">
-              {deliveryLogs.map((log) => (
-                <li className="ops-row" key={log.id}>
-                  <div className="ops-row-top">
-                    <strong>{log.digest_title ?? "Wysylka digestu"}</strong>
-                    <span>{getDeliveryStatusLabel(log.status)}</span>
-                  </div>
-                  <span>{log.target_kind} {log.recipient ?? "odbiorca oczekuje"}</span>
-                  <span>{formatTimestamp(log.sent_at, "Jeszcze nie wyslano")}</span>
-                  {log.error_message ? <span>{log.error_message}</span> : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
-      </aside>
-
-      {showKeyboardHelp ? (
-        <div
-          aria-modal="true"
-          className="reader-command-overlay"
-          onClick={() => setShowKeyboardHelp(false)}
-          role="dialog"
-        >
-          <div
-            className="reader-command-dialog"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="reader-command-header">
-              <div>
-                <span className="panel-badge">Pomoc klawiatury</span>
-                <h3>Mapa komend</h3>
-              </div>
-              <button className="mini-button" onClick={() => setShowKeyboardHelp(false)} type="button">
-                Zamknij
-              </button>
-            </div>
-
-            <div className="reader-command-grid">
-              {commandGroups.map((group) => (
-                <section className="reader-command-group" key={group.title}>
-                  <strong>{group.title}</strong>
-                  <ul>
-                    {group.items.map((item) => (
-                      <li key={`${group.title}-${item.keys}`}>
-                        <div>
-                          <kbd>{item.keys}</kbd>
-                          <span>{item.label}</span>
-                        </div>
-                        <p>{item.note}</p>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ))}
-            </div>
-
-            <p className="reader-command-note">
-              Zapisane i Archiwum korzystaja teraz z API biblioteki, wiec mapa klawiatury odzwierciedla ten sam model selekcji co UI.
-            </p>
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-  */
 }

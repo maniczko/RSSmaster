@@ -5,14 +5,24 @@ from email.utils import parseaddr
 import logging
 import smtplib
 import ssl
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import quote
 
+import httpx
 from app.config import Settings as AppSettings
 
-from .models import UpdateDeliverySettingsRequest
-from .repository import DELIVERY_SETTINGS_DESCRIPTION, DELIVERY_SETTINGS_KEY, SettingsRepository
+from .models import UpdateAISettingsRequest, UpdateDeliverySettingsRequest
+from .repository import (
+    AI_SETTINGS_DESCRIPTION,
+    AI_SETTINGS_KEY,
+    DELIVERY_SETTINGS_DESCRIPTION,
+    DELIVERY_SETTINGS_KEY,
+    SettingsRepository,
+)
 
 logger = logging.getLogger("rssmaster.settings")
+OPENAI_MODELS_API_URL = "https://api.openai.com/v1/models"
+OPENAI_PREFLIGHT_TIMEOUT_SECONDS = 10
 
 
 @dataclass(slots=True, frozen=True)
@@ -37,10 +47,262 @@ class ResolvedDeliverySettings:
         return all(bool(value) for value in required_values)
 
 
+@dataclass(slots=True, frozen=True)
+class ResolvedAISettings:
+    enabled: bool
+    provider: Literal["openai"]
+    chat_model: str
+    embedding_model: str
+    openai_api_key: str | None
+    updated_at: str | None
+    updated_by: str | None
+
+    @property
+    def ready(self) -> bool:
+        return (
+            self.enabled
+            and self.provider == "openai"
+            and bool(self.chat_model)
+            and bool(self.embedding_model)
+            and bool(self.openai_api_key)
+        )
+
+
 class SettingsService:
     def __init__(self, settings: AppSettings, repository: SettingsRepository) -> None:
         self.settings = settings
         self.repository = repository
+
+    def get_ai_settings(self) -> dict[str, Any]:
+        resolved = self.get_resolved_ai_settings()
+        checks = self._validate_ai_configuration(resolved)
+
+        return {
+            "enabled": resolved.enabled,
+            "provider": resolved.provider,
+            "chat_model": resolved.chat_model,
+            "embedding_model": resolved.embedding_model,
+            "openai_api_key": redact_secret(resolved.openai_api_key),
+            "ready": resolved.ready,
+            "updated_at": resolved.updated_at,
+            "updated_by": resolved.updated_by,
+            "issues": [
+                check["message"]
+                for check in checks
+                if check["status"] in {"failed", "warning"}
+            ],
+        }
+
+    def update_ai_settings(self, payload: UpdateAISettingsRequest) -> dict[str, Any]:
+        current_record = self.repository.get_setting(AI_SETTINGS_KEY)
+        current_value = dict(current_record["value"]) if current_record else {}
+        next_value = dict(current_value)
+
+        for field_name in (
+            "enabled",
+            "provider",
+            "chat_model",
+            "embedding_model",
+            "openai_api_key",
+        ):
+            if field_name not in payload.model_fields_set:
+                continue
+            value = getattr(payload, field_name)
+            if value is None:
+                next_value.pop(field_name, None)
+            else:
+                next_value[field_name] = value
+
+        if next_value:
+            self.repository.upsert_setting(
+                key=AI_SETTINGS_KEY,
+                value=next_value,
+                description=AI_SETTINGS_DESCRIPTION,
+                updated_by=payload.updated_by,
+            )
+        else:
+            self.repository.delete_setting(AI_SETTINGS_KEY)
+
+        return self.get_ai_settings()
+
+    def get_resolved_ai_settings(self) -> ResolvedAISettings:
+        record = self.repository.get_setting(AI_SETTINGS_KEY)
+        stored = dict(record["value"]) if record else {}
+
+        return ResolvedAISettings(
+            enabled=resolve_bool(stored.get("enabled"), self.settings.ai_enabled),
+            provider=resolve_ai_provider(stored.get("provider"), self.settings.ai_provider),
+            chat_model=normalize_text(stored.get("chat_model")) or self.settings.openai_chat_model,
+            embedding_model=normalize_text(stored.get("embedding_model")) or self.settings.openai_embedding_model,
+            openai_api_key=normalize_text(stored.get("openai_api_key")) or normalize_text(self.settings.openai_api_key),
+            updated_at=record["updated_at"] if record else None,
+            updated_by=record["updated_by"] if record else None,
+        )
+
+    def preflight_ai_settings(self) -> dict[str, Any]:
+        resolved = self.get_resolved_ai_settings()
+        checks = self._validate_ai_configuration(resolved)
+        connection_failed = False
+
+        if resolved.ready:
+            with httpx.Client(timeout=OPENAI_PREFLIGHT_TIMEOUT_SECONDS) as client:
+                chat_check, chat_connection_failed = self._probe_openai_model(
+                    client=client,
+                    api_key=str(resolved.openai_api_key),
+                    model_id=resolved.chat_model,
+                    check_name="chat_model_access",
+                    label="model tekstowy",
+                )
+                embedding_check, embedding_connection_failed = self._probe_openai_model(
+                    client=client,
+                    api_key=str(resolved.openai_api_key),
+                    model_id=resolved.embedding_model,
+                    check_name="embedding_model_access",
+                    label="model embeddingów",
+                )
+            checks.extend([chat_check, embedding_check])
+            connection_failed = chat_connection_failed or embedding_connection_failed
+        else:
+            checks.extend(
+                [
+                    {
+                        "name": "chat_model_access",
+                        "status": "skipped",
+                        "message": "Sprawdzenie modelu tekstowego pominięte do czasu pełnej konfiguracji AI.",
+                    },
+                    {
+                        "name": "embedding_model_access",
+                        "status": "skipped",
+                        "message": "Sprawdzenie modelu embeddingów pominięte do czasu pełnej konfiguracji AI.",
+                    },
+                ]
+            )
+
+        failed_names = {
+            check["name"]
+            for check in checks
+            if check["status"] == "failed"
+        }
+        if connection_failed:
+            status = "connection_failed"
+        elif failed_names:
+            status = "needs_configuration"
+        else:
+            status = "ready"
+
+        return {
+            "status": status,
+            "can_use_ai": status == "ready",
+            "checks": checks,
+        }
+
+    def _validate_ai_configuration(self, resolved: ResolvedAISettings) -> list[dict[str, str]]:
+        return [
+            build_check(
+                name="ai_enabled",
+                passed=resolved.enabled,
+                success_message="AI jest włączone.",
+                failure_message="AI jest wyłączone.",
+            ),
+            build_check(
+                name="ai_provider",
+                passed=resolved.provider == "openai",
+                success_message="Dostawca OpenAI jest wybrany.",
+                failure_message="RSSmaster obsługuje teraz tylko dostawcę OpenAI.",
+            ),
+            build_check(
+                name="openai_api_key",
+                passed=bool(resolved.openai_api_key),
+                success_message="Klucz OpenAI jest skonfigurowany.",
+                failure_message="Brakuje klucza OpenAI.",
+            ),
+            build_check(
+                name="chat_model",
+                passed=bool(resolved.chat_model),
+                success_message=f"Model tekstowy jest ustawiony: {resolved.chat_model}.",
+                failure_message="Brakuje nazwy modelu tekstowego.",
+            ),
+            build_check(
+                name="embedding_model",
+                passed=bool(resolved.embedding_model),
+                success_message=f"Model embeddingów jest ustawiony: {resolved.embedding_model}.",
+                failure_message="Brakuje nazwy modelu embeddingów.",
+            ),
+        ]
+
+    def _probe_openai_model(
+        self,
+        *,
+        client: httpx.Client,
+        api_key: str,
+        model_id: str,
+        check_name: str,
+        label: str,
+    ) -> tuple[dict[str, str], bool]:
+        safe_model_id = model_id.strip()
+        url = f"{OPENAI_MODELS_API_URL}/{quote(safe_model_id, safe='')}"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        try:
+            response = client.get(url, headers=headers)
+        except httpx.TimeoutException:
+            logger.warning("openai_model_preflight_timeout check=%s model=%s", check_name, safe_model_id)
+            return (
+                {
+                    "name": check_name,
+                    "status": "failed",
+                    "message": f"Przekroczono czas sprawdzania OpenAI dla: {label}.",
+                },
+                True,
+            )
+        except httpx.RequestError as error:
+            logger.warning("openai_model_preflight_request_failed check=%s model=%s error=%s", check_name, safe_model_id, error)
+            return (
+                {
+                    "name": check_name,
+                    "status": "failed",
+                    "message": f"Nie udało się połączyć z OpenAI podczas sprawdzania: {label}.",
+                },
+                True,
+            )
+
+        if response.status_code == 200:
+            return (
+                {
+                    "name": check_name,
+                    "status": "passed",
+                    "message": f"OpenAI potwierdziło dostęp do modelu {safe_model_id}.",
+                },
+                False,
+            )
+
+        if response.status_code in {401, 403}:
+            return (
+                {
+                    "name": check_name,
+                    "status": "failed",
+                    "message": f"OpenAI odrzuciło autoryzację dla: {label} ({response.status_code}).",
+                },
+                True,
+            )
+
+        if response.status_code == 404:
+            return (
+                {
+                    "name": check_name,
+                    "status": "failed",
+                    "message": f"Model {safe_model_id} nie jest dostępny dla tego klucza.",
+                },
+                False,
+            )
+
+        return (
+            {
+                "name": check_name,
+                "status": "failed",
+                "message": f"OpenAI zwróciło status {response.status_code} podczas sprawdzania: {label}.",
+            },
+            True,
+        )
 
     def get_delivery_settings(self) -> dict[str, Any]:
         resolved = self.get_resolved_delivery_settings()
@@ -309,6 +571,27 @@ def resolve_port(value: object, fallback: int) -> int:
     if parsed <= 0 or parsed > 65535:
         return fallback
     return parsed
+
+
+def resolve_bool(value: object, fallback: bool) -> bool:
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def resolve_ai_provider(value: object, fallback: str) -> Literal["openai"]:
+    normalized = normalize_text(value) or normalize_text(fallback) or "openai"
+    if normalized.lower() != "openai":
+        return "openai"
+    return "openai"
 
 
 def is_valid_email(value: str | None) -> bool:

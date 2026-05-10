@@ -343,8 +343,12 @@ def build_selection_snapshot(articles: list[dict[str, object]]) -> list[dict[str
             "channel_title": article["channel_title"],
             "category": article["category"],
             "title": article["title"],
+            "author": article["author"],
             "source_url": article["source_url"],
+            "excerpt": article["excerpt"],
             "published_at": article["published_at"],
+            "content_html": article["content_html"],
+            "word_count": article["word_count"],
             "content_hash": article["_content_hash"],
         }
         for article in articles

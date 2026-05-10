@@ -1,2 +1,59 @@
+@import "tailwindcss";
+@import "tw-animate-css";
 @import "./styles/base.css";
 @import "./styles/app-shell-reader-sources.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--shadcn-background);
+  --color-foreground: var(--shadcn-foreground);
+  --color-card: var(--shadcn-card);
+  --color-card-foreground: var(--shadcn-card-foreground);
+  --color-popover: var(--shadcn-popover);
+  --color-popover-foreground: var(--shadcn-popover-foreground);
+  --color-primary: var(--shadcn-primary);
+  --color-primary-foreground: var(--shadcn-primary-foreground);
+  --color-secondary: var(--shadcn-secondary);
+  --color-secondary-foreground: var(--shadcn-secondary-foreground);
+  --color-muted: var(--shadcn-muted);
+  --color-muted-foreground: var(--shadcn-muted-foreground);
+  --color-accent: var(--shadcn-accent);
+  --color-accent-foreground: var(--shadcn-accent-foreground);
+  --color-destructive: var(--shadcn-destructive);
+  --color-border: var(--shadcn-border);
+  --color-input: var(--shadcn-input);
+  --color-ring: var(--shadcn-ring);
+  --radius-sm: calc(var(--shadcn-radius) - 4px);
+  --radius-md: calc(var(--shadcn-radius) - 2px);
+  --radius-lg: var(--shadcn-radius);
+  --radius-xl: calc(var(--shadcn-radius) + 4px);
+}
+
+:root {
+  --shadcn-radius: 0.75rem;
+  --shadcn-background: #fbfaf7;
+  --shadcn-foreground: #171411;
+  --shadcn-card: #fffdf8;
+  --shadcn-card-foreground: #171411;
+  --shadcn-popover: #fffdf8;
+  --shadcn-popover-foreground: #171411;
+  --shadcn-primary: #1f2937;
+  --shadcn-primary-foreground: #fffaf0;
+  --shadcn-secondary: #f4efe6;
+  --shadcn-secondary-foreground: #2a2118;
+  --shadcn-muted: #f4efe6;
+  --shadcn-muted-foreground: #756b60;
+  --shadcn-accent: #f0e7d8;
+  --shadcn-accent-foreground: #241a10;
+  --shadcn-destructive: #b42318;
+  --shadcn-border: rgba(36, 26, 16, 0.13);
+  --shadcn-input: rgba(36, 26, 16, 0.16);
+  --shadcn-ring: rgba(31, 41, 55, 0.36);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}

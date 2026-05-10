@@ -310,10 +310,77 @@ class WorkspaceRepository:
             )
             connection.commit()
 
-    def list_ranked_rows(self, *, limit: int) -> list[dict[str, object]]:
+    def create_reader_feedback(
+        self,
+        *,
+        feedback_id: str,
+        item_id: str | None,
+        source_id: str | None,
+        action: str,
+        topic: str | None,
+        reason: str | None,
+    ) -> dict[str, object]:
+        with connect(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO reader_feedback (
+                    id,
+                    item_id,
+                    source_id,
+                    action,
+                    topic,
+                    reason
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [feedback_id, item_id, source_id, action, topic, reason],
+            )
+            connection.commit()
+            row = connection.execute(
+                """
+                SELECT id, item_id, source_id, action, topic, reason, created_at
+                FROM reader_feedback
+                WHERE id = ?
+                """,
+                [feedback_id],
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Reader feedback could not be reloaded.")
+        return dict(row)
+
+    def list_reader_feedback(self, *, limit: int = 500) -> list[dict[str, object]]:
         with connect(self.database_path) as connection:
             rows = connection.execute(
                 """
+                SELECT id, item_id, source_id, action, topic, reason, created_at
+                FROM reader_feedback
+                ORDER BY datetime(created_at) DESC, id DESC
+                LIMIT ?
+                """,
+                [max(1, limit)],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_ranked_rows(
+        self,
+        *,
+        limit: int,
+        statuses: tuple[str, ...] | None = ("eligible",),
+        min_score: float | None = None,
+    ) -> list[dict[str, object]]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            clauses.append(f"rs.candidate_status IN ({placeholders})")
+            params.extend(statuses)
+        if min_score is not None:
+            clauses.append("rs.final_score >= ?")
+            params.append(float(min_score))
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with connect(self.database_path) as connection:
+            rows = connection.execute(
+                f"""
                 SELECT
                     rs.item_id,
                     rs.candidate_status,
@@ -346,11 +413,11 @@ class WorkspaceRepository:
                     ON sci.item_id = i.id
                 LEFT JOIN story_clusters sc
                     ON sc.id = sci.cluster_id
-                WHERE rs.candidate_status = 'eligible'
+                {where_sql}
                 ORDER BY rs.final_score DESC, datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at)) DESC
                 LIMIT ?
                 """,
-                [max(1, limit)],
+                [*params, max(1, limit)],
             ).fetchall()
         return [dict(row) for row in rows]
 

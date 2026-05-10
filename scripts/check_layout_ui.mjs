@@ -31,11 +31,17 @@ let activeTargetUrls = {
 const cleanupCallbacks = [];
 let previousVisualBaseline = null;
 
-const DESKTOP_VIEWPORT = { id: "desktop", width: 1440, height: 1080 };
-const RESPONSIVE_VIEWPORTS = [
-  { id: "tablet", width: 1024, height: 900 },
-  { id: "mobile", width: 390, height: 844 },
+const LAYOUT_VIEWPORTS = [
+  { id: "desktop-1440", width: 1440, height: 1000 },
+  { id: "desktop-1180", width: 1180, height: 900 },
+  { id: "tablet-1024", width: 1024, height: 900 },
+  { id: "compact-800", width: 800, height: 900 },
+  { id: "mobile-390", width: 390, height: 844 },
 ];
+const DESKTOP_VIEWPORT = LAYOUT_VIEWPORTS[0];
+const TABLET_VIEWPORT = LAYOUT_VIEWPORTS[2];
+const MOBILE_VIEWPORT = LAYOUT_VIEWPORTS[4];
+const RESPONSIVE_VIEWPORTS = LAYOUT_VIEWPORTS.slice(1);
 
 const DESKTOP_ROUTES = [
   { id: "read-inbox", path: "/read/inbox" },
@@ -46,6 +52,7 @@ const DESKTOP_ROUTES = [
   { id: "discover", path: "/discover" },
   { id: "sources", path: "/sources" },
   { id: "digest", path: "/digest" },
+  { id: "magazines", path: "/magazines" },
   { id: "settings", path: "/settings" },
   { id: "capture", path: "/capture" },
 ];
@@ -55,6 +62,7 @@ const RESPONSIVE_ROUTES = [
   { id: "discover", path: "/discover" },
   { id: "sources", path: "/sources" },
   { id: "digest", path: "/digest" },
+  { id: "magazines", path: "/magazines" },
   { id: "settings", path: "/settings" },
   { id: "capture", path: "/capture" },
 ];
@@ -77,14 +85,14 @@ const REPRESENTATIVE_STATE_PROOFS = [
   {
     id: "read-inbox-tablet-menu-open",
     route: "/read/inbox",
-    viewport: RESPONSIVE_VIEWPORTS[0],
+    viewport: TABLET_VIEWPORT,
     toggleText: "Menu",
     interactionLabel: "open tablet drawer",
   },
   {
     id: "sources-mobile-menu-open",
     route: "/sources",
-    viewport: RESPONSIVE_VIEWPORTS[1],
+    viewport: MOBILE_VIEWPORT,
     toggleText: "Menu",
     interactionLabel: "open mobile drawer",
   },
@@ -131,9 +139,19 @@ function runtimeEvidence(runtime) {
   };
 }
 
+function hasLayoutHealthIssues(entry) {
+  return (
+    (entry.coveredFocusTargets?.length ?? 0) > 0 ||
+    (entry.minWidthIssues?.length ?? 0) > 0 ||
+    (entry.overlapIssues?.length ?? 0) > 0 ||
+    (entry.touchTargetIssues?.length ?? 0) > 0
+  );
+}
+
 function routeStatus(route) {
   return !route.ready ||
     route.overflow ||
+    hasLayoutHealthIssues(route) ||
     (route.semanticIssues?.length ?? 0) > 0 ||
     route.keyboardProbe?.looksReachable === false ||
     (route.blockingConsoleErrors?.length ?? 0) > 0 ||
@@ -146,6 +164,7 @@ function stateStatus(state) {
   return !state.ready ||
     state.interactionStatus !== "passed" ||
     state.overflow ||
+    hasLayoutHealthIssues(state) ||
     (state.semanticIssues?.length ?? 0) > 0 ||
     state.keyboardProbe?.looksReachable === false ||
     (state.blockingConsoleErrors?.length ?? 0) > 0 ||
@@ -166,6 +185,12 @@ function buildLayoutRoutes(routes) {
     overflow: route.overflow,
     keyboardReachable: route.keyboardProbe?.looksReachable ?? null,
     semanticIssues: route.semanticIssues ?? [],
+    layoutIssues: {
+      coveredFocusTargets: route.coveredFocusTargets ?? [],
+      minWidthIssues: route.minWidthIssues ?? [],
+      overlapIssues: route.overlapIssues ?? [],
+      touchTargetIssues: route.touchTargetIssues ?? [],
+    },
     consoleErrorCount: route.blockingConsoleErrors?.length ?? 0,
     pageErrorCount: route.pageErrors?.length ?? 0,
   }));
@@ -243,6 +268,10 @@ function attachLayoutArtifact({
       representative_state_count: representativeStates.length,
       clickthrough_count: clickthrough.length,
       last_active_step: lastActiveStep,
+      layout_viewports: LAYOUT_VIEWPORTS.map((viewport) => ({
+        id: viewport.id,
+        size: `${viewport.width}x${viewport.height}`,
+      })),
     },
     routes: buildLayoutRoutes([...desktopRoutes, ...responsiveRoutes]),
     runtime: runtimeEvidence(runtime),
@@ -491,6 +520,7 @@ async function fetchWithTimeout(url, timeoutMs = 10000) {
         .filter(Boolean);
       const main = document.querySelector("main");
       const isCaptureRoute = window.location.pathname === "/capture";
+      const isMagazineRoute = window.location.pathname === "/magazines";
       const mainText = main?.textContent?.trim().slice(0, 280) || null;
       const mainId = main?.id ?? null;
       const skipTargetsMain = mainId
@@ -538,6 +568,192 @@ async function fetchWithTimeout(url, timeoutMs = 10000) {
         })
         .filter((item) => item.right > window.innerWidth + 2 || item.width > window.innerWidth + 2)
         .slice(0, 15);
+      const emptyLayoutHealth = {
+        coveredFocusTargets: [],
+        minWidthIssues: [],
+        overlapIssues: [],
+        stickyHeaderBottom: 0,
+        stickyHeaderCount: 0,
+        touchTargetIssues: [],
+      };
+
+      const collectMagazineLayoutHealth = () => {
+        const focusSelector = [
+          "a[href]",
+          "button:not([disabled])",
+          "input:not([disabled])",
+          "select:not([disabled])",
+          "textarea:not([disabled])",
+          "[tabindex]:not([tabindex='-1'])",
+        ].join(",");
+        const touchTargetSelector = [
+          "[data-testid='magazine-screen'] button",
+          "[data-testid='magazine-screen'] a.secondary-button",
+          "[data-testid='magazine-issue-card']",
+        ].join(",");
+        const fitSelector = [
+          "[data-testid='magazine-screen']",
+          ".magazine-page-grid",
+          "[data-testid='magazine-issue-list']",
+          "[data-testid='magazine-active-issue']",
+          "[data-testid='magazine-reading-preview']",
+          "[data-testid='magazine-issue-groups']",
+          "[data-testid='magazine-issue-card']",
+          "[data-testid='magazine-issue-article']",
+          ".magazine-secondary-grid",
+          "[data-testid='magazine-next-issue-panel']",
+          ".magazine-delivery-status",
+        ].join(",");
+        const overlapSelector = [
+          "[data-testid='magazine-issue-list']",
+          "[data-testid='magazine-active-issue']",
+          "[data-testid='magazine-reading-preview']",
+          "[data-testid='magazine-issue-groups']",
+          "[data-testid='magazine-next-issue-panel']",
+          ".magazine-delivery-status",
+          ".magazine-feedback-slot",
+          ".magazine-issue-detail-actions > *",
+        ].join(",");
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const roundRect = (rect) => ({
+          bottom: Math.round(rect.bottom),
+          height: Math.round(rect.height),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          top: Math.round(rect.top),
+          width: Math.round(rect.width),
+        });
+        const getLabel = (element) => {
+          const text = (element.textContent || element.getAttribute("aria-label") || element.getAttribute("title") || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 90);
+          const testId = element.getAttribute("data-testid");
+          const className = (element.getAttribute("class") || "").replace(/\s+/g, ".").slice(0, 90);
+          return `${element.tagName.toLowerCase()}${testId ? `[data-testid="${testId}"]` : ""}${className ? `.${className}` : ""}${text ? `:${text}` : ""}`;
+        };
+        const isVisible = (element) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            Number.parseFloat(style.opacity || "1") > 0.01
+          );
+        };
+        const isInViewport = (rect) =>
+          rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
+        const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+        const stickyHeaderElements = Array.from(document.querySelectorAll("body *"))
+          .filter(isVisible)
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            const className = element.getAttribute("class") || "";
+            const tagName = element.tagName.toLowerCase();
+            const role = element.getAttribute("role") || "";
+            return { className, element, rect, role, style, tagName };
+          })
+          .filter(({ className, rect, role, style, tagName }) => {
+            const isTopLayer = style.position === "fixed" || style.position === "sticky";
+            const looksLikeHeader =
+              tagName === "header" ||
+              role === "banner" ||
+              className.includes("app-header") ||
+              className.includes("workspace-appbar") ||
+              className.includes("topbar");
+            return isTopLayer && looksLikeHeader && rect.top <= 8 && rect.bottom > 8;
+          });
+        const stickyHeaderBottom = Math.max(0, ...stickyHeaderElements.map(({ rect }) => rect.bottom));
+        const coveredFocusTargets = Array.from(document.querySelectorAll(focusSelector))
+          .filter(isVisible)
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const insideStickyHeader = stickyHeaderElements.some(({ element: header }) => header === element || header.contains(element));
+            const point = {
+              x: clamp(rect.left + Math.min(rect.width / 2, 24), 1, Math.max(1, viewportWidth - 1)),
+              y: clamp(rect.top + Math.min(rect.height / 2, 24), 1, Math.max(1, viewportHeight - 1)),
+            };
+            const topElement = isInViewport(rect) ? document.elementFromPoint(point.x, point.y) : null;
+            const coveredByElement =
+              topElement &&
+              topElement !== element &&
+              !element.contains(topElement) &&
+              !topElement.contains(element);
+            const coveredByStickyHeader =
+              !insideStickyHeader && stickyHeaderBottom > 0 && rect.top < stickyHeaderBottom - 1 && rect.bottom > stickyHeaderBottom + 1;
+            return {
+              coveredBy: coveredByElement ? getLabel(topElement) : null,
+              coveredByStickyHeader,
+              label: getLabel(element),
+              point: { x: Math.round(point.x), y: Math.round(point.y) },
+              rect: roundRect(rect),
+            };
+          })
+          .filter((item) => item.coveredBy || item.coveredByStickyHeader)
+          .slice(0, 20);
+        const criticalElements = [...new Set(Array.from(document.querySelectorAll(overlapSelector)).filter(isVisible))];
+        const overlapIssues = [];
+        for (let leftIndex = 0; leftIndex < criticalElements.length; leftIndex += 1) {
+          for (let rightIndex = leftIndex + 1; rightIndex < criticalElements.length; rightIndex += 1) {
+            const leftElement = criticalElements[leftIndex];
+            const rightElement = criticalElements[rightIndex];
+            if (leftElement.contains(rightElement) || rightElement.contains(leftElement)) {
+              continue;
+            }
+            const leftRect = leftElement.getBoundingClientRect();
+            const rightRect = rightElement.getBoundingClientRect();
+            const xOverlap = Math.min(leftRect.right, rightRect.right) - Math.max(leftRect.left, rightRect.left);
+            const yOverlap = Math.min(leftRect.bottom, rightRect.bottom) - Math.max(leftRect.top, rightRect.top);
+            if (xOverlap > 3 && yOverlap > 3) {
+              overlapIssues.push({
+                first: getLabel(leftElement),
+                firstRect: roundRect(leftRect),
+                overlap: { height: Math.round(yOverlap), width: Math.round(xOverlap) },
+                second: getLabel(rightElement),
+                secondRect: roundRect(rightRect),
+              });
+            }
+          }
+        }
+        const minWidthIssues = Array.from(document.querySelectorAll(fitSelector))
+          .filter(isVisible)
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return {
+              label: getLabel(element),
+              minWidth: style.minWidth,
+              rect: roundRect(rect),
+            };
+          })
+          .filter((item) => item.rect.width > viewportWidth + 2 || item.rect.left < -2 || item.rect.right > viewportWidth + 2)
+          .slice(0, 20);
+        const touchTargetIssues = Array.from(document.querySelectorAll(touchTargetSelector))
+          .filter(isVisible)
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              label: getLabel(element),
+              rect: roundRect(rect),
+            };
+          })
+          .filter((item) => item.rect.width < 40 || item.rect.height < 40)
+          .slice(0, 20);
+
+        return {
+          coveredFocusTargets,
+          minWidthIssues,
+          overlapIssues: overlapIssues.slice(0, 20),
+          stickyHeaderBottom: Math.round(stickyHeaderBottom),
+          stickyHeaderCount: stickyHeaderElements.length,
+          touchTargetIssues,
+        };
+      };
+      const magazineLayoutHealth = isMagazineRoute ? collectMagazineLayoutHealth() : emptyLayoutHealth;
 
       return {
         h1: h1Nodes[0] ?? null,
@@ -557,6 +773,7 @@ async function fetchWithTimeout(url, timeoutMs = 10000) {
         offenders,
         innerWidth: window.innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
+        ...magazineLayoutHealth,
       };
     });
   }
@@ -725,6 +942,7 @@ async function fetchWithTimeout(url, timeoutMs = 10000) {
       { text: "Odkrywaj", labels: ["Odkrywaj"], expect: "/discover" },
       { text: "Źródła", labels: ["Źródła", "Zrodla"], expect: "/sources" },
       { text: "Digest", labels: ["Digest"], expect: "/digest" },
+      { text: "Magazyny", labels: ["Magazyny"], expect: "/magazines" },
       { text: "Ustawienia", labels: ["Ustawienia"], expect: "/settings" },
       { text: "Czytaj", labels: ["Czytaj"], expect: "/read/" },
     ];
@@ -926,6 +1144,7 @@ async function main() {
       (route) =>
         !route.ready ||
         route.overflow ||
+        hasLayoutHealthIssues(route) ||
         route.semanticIssues.length > 0 ||
         !route.keyboardProbe.looksReachable ||
         route.blockingConsoleErrors.length > 0 ||
@@ -936,6 +1155,7 @@ async function main() {
         !state.ready ||
         state.interactionStatus !== "passed" ||
         state.overflow ||
+        hasLayoutHealthIssues(state) ||
         state.semanticIssues.length > 0 ||
         !state.keyboardProbe.looksReachable ||
         state.blockingConsoleErrors.length > 0 ||

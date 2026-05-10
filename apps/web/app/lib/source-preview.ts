@@ -129,24 +129,24 @@ export function classifySourcePreviewFailure({
 
 export function getSourcePreviewFailureLabel(classification: SourcePreviewFailureClassification) {
   if (classification.failureKind === "discovery") {
-    return "Nie udalo sie wykryc feedu";
+    return "Nie udało się wykryć feedu";
   }
   if (classification.failureKind === "transport") {
-    return "Feed jest chwilowo niedostepny";
+    return "Źródło jest chwilowo niedostępne";
   }
-  return classification.isExpectedPreviewFailure ? "Preview nie mogl zostac potwierdzony" : "Nieoczekiwany blad preview";
+  return classification.isExpectedPreviewFailure ? "Nie można potwierdzić podglądu" : "Nieoczekiwany błąd podglądu";
 }
 
 export function getSourcePreviewFailureDescription(classification: SourcePreviewFailureClassification) {
   if (classification.failureKind === "discovery") {
-    return "Nie udalo sie wykryc poprawnego feedu dla podanego adresu.";
+    return "Nie udało się wykryć poprawnego feedu dla podanego adresu.";
   }
   if (classification.failureKind === "transport") {
-    return "Nie udalo sie polaczyc z podanym zrodlem. Sprobuj ponownie za chwile albo sprawdz adres.";
+    return "Nie udało się połączyć z podanym źródłem. Spróbuj ponownie za chwilę albo sprawdź adres.";
   }
   return classification.isExpectedPreviewFailure
-    ? "Preview nie mogl zostac przygotowany dla podanego adresu."
-    : "Wystapil nieoczekiwany blad podczas przygotowywania preview.";
+    ? "Podgląd nie mógł zostać przygotowany dla podanego adresu."
+    : "Wystąpił nieoczekiwany błąd podczas przygotowywania podglądu.";
 }
 
 export function getSourcePreviewUiState({
@@ -242,7 +242,7 @@ export function getSourcePreviewStatusLabel(status: SourcePreviewPayloadInput["s
     return "Już dodane";
   }
   if (status === "multiple_candidates") {
-    return "Wiele kandydatów";
+    return "Wiele wyników";
   }
   return "Gotowy podgląd";
 }
@@ -264,14 +264,14 @@ export function getSourcePreviewAnnouncement({
   }
   if (uiState === "multiple_candidates") {
     return resultCount > 0
-      ? `Wynik gotowy. Znaleziono ${resultCount} ${resultCount === 1 ? "kandydata" : "kandydatów"}.`
-      : "Wynik gotowy. Wykryto wiele kandydatów.";
+      ? `Wynik gotowy. Znaleziono ${resultCount} ${resultCount === 1 ? "wynik" : "wyniki"}.`
+      : "Wynik gotowy. Wykryto wiele wyników.";
   }
   if (uiState === "error") {
     const lead = feedbackLines[0]?.trim();
-    return [feedbackTitle?.trim(), lead].filter(Boolean).join(". ") || "Preview nie zostal przygotowany.";
+    return [feedbackTitle?.trim(), lead].filter(Boolean).join(". ") || "Podgląd nie został przygotowany.";
   }
-  return "Wklej adres strony albo feedu, aby zobaczyć preview.";
+  return "Wklej adres strony albo feedu, aby zobaczyć podgląd.";
 }
 
 export function buildSourcePreviewMetrics({

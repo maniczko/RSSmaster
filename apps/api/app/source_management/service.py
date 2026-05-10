@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
+import sqlite3
 from typing import Any
 from uuid import uuid4
 from xml.etree import ElementTree
@@ -11,7 +13,7 @@ from app.channels.service import ChannelDiscoveryService, FeedMetadata, local_na
 from app.config import Settings
 from app.errors import ApiError
 
-from .models import SourceActionRequest
+from .models import SourceActionRequest, SourceCreateRequest
 from .repository import (
     SOURCE_MANAGEMENT_CONTROLS_KEY,
     SOURCE_MANAGEMENT_LAYOUT_KEY,
@@ -114,6 +116,137 @@ class SourceManagementService:
                 else None
             ),
         }
+
+    def create_source(self, payload: SourceCreateRequest) -> dict[str, object]:
+        target_url = payload.feed_url or payload.input_url
+        if target_url is None:
+            raise ApiError(
+                status_code=400,
+                code="missing_source_url",
+                message="Source create requires a website URL or feed URL.",
+                details={},
+                retryable=False,
+            )
+
+        discovery = self.discovery.discover(target_url)
+        layout = self._load_layout_document()
+        controls = self._load_controls_document()
+        now = datetime.now(UTC)
+        existing_sources = self.repository.list_sources_by_feed_urls([discovery.feed.feed_url])
+        existing_source = existing_sources.get(discovery.feed.feed_url)
+        status = "created"
+        source_id: str
+
+        if existing_source is not None:
+            if payload.on_duplicate == "error":
+                raise ApiError(
+                    status_code=409,
+                    code="duplicate_source",
+                    message="This source is already in your library.",
+                    details={
+                        "source_id": existing_source["id"],
+                        "feed_url": existing_source["feed_url"],
+                        "state": existing_source["state"],
+                    },
+                    retryable=False,
+                )
+
+            source_id = str(existing_source["id"])
+            if payload.on_duplicate == "reactivate" and existing_source["state"] != "active":
+                self.repository.commit_source_updates(
+                    source_id,
+                    category=payload.category,
+                    update_category="category" in payload.model_fields_set,
+                    state="active",
+                    update_state=True,
+                    layout_value=None,
+                    controls_value=None,
+                    updated_by=payload.updated_by,
+                )
+                status = "reactivated"
+            else:
+                status = "existing"
+                if "category" in payload.model_fields_set:
+                    self.repository.commit_source_updates(
+                        source_id,
+                        category=payload.category,
+                        update_category=True,
+                        state=None,
+                        update_state=False,
+                        layout_value=None,
+                        controls_value=None,
+                        updated_by=payload.updated_by,
+                    )
+        else:
+            try:
+                source_id = self.repository.create_source(
+                    title=discovery.feed.title,
+                    site_url=discovery.feed.site_url,
+                    feed_url=discovery.feed.feed_url,
+                    normalized_feed_url=discovery.feed.feed_url,
+                    description=discovery.feed.description,
+                    language=discovery.feed.language,
+                    category=payload.category,
+                )
+            except sqlite3.IntegrityError as error:
+                if payload.on_duplicate == "error":
+                    raise ApiError(
+                        status_code=409,
+                        code="duplicate_source",
+                        message="This source is already in your library.",
+                        details={"feed_url": discovery.feed.feed_url},
+                        retryable=False,
+                    ) from error
+                refreshed = self.repository.list_sources_by_feed_urls([discovery.feed.feed_url]).get(discovery.feed.feed_url)
+                if refreshed is None:
+                    raise
+                source_id = str(refreshed["id"])
+                status = "existing"
+
+        layout_dirty = self._apply_create_membership(payload, layout=layout, source_id=source_id, now=utc_now())
+        if layout_dirty:
+            layout["updated_at"] = utc_now()
+            self.repository.save_documents(
+                layout_value=layout,
+                controls_value=None,
+                updated_by=payload.updated_by,
+            )
+
+        source_response = self.get_source(source_id)
+        return {
+            "status": status,
+            "source": source_response["source"],
+            "discovery": {
+                "mode": discovery.mode,
+                "resolved_feed_url": discovery.feed.feed_url,
+                "candidates": discovery.candidates,
+            },
+            "initial_sync_run": None,
+        }
+
+    def restore_source(self, channel_id: str) -> dict[str, object]:
+        source = self.repository.get_source(channel_id)
+        if source is None:
+            raise ApiError(
+                status_code=404,
+                code="source_not_found",
+                message="Source was not found.",
+                details={"channel_id": channel_id},
+                retryable=False,
+            )
+        if source["state"] == "archived":
+            self.repository.commit_source_updates(
+                channel_id,
+                category=None,
+                update_category=False,
+                state="active",
+                update_state=True,
+                layout_value=None,
+                controls_value=None,
+                updated_by=None,
+            )
+
+        return self.get_source(channel_id)
 
     def get_source(self, channel_id: str) -> dict[str, object]:
         source = self.repository.get_source(channel_id)
@@ -435,12 +568,15 @@ class SourceManagementService:
             for feed in new_feeds
         ]
 
+        created_source_ids: set[str] = set()
         if feeds_to_insert:
-            self.repository.apply_opml_import(
-                feeds=feeds_to_insert,
-                layout_value=None,
-                default_category=default_category if isinstance(default_category, str) else None,
-                updated_by=updated_by if isinstance(updated_by, str) else None,
+            created_source_ids = set(
+                self.repository.apply_opml_import(
+                    feeds=feeds_to_insert,
+                    layout_value=None,
+                    default_category=default_category if isinstance(default_category, str) else None,
+                    updated_by=updated_by if isinstance(updated_by, str) else None,
+                )
             )
 
         all_sources = self.repository.list_sources_by_feed_urls([feed.feed_url for feed in parsed.feeds])
@@ -472,11 +608,6 @@ class SourceManagementService:
                 updated_by=updated_by if isinstance(updated_by, str) else None,
             )
 
-        created_source_ids = {
-            str(feed["channel_id"])
-            for feed in feeds_to_insert
-            if any(str(feed["channel_id"]) == str(source["id"]) for source in all_sources.values())
-        }
         created_sources_map = self.repository.list_sources_by_ids(sorted(created_source_ids))
         controls = self._load_controls_document()
         now = datetime.now(UTC)
@@ -488,7 +619,7 @@ class SourceManagementService:
         created_sources.sort(key=lambda item: (item["title"].casefold(), item["id"]))
 
         return {
-            "summary": build_opml_summary(parsed=parsed, existing_feed_count=len(parsed.feeds) - len(created_sources)),
+            "summary": build_opml_summary(parsed=parsed, existing_feed_count=len(parsed.feeds) - len(created_source_ids)),
             "created_sources": created_sources,
             "existing_source_ids": sorted(
                 str(source["id"])
@@ -632,11 +763,23 @@ class SourceManagementService:
     ) -> dict[str, object]:
         if source is None:
             return {
+                "candidate_id": build_source_candidate_id(feed.feed_url),
                 "feed_url": feed.feed_url,
                 "title": feed.title,
                 "site_url": feed.site_url,
                 "description": feed.description,
                 "language": feed.language,
+                "estimated_items_per_week": feed.estimated_items_per_week,
+                "sample_items": [
+                    {
+                        "title": item.title,
+                        "url": item.url,
+                        "published_at": item.published_at,
+                        "image_url": item.image_url,
+                    }
+                    for item in feed.sample_items
+                ],
+                "validation": build_source_preview_validation(feed),
                 "already_subscribed": False,
                 "existing_source_id": None,
                 "existing_state": None,
@@ -646,17 +789,66 @@ class SourceManagementService:
 
         source_model = self._build_source_model(source, layout=layout, controls=controls, now=now)
         return {
+            "candidate_id": build_source_candidate_id(feed.feed_url),
             "feed_url": feed.feed_url,
             "title": feed.title,
             "site_url": feed.site_url,
             "description": feed.description,
             "language": feed.language,
+            "estimated_items_per_week": feed.estimated_items_per_week,
+            "sample_items": [
+                {
+                    "title": item.title,
+                    "url": item.url,
+                    "published_at": item.published_at,
+                    "image_url": item.image_url,
+                }
+                for item in feed.sample_items
+            ],
+            "validation": build_source_preview_validation(feed),
             "already_subscribed": True,
             "existing_source_id": source_model["id"],
             "existing_state": source_model["state"],
             "controls": source_model["controls"],
             "groups": source_model["groups"],
         }
+
+    def _apply_create_membership(
+        self,
+        payload: SourceCreateRequest,
+        *,
+        layout: dict[str, Any],
+        source_id: str,
+        now: str,
+    ) -> bool:
+        if payload.folder is None and payload.bundles is None:
+            return False
+
+        membership = self._get_membership_entry(layout, source_id)
+        dirty = False
+
+        if payload.folder is not None:
+            folder, _ = self._resolve_folder_target(layout, payload.folder.model_dump(), now=now)
+            if membership.get("folder_id") != folder["id"]:
+                membership["folder_id"] = folder["id"]
+                dirty = True
+
+        if payload.bundles is not None:
+            bundle_ids: list[str] = []
+            for target in payload.bundles:
+                bundle, _ = self._resolve_bundle_target(layout, target.model_dump(), now=now)
+                if bundle["id"] not in bundle_ids:
+                    bundle_ids.append(bundle["id"])
+            if membership.get("bundle_ids") != bundle_ids:
+                membership["bundle_ids"] = bundle_ids
+                dirty = True
+
+        if dirty:
+            membership["updated_at"] = now
+            membership["updated_by"] = payload.updated_by
+            self._write_membership_entry(layout, source_id, membership)
+
+        return dirty
 
     def _build_control_state(
         self,
@@ -1118,6 +1310,29 @@ def build_opml_summary(*, parsed: ParsedOpmlDocument, existing_feed_count: int) 
         "duplicate_feeds": parsed.duplicate_feeds,
         "folder_count": len(parsed.folder_counts),
     }
+
+
+def build_source_candidate_id(feed_url: str) -> str:
+    digest = hashlib.sha1(feed_url.encode("utf-8")).hexdigest()[:16]
+    return f"feed_{digest}"
+
+
+def build_source_preview_validation(feed: FeedMetadata) -> dict[str, object]:
+    return {
+        "reachable": True,
+        "feed_kind": infer_feed_kind(feed.feed_url),
+        "item_count_sampled": len(feed.sample_items),
+        "warnings": [],
+    }
+
+
+def infer_feed_kind(feed_url: str) -> str:
+    lowered = feed_url.lower()
+    if "atom" in lowered:
+        return "atom"
+    if lowered.endswith(".rdf") or "rdf" in lowered:
+        return "rdf"
+    return "rss"
 
 
 def utc_now() -> str:

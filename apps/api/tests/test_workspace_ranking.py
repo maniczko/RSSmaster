@@ -221,6 +221,82 @@ class WorkspaceRankingTests(unittest.TestCase):
             float(state_by_id["itm_quote"]["score_breakdown"]["relevance_score"]),
             float(state_by_id["itm_story"]["score_breakdown"]["relevance_score"]),
         )
+        self.assertEqual(state_by_id["itm_quote"]["candidate_reason"], "low_signal_hidden")
+
+    def test_hides_formulaic_quote_even_when_source_matches_profile(self) -> None:
+        rows = [
+            make_row(
+                item_id="itm_quote",
+                title="Ile kosztuje funt? Kurs funta do zlotego PLN/GBP 19.04.2026",
+                channel_id="chn_money",
+            ),
+            make_row(
+                item_id="itm_story",
+                title="Money.pl analizuje inwestycje energetyczne w portach",
+                channel_id="chn_money",
+            ),
+        ]
+        profile = {
+            **make_profile(),
+            "interests": [
+                {
+                    "label": "Money.pl",
+                    "normalized_topic": "chn_money",
+                    "kind": "source",
+                    "weight": 2,
+                }
+            ],
+            "effective_interests": [
+                {
+                    "label": "Money.pl",
+                    "normalized_topic": "chn_money",
+                    "kind": "source",
+                    "weight": 2,
+                }
+            ],
+        }
+
+        states = build_ranking_states(rows, profile=profile, clusters=build_story_clusters(rows))
+        state_by_id = {state["item_id"]: state for state in states}
+
+        self.assertEqual(state_by_id["itm_quote"]["candidate_status"], "excluded")
+        self.assertEqual(state_by_id["itm_quote"]["candidate_reason"], "low_signal_hidden")
+        self.assertEqual(state_by_id["itm_story"]["candidate_status"], "eligible")
+
+    def test_less_like_this_feedback_hides_matching_topic(self) -> None:
+        rows = [
+            make_row(
+                item_id="itm_energy",
+                title="Energia i wodór przyspieszają inwestycje w regionie",
+                channel_id="chn_energy",
+            ),
+            make_row(
+                item_id="itm_ports",
+                title="Porty szykują nowy plan logistyczny",
+                channel_id="chn_ports",
+            ),
+        ]
+        profile = {
+            **make_profile(),
+            "reader_feedback": [
+                {
+                    "id": "rfb_1",
+                    "item_id": "itm_old",
+                    "source_id": "chn_energy",
+                    "action": "less_like_this",
+                    "topic": "energia",
+                    "reason": "reader_action",
+                }
+            ],
+        }
+
+        states = build_ranking_states(rows, profile=profile, clusters=build_story_clusters(rows))
+        state_by_id = {state["item_id"]: state for state in states}
+
+        self.assertEqual(state_by_id["itm_energy"]["candidate_status"], "suppressed")
+        self.assertEqual(state_by_id["itm_energy"]["candidate_reason"], "feedback_less_like_this")
+        self.assertEqual(state_by_id["itm_energy"]["score_breakdown"]["visibility"], "hidden")
+        self.assertEqual(state_by_id["itm_ports"]["candidate_status"], "eligible")
 
     def test_caps_eligible_recommendations_to_daily_goal(self) -> None:
         rows = [
@@ -240,6 +316,26 @@ class WorkspaceRankingTests(unittest.TestCase):
 
         self.assertEqual(len(eligible), 2)
         self.assertEqual(len(cutoff), 3)
+
+    def test_does_not_learn_from_default_digest_candidates_without_editorial_signal(self) -> None:
+        learned = derive_learned_interests(
+            [
+                {
+                    **make_row(
+                        item_id="itm_default_digest",
+                        title="Zwykly news biznesowy bez reakcji uzytkownika",
+                        channel_id="chn_money",
+                        digest_candidate=True,
+                    ),
+                    "channel_title": "Money.pl",
+                    "annotation_count": 0,
+                    "tag_names": "",
+                }
+            ],
+            explicit_interests=[],
+        )
+
+        self.assertEqual(learned, [])
 
     def test_penalizes_repeated_low_signal_family_candidates(self) -> None:
         rows = [
@@ -265,8 +361,8 @@ class WorkspaceRankingTests(unittest.TestCase):
         states = build_ranking_states(rows, profile=make_profile(), clusters=build_story_clusters(rows))
         state_by_id = {state["item_id"]: state for state in states}
 
-        self.assertEqual(float(state_by_id["itm_quote_one"]["score_breakdown"]["diversity_penalty"]), 0.0)
-        self.assertGreater(float(state_by_id["itm_quote_two"]["score_breakdown"]["diversity_penalty"]), 0.0)
+        self.assertEqual(state_by_id["itm_quote_one"]["candidate_reason"], "low_signal_hidden")
+        self.assertEqual(state_by_id["itm_quote_two"]["candidate_reason"], "low_signal_hidden")
         self.assertLess(
             float(state_by_id["itm_quote_two"]["final_score"]),
             float(state_by_id["itm_story_distinct"]["final_score"]),

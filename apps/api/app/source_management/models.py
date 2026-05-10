@@ -4,10 +4,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.channels.models import ChannelHealthModel, PreviewDiscoveryModel
+from app.channels.models import ChannelHealthModel, PreviewDiscoveryModel, SourcePreviewItemModel
+from app.sync.models import SyncRunModel
 
 SourceState = Literal["active", "inactive", "archived"]
 SourceControlAction = Literal["pause", "resume", "mute", "unmute", "snooze", "unsnooze", "regroup"]
+SourceInitialSyncMode = Literal["none", "enqueue"]
+SourceDuplicatePolicy = Literal["return_existing", "reactivate", "error"]
+SourceCreateStatus = Literal["created", "existing", "reactivated"]
 
 
 def _normalize_optional_text(value: str | None) -> str | None:
@@ -97,18 +101,28 @@ class SourceReadResponse(BaseModel):
     source: SourceReadModel
 
 
+class SourcePreviewValidationModel(BaseModel):
+    reachable: bool
+    feed_kind: str | None = None
+    item_count_sampled: int
+    warnings: list[str] = Field(default_factory=list)
+
+
 class SourcePreviewCandidateModel(BaseModel):
+    candidate_id: str
     feed_url: str
     title: str
     site_url: str | None
     description: str | None
     language: str | None
+    estimated_items_per_week: int | None = None
+    sample_items: list[SourcePreviewItemModel] = Field(default_factory=list)
+    validation: SourcePreviewValidationModel
     already_subscribed: bool = False
     existing_source_id: str | None = None
     existing_state: SourceState | None = None
     controls: SourceControlStateModel | None = None
     groups: SourceGroupMembershipModel | None = None
-
 
 class PreviewSourceRequest(BaseModel):
     input_url: str = Field(min_length=1, max_length=2048)
@@ -260,6 +274,44 @@ class SourceActionRequest(BaseModel):
 
 class SourceActionResponse(BaseModel):
     action: SourceControlAction
+    source: SourceReadModel
+
+
+class SourceCreateRequest(BaseModel):
+    input_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    feed_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    category: str | None = Field(default=None, max_length=120)
+    folder: SourceFolderTargetModel | None = None
+    bundles: list[SourceBundleTargetModel] | None = None
+    initial_sync: SourceInitialSyncMode = "none"
+    on_duplicate: SourceDuplicatePolicy = "return_existing"
+    updated_by: str | None = Field(default=None, max_length=120)
+
+    @field_validator("input_url", "feed_url", "category", "updated_by")
+    @classmethod
+    def normalize_optional_text_fields(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value)
+
+    @model_validator(mode="after")
+    def validate_source_target(self) -> "SourceCreateRequest":
+        if self.input_url is None and self.feed_url is None:
+            raise ValueError("source create requires input_url or feed_url.")
+        return self
+
+
+class SourceCreateResponse(BaseModel):
+    status: SourceCreateStatus
+    source: SourceReadModel
+    discovery: PreviewDiscoveryModel
+    initial_sync_run: SyncRunModel | None = None
+
+
+class SourceSyncResponse(BaseModel):
+    source: SourceReadModel
+    run: SyncRunModel
+
+
+class SourceRestoreResponse(BaseModel):
     source: SourceReadModel
 
 

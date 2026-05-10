@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 
 import type { DigestCandidatePreviewStatus, DigestQueueCopy } from "@/app/lib/digest-selection";
+import { Badge } from "@/app/components/ui/badge";
+import { Button } from "@/app/components/ui/button";
 
 import { DigestCandidateSummary, type DigestCandidateSummaryPreview } from "./digest-candidate-summary";
 import { DigestIcon } from "./ui-icons";
@@ -67,22 +69,22 @@ export function DigestBuildPanel({
     <section className="ops-section">
       <div className="ops-section-header">
         <div>
-          <span className={showBadgeIcon ? "panel-badge panel-badge-with-icon" : "panel-badge"}>
+          <Badge className={showBadgeIcon ? "panel-badge panel-badge-with-icon" : "panel-badge"} variant="secondary">
             {showBadgeIcon ? <DigestIcon className="app-icon app-icon-xs" /> : null}
             {badgeLabel}
-          </span>
+          </Badge>
           <h3>{title}</h3>
         </div>
         <span>{countLabel}</span>
       </div>
 
       <div className="channel-actions">
-        <button className="secondary-button" disabled={previewDisabled} onClick={onPreview} type="button">
+        <Button className="secondary-button" disabled={previewDisabled} onClick={onPreview} type="button" variant="outline">
           {renderDigestButtonLabel(resolvedPreviewLabel, showButtonIcons)}
-        </button>
-        <button className="action-button compact-button" disabled={buildDisabled} onClick={onBuild} type="button">
+        </Button>
+        <Button className="action-button compact-button" disabled={buildDisabled} onClick={onBuild} type="button">
           {renderDigestButtonLabel(buildLabel, showButtonIcons)}
-        </button>
+        </Button>
       </div>
 
       <DigestCandidateSummary

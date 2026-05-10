@@ -1,4 +1,7 @@
 import type { SourceAddModeDefinition, SourceAddModeId } from "@/app/lib/source-add-modes";
+import { cn } from "@/app/lib/utils";
+import { Badge } from "@/app/components/ui/badge";
+import { Button } from "@/app/components/ui/button";
 
 import {
   BackofficeIcon,
@@ -57,13 +60,14 @@ export function SourceAddModeNav({
       </div>
       <div aria-labelledby={primaryModesLabelId} className="source-add-nav-list" role="group">
         {primaryModes.map((mode) => (
-          <button
+          <Button
             aria-pressed={activeModeId === mode.id}
-            className={`source-add-nav-item ${activeModeId === mode.id ? "source-add-nav-item-active" : ""}`}
+            className={cn("source-add-nav-item", activeModeId === mode.id && "source-add-nav-item-active")}
             data-testid={`source-mode-${mode.id}`}
             key={mode.id}
             onClick={() => onModeSelect(mode.id, "input")}
             type="button"
+            variant={activeModeId === mode.id ? "secondary" : "ghost"}
           >
             <span className="source-add-nav-icon">
               <SourceModeIcon modeId={mode.id} />
@@ -72,7 +76,7 @@ export function SourceAddModeNav({
               <strong>{mode.label}</strong>
               <small>{mode.enabled ? mode.description : "Wkrotce"}</small>
             </span>
-          </button>
+          </Button>
         ))}
       </div>
       {importMode ? (
@@ -82,24 +86,25 @@ export function SourceAddModeNav({
             <p>Przenieś bibliotekę z OPML albo zapisz pojedynczy link bez opuszczania produktu.</p>
           </div>
           <div aria-labelledby={secondaryActionsLabelId} className="source-add-nav-link-list" role="group">
-            <button
+            <Button
               aria-pressed={activeModeId === importMode.id}
-              className={`source-add-nav-link ${activeModeId === importMode.id ? "source-add-nav-link-active" : ""}`}
+              className={cn("source-add-nav-link", activeModeId === importMode.id && "source-add-nav-link-active")}
               data-testid="source-mode-import"
               onClick={() => onModeSelect(importMode.id, "import")}
               type="button"
+              variant="outline"
             >
               <span className="button-with-icon">
                 <ImportIcon className="app-icon button-inline-icon" />
                 {importMode.label}
               </span>
-            </button>
-            <button className="source-add-nav-link" data-testid="source-capture-link" onClick={onCapture} type="button">
+            </Button>
+            <Button className="source-add-nav-link" data-testid="source-capture-link" onClick={onCapture} type="button" variant="outline">
               <span className="button-with-icon">
                 <CaptureIcon className="app-icon button-inline-icon" />
                 Przechwyć link
               </span>
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -113,9 +118,9 @@ export function SourceAddModeNav({
           </summary>
           <div className="source-add-nav-upcoming-list">
             {upcomingModes.map((mode) => (
-              <span className="source-add-nav-upcoming-chip" key={mode.id}>
+              <Badge className="source-add-nav-upcoming-chip" key={mode.id} variant="secondary">
                 {mode.label}
-              </span>
+              </Badge>
             ))}
           </div>
         </details>

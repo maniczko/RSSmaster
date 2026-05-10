@@ -57,12 +57,30 @@ Stores incoming articles, reading state, extraction artifacts, and digest eligib
 - detail responses may expose a sanitized `extraction_error` as `diagnostic_reason`
 - item-level `POST /api/v1/items/{item_id}/reextract` rewrites only the existing extraction artifact columns for that one item when called with `mode: write`; `mode: dry_run` performs no storage mutation
 
+### `ranking_state`
+
+Stores the latest explainable recommendation snapshot for the reader.
+
+- Needed for: `Dla mnie`, Discover recommendations, briefing, story grouping, and hidden-row explanations
+- Important fields: `candidate_status`, `candidate_reason`, `final_score`, `score_breakdown_json`
+- Key guarantee: low-signal and feedback-suppressed items stay inspectable without appearing in the default reading queue
+
+### `reader_feedback`
+
+Stores explicit reader actions used to tune the ranking model.
+
+- Needed for: `Mniej takich`, `Wiecej takich`, `Ukryj temat`, `Wycisz zrodlo`, and `To jest wazne`
+- Important fields: `item_id`, `source_id`, `action`, `topic`, `reason`
+- Key guarantee: feedback changes ranking visibility only; it does not mutate read/archive/library state
+
 ### `settings`
 
 Stores mutable runtime configuration that belongs in app state rather than static files.
 
 - Needed for: user-facing preferences, safe runtime configuration snapshots
 - Important fields: `key`, `value_json`
+- Known keys: `delivery_profile`, `ai_profile`
+- `ai_profile` stores OpenAI readiness fields (`enabled`, `provider`, `chat_model`, `embedding_model`) and may store a local `openai_api_key`; API responses must redact that secret and `.env` remains the fallback source.
 - Key guarantee: settings stay extensible without premature table sprawl
 
 ### `job_runs`

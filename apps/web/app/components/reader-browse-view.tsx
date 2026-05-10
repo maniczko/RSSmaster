@@ -1,6 +1,7 @@
 import { FeedStream } from "@/app/components/feed-stream";
 
 type ReaderBrowseSortMode = "newest" | "oldest";
+type ReaderBrowseQueueMode = "for_you" | "latest" | "all" | "hidden";
 
 type ReaderBrowseItem = {
   id: string;
@@ -47,10 +48,23 @@ type ReaderBrowseViewProps = {
   isFocusedMode: boolean;
   isLoading?: boolean;
   itemSearch: string;
+  readerQueueMode: ReaderBrowseQueueMode;
   itemSortMode: ReaderBrowseSortMode;
   items: ReaderBrowseItem[];
   message: string | null;
   messageTone: "default" | "error";
+  rankingExplanations?: Record<
+    string,
+    {
+      score: number;
+      reason: string;
+      visibility: "shown" | "hidden";
+      visibilityReason: string | null;
+      positiveSignals: string[];
+      negativeSignals: string[];
+      qualityFlags: string[];
+    }
+  >;
   showMessage: boolean;
   showReadItems: boolean;
   visibleUnreadCount: number;
@@ -58,6 +72,11 @@ type ReaderBrowseViewProps = {
   onItemSearchChange: (value: string) => void;
   onOpenItem: (itemId: string) => void;
   onRefresh: () => void;
+  onReaderFeedback?: (
+    itemId: string,
+    action: "more_like_this" | "less_like_this" | "hide_topic" | "mute_source" | "important",
+  ) => void;
+  onReaderQueueModeChange: (mode: ReaderBrowseQueueMode) => void;
   onSelectItem: (itemId: string) => void;
   onShowReadItemsChange: (showReadItems: boolean) => void;
   onSortModeChange: (sortMode: ReaderBrowseSortMode) => void;
@@ -82,13 +101,17 @@ export function ReaderBrowseView({
   isFocusedMode,
   isLoading = false,
   itemSearch,
+  readerQueueMode,
   itemSortMode,
   items,
   message,
   messageTone,
+  rankingExplanations,
   onItemSearchChange,
   onOpenItem,
   onRefresh,
+  onReaderFeedback,
+  onReaderQueueModeChange,
   onSelectItem,
   onShowReadItemsChange,
   onSortModeChange,
@@ -110,12 +133,26 @@ export function ReaderBrowseView({
 
       <div className="feed-browse-toolbar feed-browse-toolbar-stream" data-testid="reader-browse-toolbar">
         <div className="feed-browse-toolbar-left">
+          <div className="segmented-control" aria-label="Tryb kolejki czytelnika">
+            <button className={readerQueueMode === "for_you" ? "segment-active" : ""} onClick={() => onReaderQueueModeChange("for_you")} type="button">
+              Dla mnie ({items.length})
+            </button>
+            <button className={readerQueueMode === "latest" ? "segment-active" : ""} onClick={() => onReaderQueueModeChange("latest")} type="button">
+              Najnowsze
+            </button>
+            <button className={readerQueueMode === "all" ? "segment-active" : ""} onClick={() => onReaderQueueModeChange("all")} type="button">
+              Wszystkie ({items.length})
+            </button>
+            <button className={readerQueueMode === "hidden" ? "segment-active" : ""} onClick={() => onReaderQueueModeChange("hidden")} type="button">
+              Ukryte
+            </button>
+          </div>
           <div className="segmented-control" aria-label="Filtr przeczytania">
             <button className={!showReadItems ? "segment-active" : ""} onClick={() => onShowReadItemsChange(false)} type="button">
               Nieprzeczytane ({visibleUnreadCount})
             </button>
             <button className={showReadItems ? "segment-active" : ""} onClick={() => onShowReadItemsChange(true)} type="button">
-              Wszystkie ({items.length})
+              Z przeczytanymi
             </button>
           </div>
         </div>
@@ -164,8 +201,10 @@ export function ReaderBrowseView({
         formatTimestamp={formatTimestamp}
         isLoading={isLoading}
         items={items}
+        rankingExplanations={rankingExplanations}
         onEmptyAction={onEmptyAction}
         onOpen={onOpenItem}
+        onReaderFeedback={onReaderFeedback}
         onSelect={onSelectItem}
         onToggleDigest={onToggleDigest}
         onToggleFavorite={onToggleFavorite}

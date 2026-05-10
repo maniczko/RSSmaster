@@ -161,8 +161,14 @@
 }
 
 @media (max-width: 1180px) {
-  .app-body {
+  .app-header {
+    position: static;
+  }
+
+  .app-body,
+  .app-shell-with-nav-rail .app-body {
     grid-template-columns: 1fr;
+    min-height: auto;
   }
 
   .app-nav-rail {
@@ -176,6 +182,48 @@
 
   .workspace-mobile-nav {
     display: grid;
+  }
+
+  .workspace-appbar-flat {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .workspace-appbar-flat > div:empty {
+    display: none;
+  }
+
+  .feed-browse-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .feed-browse-toolbar-left {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .feed-browse-toolbar-left .segmented-control {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .feed-browse-toolbar-left .segmented-control button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .feed-browse-toolbar-actions {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+
+  .feed-browse-search,
+  .feed-browse-search input {
+    max-width: 100%;
+    min-width: 0;
   }
 
   .app-sidebar-backdrop {
@@ -303,6 +351,7 @@
   }
 
   .workspace-appbar-status {
+    width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;
   }
@@ -310,6 +359,10 @@
   .account-status-compact {
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .account-status-compact .runtime-pill {
+    max-width: 100%;
   }
 
   .reader-toolbar-flat {
@@ -371,7 +424,7 @@
     border-radius: 24px;
   }
 
-  .source-search-shell-website {
+  .source-search-shell-with-filter {
     grid-template-columns: 1fr;
   }
 
@@ -390,7 +443,8 @@
 
   .source-follow-aside,
   .source-candidate-grid,
-  .source-result-preview-grid {
+  .source-result-preview-grid,
+  .source-success-panel {
     grid-template-columns: 1fr;
   }
 }
@@ -584,6 +638,7 @@
   .source-results-header,
   .source-ops-divider,
   .source-import-actions,
+  .source-success-actions,
   .source-search-subline,
   .source-search-meta,
   .source-result-header,
@@ -620,7 +675,26 @@
   }
 
   .section-screen-header {
+    flex-direction: column;
+    align-items: stretch;
     gap: 0.8rem;
+  }
+
+  .section-screen-sources .section-screen-header-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .section-screen-sources .section-screen-header-actions > * {
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .section-screen-sources .section-screen-header-actions .button-with-icon {
+    justify-content: center;
+    min-width: 0;
   }
 
   .section-screen-header h1,

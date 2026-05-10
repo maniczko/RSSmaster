@@ -15,6 +15,8 @@
 
 The bootstrap script creates `.venv` automatically and installs backend requirements into it.
 
+Optional AI readiness is configured with `RSSMASTER_AI_ENABLED`, `RSSMASTER_AI_PROVIDER=openai`, `RSSMASTER_OPENAI_API_KEY`, `RSSMASTER_OPENAI_CHAT_MODEL`, and `RSSMASTER_OPENAI_EMBEDDING_MODEL`. The `/settings` panel can override these values in the local `settings` table; v1 only saves and preflights configuration and does not run reader prompts or embeddings.
+
 ## Expected ports
 
 - Frontend: `127.0.0.1:3000`
@@ -29,6 +31,7 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - `npm run check:auth` boots an isolated browser smoke with account and workspace paths under `output/playwright/auth-smoke/`; it must not touch real `data/`.
 - `npm run check:sources` boots an isolated `/sources` browser smoke with account and workspace paths under `output/playwright/sources-a11y-smoke/`; it must not touch real `data/` or depend on an existing login session.
 - `npm run check:feed-reading` boots an isolated runtime under `output/playwright/feed-reading/`, adds fixture feeds, runs sync, checks reader fallback labels, source readability, the item-level re-extract action, and the empty-state recovery actions.
+- `npm run check:magazines` boots an isolated `/magazines` browser smoke with account and workspace paths under `output/playwright/magazines-smoke/`; it seeds a fixture issue, then verifies the visible magazine list, `/magazines?issue=<id>` deep link restore, issue detail, article snapshot, issue-level delivery preflight, and console health without touching real `data/`.
 - Relevant overrides:
   - `RSSMASTER_ACCOUNTS_DATABASE_PATH`
   - `RSSMASTER_ACCOUNTS_WORKSPACE_DIR`
@@ -74,6 +77,7 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - Run `npm run check:continuity` after changes to workspace portability, saved-reader restore, reader continuity, or manual cross-device handoff.
 - Run `npm run check:reader` after extraction or reader UI changes to verify rich `cleaned_html` rendering with images, captions, lists, quotes, and absolutized links.
 - Run `npm run check:feed-reading` after changes to feed ingestion, extraction status projection, item-level re-extract, reader empty states, source-health readability, or the “why is this list empty?” UX.
+- Run `npm run check:magazines` after changes to `/magazines`, magazine navigation, magazine issue controls, or digest-backed magazine history.
 - Run `npm run check:reader:real-queue -- --phase before`, then `python scripts/reextract_items.py --manifest output/playwright/reader-real-queue-manifest.json --write`, then `npm run check:reader:real-queue -- --phase after` when the change touches publisher-specific extraction cleanup or sampled reader backfill.
 - Run `npm run check:layout` after shell, spacing, responsive, or button/layout polish changes to sweep the main app pages in a real browser and capture screenshots.
 - Run `npm run qa:reader` when you want the full fallback-runtime gate for the reader: unit tests, build, runtime health, and browser smoke in one pass.
@@ -86,6 +90,7 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - The browser smoke evidence lives in `output/playwright/sources-a11y-smoke.json`, with isolated runtime logs and DBs under `output/playwright/sources-a11y-smoke/`.
 - The auth browser smoke writes isolated DBs, runtime logs, JSON evidence, and a screenshot under `output/playwright/auth-smoke/`.
 - The feed-reading browser smoke writes isolated DBs, runtime logs, JSON evidence, and a screenshot under `output/playwright/feed-reading/`.
+- The magazines browser smoke writes evidence to `output/playwright/magazines-smoke.json` and `output/playwright/magazines-smoke.png`.
 - The capture browser smoke writes evidence to `output/playwright/capture-smoke.json` and `output/playwright/capture-smoke.png`.
 - The continuity browser smoke writes evidence to `output/playwright/continuity-smoke.json` and `output/playwright/continuity-smoke.png`.
 - The reader browser smoke writes evidence to `output/playwright/reader-rich-smoke.json` and `output/playwright/reader-rich-smoke.png`.
@@ -110,6 +115,7 @@ The bootstrap script creates `.venv` automatically and installs backend requirem
 - When a change touches continuity bundles, manual portability, or reader session restore across runtimes, run `npm run check:continuity` after the normal build/unit checks.
 - When a change touches extraction, capture, or in-app reading, run `npm run check:reader` after the normal build/unit checks.
 - When a change touches whether feed items can be understood and opened end-to-end, run `npm run check:feed-reading`; it covers healthy, empty, extraction-failed fixture feeds, and the visible `Ponów ekstrakcję` recovery action without mutating real `data/`.
+- When a change touches `/magazines`, run `npm run check:magazines`; it covers the digest-backed magazine issue archive, issue deep link restore, issue detail, article snapshot, issue-level delivery preflight, and empty/history surface without mutating real `data/`.
 - When a change touches the reader decision loop, run `npm run check:reader:interaction`; it also falls back to an isolated test runtime when the current runtime is auth-guarded.
 - When a change touches shell layout, spacing, responsive behavior, or page-level visual polish, run `npm run check:layout` after the normal build/unit checks.
 - When a change touches extraction, capture, or in-app reading and you want a single regression gate, run `npm run qa:reader`.
