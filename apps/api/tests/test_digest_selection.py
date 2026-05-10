@@ -83,6 +83,9 @@ class DigestSelectionTests(unittest.TestCase):
             [item["item_id"] for item in preview["selection_snapshot"]],
             ["itm_candidate_unread", "itm_candidate_read"],
         )
+        self.assertEqual(preview["selection_snapshot"][0]["excerpt"], "Excerpt for itm_candidate_unread")
+        self.assertIn("Clean body for itm_candidate_unread", preview["selection_snapshot"][0]["content_html"])
+        self.assertGreater(preview["selection_snapshot"][0]["word_count"], 0)
 
 
 if __name__ == "__main__":

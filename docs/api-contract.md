@@ -215,6 +215,96 @@ Request:
 }
 ```
 
+## Source Management
+
+`source-management` is the canonical experimental surface for the premium source onboarding flow. The legacy `/api/v1/channels` routes remain compatible, but new UI work should prefer this surface for create, restore, source-level sync, grouping, and OPML workflows.
+
+### `POST /api/v1/source-management/sources`
+
+Request:
+
+```json
+{
+  "input_url": "https://example.com",
+  "feed_url": "https://example.com/feed.xml",
+  "category": "biznes",
+  "folder": {
+    "name": "Rynki"
+  },
+  "bundles": [
+    {
+      "name": "Poranny przegląd"
+    }
+  ],
+  "initial_sync": "none",
+  "on_duplicate": "return_existing"
+}
+```
+
+Rules:
+
+- At least one of `input_url` or `feed_url` is required. Direct `feed_url` is preferred after preview when the user picked a candidate.
+- `initial_sync` is `none | enqueue`. If `enqueue` is used for an archived duplicate returned without reactivation, no sync run is created.
+- `on_duplicate` is `return_existing | reactivate | error`.
+- `return_existing` returns an existing source without mutating its state unless a category was explicitly provided.
+- `reactivate` restores inactive or archived duplicates to `active`.
+
+Response:
+
+```json
+{
+  "status": "created",
+  "source": {
+    "id": "chn_123",
+    "title": "Example Feed",
+    "site_url": "https://example.com",
+    "feed_url": "https://example.com/feed.xml",
+    "state": "active",
+    "unread_count": 0,
+    "health": {},
+    "controls": {},
+    "groups": {}
+  },
+  "discovery": {
+    "mode": "head_metadata",
+    "resolved_feed_url": "https://example.com/feed.xml",
+    "candidates": [
+      "https://example.com/feed.xml"
+    ]
+  },
+  "initial_sync_run": null
+}
+```
+
+### `POST /api/v1/source-management/sources/{channel_id}/sync`
+
+Creates a manual sync run scoped to one source and executes it in the background.
+
+Response:
+
+```json
+{
+  "source": {
+    "id": "chn_123",
+    "title": "Example Feed"
+  },
+  "run": {
+    "id": "job_123",
+    "job_type": "sync",
+    "status": "pending",
+    "channels_total": 1
+  }
+}
+```
+
+### `POST /api/v1/source-management/sources/{channel_id}/restore`
+
+Restores an archived source to `active` and returns the source read model. Active or inactive sources are returned without destructive changes.
+
+### `POST /api/v1/source-management/opml/import/preview`
+
+Returns a dry-run summary for OPML import: new feeds, duplicates, invalid entries, folders, and warnings. Use this before committing a migration-style import.
+
 Rules:
 
 - Request shape is intentionally minimal and matches the Website add-flow input.
@@ -677,6 +767,44 @@ Returns persisted delivery log rows, optionally filtered by `digest_id`.
 
 ## Workspace
 
+### `GET /api/v1/workspace/ranking`
+
+Query params:
+
+- `limit`: number of rows to return.
+- `mode`: `for_you | latest | all | hidden`; default is `for_you`.
+- `min_score`: optional quality floor; `for_you` defaults to the backend quality threshold when omitted.
+- `include_hidden`: include rows whose ranking explanation marks them as hidden.
+- `explain`: when false, clears matched signal lists from the response.
+
+Rules:
+
+- `for_you` is the default reader recommendation queue and must only return visible high-signal rows.
+- Low-signal repetitive headlines, for example FX/rate templates, are hidden unless explicitly boosted by a topic signal.
+- `all` and `latest` are escape hatches for auditing the library; they do not redefine the `for_you` quality promise.
+- Each row exposes `visibility`, `visibility_reason`, `quality_flags`, matched positive/negative signals, and the existing score breakdown.
+
+### `POST /api/v1/workspace/feedback`
+
+Request:
+
+```json
+{
+  "item_id": "itm_123",
+  "action": "less_like_this",
+  "topic": "energia",
+  "source_id": "chn_123",
+  "reason": "reader_action"
+}
+```
+
+Rules:
+
+- `action` is one of `more_like_this`, `less_like_this`, `hide_topic`, `mute_source`, or `important`.
+- `topic` is optional; if omitted, the backend derives a stable topic from the item, with FX/rate templates grouped as `kurs walut`.
+- `mute_source` also updates the source control tier to `muted`.
+- Feedback affects ranking only; it does not mark articles read, archive them, or delete them.
+
 ### `GET /api/v1/workspace/source-health`
 
 Returns source operational health plus a separate reading-readiness axis. `health_status` remains the sync/source-health axis; `reading_readiness` must not be used to reinterpret it.
@@ -885,6 +1013,70 @@ Response:
 ```
 
 ## Settings
+
+### `GET /api/v1/settings/ai`
+
+Returns safe AI configuration with the OpenAI key redacted. V1 only stores readiness for future AI features; it does not run prompts or embeddings in the reader.
+
+```json
+{
+  "settings": {
+    "enabled": true,
+    "provider": "openai",
+    "chat_model": "gpt-5.2",
+    "embedding_model": "text-embedding-3-small",
+    "openai_api_key": {
+      "configured": true,
+      "redacted_value": "********"
+    },
+    "ready": true,
+    "updated_at": "2026-05-05T12:00:00Z",
+    "updated_by": "user",
+    "issues": []
+  }
+}
+```
+
+### `PATCH /api/v1/settings/ai`
+
+Request:
+
+```json
+{
+  "enabled": true,
+  "provider": "openai",
+  "chat_model": "gpt-5.2",
+  "embedding_model": "text-embedding-3-small",
+  "openai_api_key": "sk-..."
+}
+```
+
+Rules:
+
+- `provider` is currently fixed to `openai`.
+- `openai_api_key` is write-only; responses must only return `{ "configured": true, "redacted_value": "********" }`.
+- Omitting `openai_api_key` keeps the current secret. Sending `null` clears the locally stored key and falls back to `RSSMASTER_OPENAI_API_KEY` when present.
+- `.env` values are the fallback; the local `settings.key = "ai_profile"` row wins when a field is stored there.
+
+### `POST /api/v1/settings/ai/preflight`
+
+Runs a low-cost OpenAI Models API check for the configured chat and embedding model IDs. It must not generate text, create embeddings, or expose the raw key in error messages.
+
+Response:
+
+```json
+{
+  "status": "ready",
+  "can_use_ai": true,
+  "checks": [
+    {
+      "name": "chat_model_access",
+      "status": "passed",
+      "message": "OpenAI potwierdziło dostęp do modelu gpt-5.2."
+    }
+  ]
+}
+```
 
 ### `GET /api/v1/settings/delivery`
 

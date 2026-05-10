@@ -1,8 +1,9 @@
-export type AppSection = "read" | "discover" | "sources" | "digest" | "settings";
+export type AppSection = "read" | "discover" | "sources" | "magazines" | "digest" | "settings";
 export type AppLibraryView = "inbox" | "continue" | "saved" | "digest" | "archive";
 export type AppScope = "all" | "unread";
 export type AppSortMode = "newest" | "oldest";
 export type AppReadSurface = "browse" | "article";
+export type AppReaderMode = "for_you" | "latest" | "all" | "hidden";
 
 export type ParsedAppPath = {
   section: AppSection | null;
@@ -16,6 +17,11 @@ export type ParsedReadRouteSearch = {
   q?: string;
   item?: string;
   surface?: AppReadSurface;
+  mode?: AppReaderMode;
+};
+
+export type ParsedMagazineRouteSearch = {
+  issue?: string;
 };
 
 export type PendingRouteRestoreState = {
@@ -53,10 +59,19 @@ export type AppHrefInput = {
   q?: string | null;
   item?: string | null;
   surface?: AppReadSurface | null;
+  issue?: string | null;
+  mode?: AppReaderMode | null;
 };
 
 export function isAppSection(value: string | null | undefined): value is AppSection {
-  return value === "read" || value === "discover" || value === "sources" || value === "digest" || value === "settings";
+  return (
+    value === "read" ||
+    value === "discover" ||
+    value === "sources" ||
+    value === "magazines" ||
+    value === "digest" ||
+    value === "settings"
+  );
 }
 
 export function isAppLibraryView(value: string | null | undefined): value is AppLibraryView {
@@ -73,6 +88,10 @@ export function isAppSortMode(value: string | null | undefined): value is AppSor
 
 export function isAppReadSurface(value: string | null | undefined): value is AppReadSurface {
   return value === "browse" || value === "article";
+}
+
+export function isAppReaderMode(value: string | null | undefined): value is AppReaderMode {
+  return value === "for_you" || value === "latest" || value === "all" || value === "hidden";
 }
 
 export function parseAppPath(pathname: string): ParsedAppPath {
@@ -121,6 +140,7 @@ export function parseReadRouteSearch(search: string | Pick<URLSearchParams, "get
   const scope = params.get("scope");
   const sort = params.get("sort");
   const surface = params.get("surface");
+  const mode = params.get("mode");
   const q = params.get("q");
 
   return {
@@ -130,6 +150,14 @@ export function parseReadRouteSearch(search: string | Pick<URLSearchParams, "get
     q: q ?? undefined,
     item: getTrimmedParam(params, "item"),
     surface: isAppReadSurface(surface) ? surface : undefined,
+    mode: isAppReaderMode(mode) ? mode : undefined,
+  };
+}
+
+export function parseMagazineRouteSearch(search: string | Pick<URLSearchParams, "get">): ParsedMagazineRouteSearch {
+  const params = getRouteSearchParams(search);
+  return {
+    issue: getTrimmedParam(params, "issue"),
   };
 }
 
@@ -213,6 +241,8 @@ export function buildAppHref({
   q,
   item,
   surface,
+  issue,
+  mode,
 }: AppHrefInput): string {
   const pathname = section === "read" ? `/read/${libraryView}` : `/${section}`;
   const params = new URLSearchParams();
@@ -233,6 +263,13 @@ export function buildAppHref({
     if (surface === "article") {
       params.set("surface", "article");
     }
+    if (mode && mode !== "for_you") {
+      params.set("mode", mode);
+    }
+  }
+
+  if (section === "magazines" && issue && issue.trim()) {
+    params.set("issue", issue.trim());
   }
 
   const query = params.toString();

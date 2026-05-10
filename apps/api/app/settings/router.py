@@ -5,9 +5,12 @@ from fastapi import APIRouter, Depends
 from app.config import Settings as AppSettings, get_settings
 
 from .models import (
+    AISettingsPreflightResponse,
+    AISettingsResponse,
     DeliverySettingsPreflightRequest,
     DeliverySettingsPreflightResponse,
     DeliverySettingsResponse,
+    UpdateAISettingsRequest,
     UpdateDeliverySettingsRequest,
 )
 from .repository import SettingsRepository
@@ -19,6 +22,24 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 def get_settings_service(settings: AppSettings = Depends(get_settings)) -> SettingsService:
     repository = SettingsRepository(settings.database_file)
     return SettingsService(settings, repository)
+
+
+@router.get("/ai", response_model=AISettingsResponse)
+def get_ai_settings(service: SettingsService = Depends(get_settings_service)) -> AISettingsResponse:
+    return AISettingsResponse(settings=service.get_ai_settings())
+
+
+@router.patch("/ai", response_model=AISettingsResponse)
+def update_ai_settings(
+    payload: UpdateAISettingsRequest,
+    service: SettingsService = Depends(get_settings_service),
+) -> AISettingsResponse:
+    return AISettingsResponse(settings=service.update_ai_settings(payload))
+
+
+@router.post("/ai/preflight", response_model=AISettingsPreflightResponse)
+def preflight_ai_settings(service: SettingsService = Depends(get_settings_service)) -> AISettingsPreflightResponse:
+    return AISettingsPreflightResponse.model_validate(service.preflight_ai_settings())
 
 
 @router.get("/delivery", response_model=DeliverySettingsResponse)

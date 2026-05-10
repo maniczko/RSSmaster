@@ -271,6 +271,27 @@ CREATE TABLE IF NOT EXISTS ranking_state (
 CREATE INDEX IF NOT EXISTS idx_ranking_state_status_score
     ON ranking_state (candidate_status, final_score DESC, ranked_at DESC);
 
+CREATE TABLE IF NOT EXISTS reader_feedback (
+    id TEXT PRIMARY KEY,
+    item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+    source_id TEXT REFERENCES channels(id) ON DELETE SET NULL,
+    action TEXT NOT NULL CHECK (
+        action IN ('more_like_this', 'less_like_this', 'hide_topic', 'mute_source', 'important')
+    ),
+    topic TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_reader_feedback_action_topic
+    ON reader_feedback (action, topic);
+
+CREATE INDEX IF NOT EXISTS idx_reader_feedback_source_id
+    ON reader_feedback (source_id);
+
+CREATE INDEX IF NOT EXISTS idx_reader_feedback_item_id
+    ON reader_feedback (item_id);
+
 CREATE TABLE IF NOT EXISTS annotations (
     id TEXT PRIMARY KEY,
     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,

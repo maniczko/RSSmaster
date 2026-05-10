@@ -25,7 +25,10 @@ from .models import (
     OPMLImportRequest,
     OPMLImportResponse,
     RankingResponse,
+    RankingMode,
     ReaderProfileResponse,
+    ReaderFeedbackRequest,
+    ReaderFeedbackResponse,
     SavedSearchListResponse,
     SetItemTagsRequest,
     SourceGroupListResponse,
@@ -68,9 +71,29 @@ def update_profile(
 def get_ranking(
     *,
     limit: int = Query(default=12, ge=1, le=50),
+    mode: RankingMode = Query(default="for_you"),
+    min_score: float | None = Query(default=None),
+    include_hidden: bool = Query(default=False),
+    explain: bool = Query(default=True),
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> RankingResponse:
-    return RankingResponse.model_validate(service.get_ranking(limit=limit))
+    return RankingResponse.model_validate(
+        service.get_ranking(
+            limit=limit,
+            mode=mode,
+            min_score=min_score,
+            include_hidden=include_hidden,
+            explain=explain,
+        )
+    )
+
+
+@router.post("/feedback", response_model=ReaderFeedbackResponse)
+def create_reader_feedback(
+    payload: ReaderFeedbackRequest,
+    service: WorkspaceService = Depends(get_workspace_service),
+) -> ReaderFeedbackResponse:
+    return ReaderFeedbackResponse.model_validate(service.create_reader_feedback(payload.model_dump(exclude_none=True)))
 
 
 @router.get("/briefing", response_model=BriefingResponse)

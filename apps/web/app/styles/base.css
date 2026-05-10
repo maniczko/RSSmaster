@@ -518,6 +518,24 @@ kbd {
   padding: 0.62rem 0.75rem;
 }
 
+.app-checkbox-row {
+  align-items: center;
+  color: var(--text);
+  display: flex;
+  gap: 0.55rem;
+  line-height: 1.35;
+}
+
+.field .app-checkbox-row {
+  font-weight: 600;
+}
+
+.field .app-checkbox-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  min-height: 1.1rem;
+  width: 1.1rem;
+}
+
 .field-wide {
   grid-column: 1 / -1;
 }

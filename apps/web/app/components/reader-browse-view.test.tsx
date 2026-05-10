@@ -30,8 +30,10 @@ describe("ReaderBrowseView", () => {
         items={[]}
         message={null}
         messageTone="default"
+        readerQueueMode="for_you"
         onItemSearchChange={() => {}}
         onOpenItem={() => {}}
+        onReaderQueueModeChange={() => {}}
         onRefresh={() => {}}
         onSelectItem={() => {}}
         onShowReadItemsChange={() => {}}

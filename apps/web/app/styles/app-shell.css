@@ -1,5 +1,6 @@
 
 .app-shell {
+  --app-header-offset: 73px;
   min-height: 100vh;
   display: grid;
   grid-template-rows: auto 1fr;
@@ -21,7 +22,7 @@
 .app-body {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
-  min-height: calc(100vh - 72px);
+  min-height: calc(100vh - var(--app-header-offset));
 }
 
 .app-shell-with-nav-rail .app-body {
@@ -30,12 +31,12 @@
 
 .app-nav-rail {
   position: sticky;
-  top: 73px;
+  top: var(--app-header-offset);
   align-self: start;
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 1rem;
-  min-height: calc(100vh - 73px);
+  min-height: calc(100vh - var(--app-header-offset));
   padding: 0.8rem 0.45rem;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   background: #174d96;
@@ -122,11 +123,11 @@
 
 .app-sidebar {
   position: sticky;
-  top: 73px;
+  top: var(--app-header-offset);
   align-self: start;
   display: grid;
   gap: 0;
-  max-height: calc(100vh - 80px);
+  max-height: calc(100vh - var(--app-header-offset) - 0.45rem);
   padding: 0;
   border-right: 1px solid var(--line);
   background: var(--surface-elevated);
@@ -145,11 +146,19 @@
 }
 
 .workspace-appbar-flat {
+  position: static;
+  top: auto;
   display: grid;
   grid-template-columns: auto minmax(320px, 1fr) auto;
   gap: 0.9rem;
   align-items: center;
+  width: 100%;
+  margin: 0;
   padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  min-width: 0;
 }
 
 .workspace-appbar-feed-mode {

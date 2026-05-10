@@ -5,6 +5,8 @@ import {
   type ReaderDecisionAction,
 } from "@/app/lib/reader-decision";
 
+import { Button } from "@/app/components/ui/button";
+
 type ReaderDecisionBarProps = {
   busy: boolean;
   canArchive: boolean;
@@ -27,32 +29,34 @@ export function ReaderDecisionBar({
   return (
     <div className="reader-decision-bar" data-testid="reader-decision-bar" role="toolbar" aria-label="Szybkie decyzje czytelnika">
       <div className="reader-decision-context">
-        <span>Reader loop</span>
-        <strong>Decyzja i kolejny artykul bez wracania do listy</strong>
+        <span>Tryb czytania</span>
+        <strong>Decyzja i kolejny artykuł bez wracania do listy</strong>
         <small>{getReaderDecisionNextLine(nextItemTitle)}</small>
       </div>
       <div className="reader-decision-actions">
         {readerDecisionActions.map((action) => (
-          <button
+          <Button
             className={`reader-decision-button ${action === "read_next" ? "reader-decision-button-primary" : ""}`}
             data-testid={`reader-decision-${action.replace("_", "-")}`}
             disabled={busy || (action === "archive_next" && !canArchive)}
             key={action}
             onClick={() => onAction(action)}
             type="button"
+            variant="outline"
           >
             {getReaderDecisionButtonLabel(action)}
-          </button>
+          </Button>
         ))}
-        <button
+        <Button
           className="reader-decision-button reader-decision-button-ghost"
           data-testid="reader-decision-undo"
           disabled={!canUndo || undoBusy}
           onClick={onUndo}
           type="button"
+          variant="outline"
         >
           {undoBusy ? "Cofanie..." : "Cofnij"}
-        </button>
+        </Button>
       </div>
     </div>
   );

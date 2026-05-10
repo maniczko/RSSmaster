@@ -30,7 +30,7 @@ describe("reader decision helpers", () => {
 
   it("builds next-item context copy", () => {
     expect(getReaderDecisionNextLine("Analiza rynku")).toBe("Dalej: Analiza rynku");
-    expect(getReaderDecisionNextLine(null)).toBe("To ostatni artykul w biezacej kolejce.");
+    expect(getReaderDecisionNextLine(null)).toBe("To ostatni artykuł w bieżącej kolejce.");
   });
 
   it("maps actions into item mutation patches", () => {
@@ -54,7 +54,7 @@ describe("reader decision helpers", () => {
     expect(didReaderDecisionAdvance("second", "first")).toBe(true);
     expect(didReaderDecisionAdvance("first", "first")).toBe(false);
     expect(didReaderDecisionAdvance(null, "first")).toBe(false);
-    expect(getReaderDecisionResultLine(true)).toContain("fokus przesunal sie dalej");
-    expect(getReaderDecisionResultLine(false)).toContain("nie ma kolejnego artykulu");
+    expect(getReaderDecisionResultLine(true)).toContain("fokus przesunął się dalej");
+    expect(getReaderDecisionResultLine(false)).toContain("nie ma kolejnego artykułu");
   });
 });

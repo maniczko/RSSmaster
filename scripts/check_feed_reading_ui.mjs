@@ -20,6 +20,7 @@ const OUTPUT_SCREENSHOT = path.join(OUTPUT_DIR, "feed-reading-smoke.png");
 const WAIT_TIMEOUT_MS = 120000;
 const TERMINAL_SYNC_STATES = new Set(["partial_success", "failed", "canceled", "completed"]);
 const RUN_STARTED_AT = new Date();
+const RECENT_FIXTURE_PUB_DATE = new Date(RUN_STARTED_AT.getTime() - 60 * 60 * 1000).toUTCString();
 
 function assert(condition, message) {
   if (!condition) {
@@ -269,7 +270,7 @@ function feedXml({ title, origin, items }) {
         <link>${origin}/articles/${item.id}</link>
         <guid>${item.id}</guid>
         <description>${item.description}</description>
-        <pubDate>Tue, 28 Apr 2026 08:00:00 GMT</pubDate>
+        <pubDate>${RECENT_FIXTURE_PUB_DATE}</pubDate>
       </item>
     `)
     .join("");
@@ -355,6 +356,7 @@ function withStandardArtifact(results, env) {
       sync_status: results.syncStatus,
       reader_statuses: results.readerStatuses,
       source_readiness: results.sourceReadiness,
+      fixture_pub_date: RECENT_FIXTURE_PUB_DATE,
       fixture_origin: results.fixtureOrigin,
     },
     routes: [
@@ -439,6 +441,7 @@ async function main() {
     sourceHealthReadable: false,
     consoleErrors: [],
     pageErrors: [],
+    fixturePubDate: RECENT_FIXTURE_PUB_DATE,
   };
 
   await runLoggedCommand("web build", "node", [path.join(ROOT_DIR, "scripts", "run_web.mjs"), "build"], env, "web-build.log");
@@ -542,7 +545,7 @@ async function main() {
     await page.getByText("Lokalny tekst 7d").first().waitFor({ timeout: 30000 });
     await page.getByText("Skrót 7d").first().waitFor({ timeout: 30000 });
     await page.getByText("Błędy ekstr.").first().waitFor({ timeout: 30000 });
-    await page.getByRole("button", { name: "Syncuj teraz" }).first().waitFor({ timeout: 30000 });
+    await page.getByRole("button", { name: /^(Syncuj teraz|Pobierz teraz)$/ }).first().waitFor({ timeout: 30000 });
     results.sourceHealthReadable = true;
 
     await page.screenshot({ path: OUTPUT_SCREENSHOT, fullPage: true });
@@ -553,6 +556,9 @@ async function main() {
     console.log("[check:feed-reading] PASS");
     console.log(`[check:feed-reading] evidence: ${OUTPUT_JSON}`);
   } catch (error) {
+    if (page) {
+      await page.screenshot({ path: OUTPUT_SCREENSHOT, fullPage: true }).catch(() => {});
+    }
     results.status = "failed";
     results.error = error instanceof Error ? error.stack ?? error.message : String(error);
     console.error(`[check:feed-reading] FAIL: ${error instanceof Error ? error.message : String(error)}`);

@@ -15,7 +15,7 @@ class DatabaseMigrationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
-    def test_ensure_database_applies_v1_and_reports_ready_status(self) -> None:
+    def test_ensure_database_applies_all_migrations_and_reports_ready_status(self) -> None:
         state = ensure_database(self.database_path)
 
         self.assertEqual(state["schema_version"], SCHEMA_VERSION)
@@ -24,7 +24,23 @@ class DatabaseMigrationTests(unittest.TestCase):
         self.assertEqual(state["migration_status"]["current_version"], SCHEMA_VERSION)
         self.assertEqual(state["migration_status"]["latest_version"], SCHEMA_VERSION)
         self.assertEqual(state["migration_status"]["pending_versions"], [])
-        self.assertEqual(state["migration_status"]["applied_this_run"], [{"version": 1, "name": "rssmaster_schema_v1"}])
+        self.assertEqual(
+            state["migration_status"]["applied_this_run"],
+            [
+                {"version": 1, "name": "rssmaster_schema_v1"},
+                {"version": 2, "name": "rssmaster_schema_v2"},
+            ],
+        )
+        with connect(self.database_path) as connection:
+            feedback_table = connection.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'reader_feedback'
+                """
+            ).fetchone()
+
+        self.assertIsNotNone(feedback_table)
 
     def test_ensure_database_is_idempotent_and_preserves_existing_rows(self) -> None:
         ensure_database(self.database_path)
@@ -47,7 +63,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
 
         self.assertEqual(channel_count, 1)
-        self.assertEqual(migration_count, 1)
+        self.assertEqual(migration_count, SCHEMA_VERSION)
         self.assertEqual(user_version, SCHEMA_VERSION)
 
     def test_missing_required_table_fails_fast_with_recovery_signal(self) -> None:

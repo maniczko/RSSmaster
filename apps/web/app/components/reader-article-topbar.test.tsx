@@ -32,6 +32,7 @@ describe("ReaderArticleTopbar", () => {
     const markup = renderTopbar();
 
     expect(markup).toContain("data-testid=\"reader-send-kindle\"");
+    expect(markup).toContain("data-slot=\"button\"");
     expect(markup).toContain("Wyślij na Kindle");
     expect(markup).toContain("Zbuduj jednopunktowy EPUB");
   });
@@ -49,5 +50,14 @@ describe("ReaderArticleTopbar", () => {
 
     expect(markup).toContain("Wysyłanie...");
     expect(markup).toContain("disabled=\"\"");
+  });
+  it("renders the full reader feedback set when ranking feedback is available", () => {
+    const markup = renderTopbar({ onReaderFeedback: () => {} });
+
+    expect(markup).toContain("Mniej takich");
+    expect(markup).toContain("Więcej takich");
+    expect(markup).toContain("To ważne");
+    expect(markup).toContain("Ukryj temat");
+    expect(markup).toContain("Wycisz źródło");
   });
 });

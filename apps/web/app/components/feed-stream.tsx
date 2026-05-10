@@ -48,12 +48,28 @@ type FeedStreamProps = {
   emptyDiagnosticTitle?: string;
   emptyTitle?: string;
   formatTimestamp: (value: string | null, fallback: string) => string;
+  rankingExplanations?: Record<
+    string,
+    {
+      score: number;
+      reason: string;
+      visibility: "shown" | "hidden";
+      visibilityReason: string | null;
+      positiveSignals: string[];
+      negativeSignals: string[];
+      qualityFlags: string[];
+    }
+  >;
   onEmptyAction?: (() => void) | null;
   onSelect: (itemId: string) => void;
   onOpen: (itemId: string) => void;
   onToggleRead: (itemId: string) => void;
   onToggleDigest: (itemId: string) => void;
   onToggleFavorite: (itemId: string) => void;
+  onReaderFeedback?: (
+    itemId: string,
+    action: "more_like_this" | "less_like_this" | "hide_topic" | "mute_source" | "important",
+  ) => void;
 };
 
 function FeedSourceMark({
@@ -97,12 +113,14 @@ export function FeedStream({
   emptyDiagnosticTitle = "Dlaczego nic tu nie ma?",
   emptyTitle = "Brak artykułów w tym widoku",
   formatTimestamp,
+  rankingExplanations = {},
   onEmptyAction = null,
   onSelect,
   onOpen,
   onToggleRead,
   onToggleDigest,
   onToggleFavorite,
+  onReaderFeedback,
 }: FeedStreamProps) {
   if (isLoading && items.length === 0) {
     return (
@@ -169,6 +187,7 @@ export function FeedStream({
         const isBusy = item.id === busyItemId;
         const timestampLabel = formatTimestamp(item.published_at, "Nieznany czas publikacji");
         const metaLine = buildFeedCardMetaLine(item.author, timestampLabel);
+        const rankingExplanation = rankingExplanations[item.id];
 
         return (
           <article className={`feed-card ${isActive ? "feed-card-active" : ""}`} key={item.id} onClick={() => onSelect(item.id)}>
@@ -194,8 +213,31 @@ export function FeedStream({
                 {!item.is_read ? <span>Nowe</span> : null}
                 {item.is_favorite ? <span>Zapisane</span> : null}
                 {item.digest_candidate ? <span>Digest</span> : null}
+                {rankingExplanation ? (
+                  <span title={`Dlaczego widze: ${rankingExplanation.reason}`}>
+                    Score {Math.round(rankingExplanation.score)}
+                  </span>
+                ) : null}
+                {rankingExplanation?.visibility === "hidden" ? (
+                  <span title={`Dlaczego ukryte: ${rankingExplanation.visibilityReason ?? rankingExplanation.reason}`}>
+                    Ukryte
+                  </span>
+                ) : null}
               </div>
               <div className="feed-card-actions">
+                {onReaderFeedback ? (
+                  <>
+                    <button className="feed-card-secondary" disabled={isBusy} onClick={(event) => { event.stopPropagation(); onReaderFeedback(item.id, "less_like_this"); }} type="button">
+                      Mniej takich
+                    </button>
+                    <button className="feed-card-secondary" disabled={isBusy} onClick={(event) => { event.stopPropagation(); onReaderFeedback(item.id, "more_like_this"); }} type="button">
+                      Wiecej
+                    </button>
+                    <button className="feed-card-secondary" disabled={isBusy} onClick={(event) => { event.stopPropagation(); onReaderFeedback(item.id, "important"); }} type="button">
+                      Wazne
+                    </button>
+                  </>
+                ) : null}
                 <button className="feed-card-secondary" disabled={isBusy} onClick={(event) => { event.stopPropagation(); onToggleFavorite(item.id); }} type="button">
                   {item.is_favorite ? "Cofnij zapis" : "Zapisz"}
                 </button>

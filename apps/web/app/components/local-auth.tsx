@@ -1,5 +1,8 @@
 import type { FormEvent, ReactNode } from "react";
 
+import { Badge } from "@/app/components/ui/badge";
+import { Button } from "@/app/components/ui/button";
+
 import {
   DismissIcon,
   LibraryIcon,
@@ -142,7 +145,7 @@ export function AuthScreen({
             </label>
 
             <div className="channel-actions">
-              <button className="secondary-button" disabled={busy} type="submit">
+              <Button className="secondary-button" disabled={busy} type="submit" variant="outline">
                 <span className="button-with-icon">
                   <LibraryIcon className="app-icon button-inline-icon" />
                   {busy
@@ -153,11 +156,11 @@ export function AuthScreen({
                       ? "Utwórz konto i otwórz bibliotekę"
                       : "Zaloguj"}
                 </span>
-              </button>
+              </Button>
               {hasLocalAccounts ? (
-                <button className="mini-button" disabled={busy} onClick={onModeToggle} type="button">
+                <Button className="mini-button" disabled={busy} onClick={onModeToggle} type="button" variant="outline">
                   {resolvedMode === "register" ? "Mam już konto" : "Nowe konto"}
-                </button>
+                </Button>
               ) : null}
             </div>
           </form>
@@ -209,15 +212,15 @@ export function AccountStatus({
   if (compact) {
     return account ? (
       <div className="account-status account-status-compact">
-        <span className="runtime-pill runtime-pill-ok">@{account.username}</span>
-        <button className="mini-button" disabled={busy} onClick={onLogout} type="button">
+        <Badge className="runtime-pill runtime-pill-ok" variant="secondary">@{account.username}</Badge>
+        <Button className="mini-button" disabled={busy} onClick={onLogout} type="button" variant="outline">
           {busy ? "Wylogowywanie..." : "Wyloguj"}
-        </button>
+        </Button>
       </div>
     ) : (
-      <button className="mini-button mini-button-accent" disabled={busy} onClick={onLogin} type="button">
+      <Button className="mini-button mini-button-accent" disabled={busy} onClick={onLogin} type="button" variant="outline">
         {hasLocalAccounts || authRequired ? "Zaloguj" : "Utwórz konto"}
-      </button>
+      </Button>
     );
   }
 
@@ -233,12 +236,12 @@ export function AccountStatus({
           <span>Ostatnie logowanie: {formatTimestamp(account.last_login_at, "jeszcze brak logowania")}</span>
           <span>Pierwsze konto przejmuje bieżącą bibliotekę z tego komputera. Kolejne konta mają osobne bazy.</span>
           <div className="channel-actions">
-            <button className="secondary-button" disabled={busy} onClick={onLogout} type="button">
+            <Button className="secondary-button" disabled={busy} onClick={onLogout} type="button" variant="outline">
               <span className="button-with-icon">
                 <DismissIcon className="app-icon button-inline-icon" />
                 {busy ? "Wylogowywanie..." : "Wyloguj"}
               </span>
-            </button>
+            </Button>
           </div>
         </>
       ) : (
@@ -250,12 +253,12 @@ export function AccountStatus({
               : "Utwórz pierwsze konto, aby przypisać tę bibliotekę do operatora tego komputera."}
           </span>
           <div className="channel-actions">
-            <button className="secondary-button" disabled={busy} onClick={onLogin} type="button">
+            <Button className="secondary-button" disabled={busy} onClick={onLogin} type="button" variant="outline">
               <span className="button-with-icon">
                 <LibraryIcon className="app-icon button-inline-icon" />
                 {hasLocalAccounts ? "Zaloguj się" : "Utwórz pierwsze konto"}
               </span>
-            </button>
+            </Button>
           </div>
         </>
       )}

@@ -29,9 +29,11 @@ import {
   FeedStream,
   HighlightIcon,
   KeyboardIcon,
+  KindleIcon,
   LibraryIcon,
   LibraryViewsNav,
   LocalAuthGate,
+  MagazineSection,
   MenuIcon,
   NoteIcon,
   ReaderArticleCard,
@@ -124,8 +126,10 @@ import {
   buildBrowserPath,
   buildAppHref,
   parseAppPath,
+  parseMagazineRouteSearch,
   parseReadRouteSearch,
   shouldHoldForPendingRouteRestore,
+  type AppReaderMode,
   type AppSection,
 } from "@/app/lib/app-routes";
 import {
@@ -134,6 +138,7 @@ import {
   getDigestStatusLabel,
   type DigestCandidatePreviewStatus,
 } from "./lib/digest-selection";
+import { buildAISettingsPatch, createAISettingsDraft } from "./lib/ai-settings";
 import { sourceAddModes, type SourceAddModeId } from "./lib/source-add-modes";
 
 import type {
@@ -143,6 +148,9 @@ import type {
   ItemDetail,
   DigestPreview,
   DigestHistory,
+  AISettings,
+  AISettingsDraft,
+  AISettingsPreflight,
   DeliverySettings,
   DeliverySettingsDraft,
   DeliveryPreflight,
@@ -162,10 +170,13 @@ import type {
   AuthSessionPayload,
   AuthStatus,
   ChannelListPayload,
-  ChannelCreatePayload,
   ChannelMutationPayload,
   ChannelPreviewCandidate,
   ChannelPreviewPayload,
+  SourceOpmlImportPayload,
+  SourceOpmlPreviewPayload,
+  SourceCreatePayload,
+  SourceSyncPayload,
   SourceSurfaceMode,
   SyncRunPayload,
   SyncRunListPayload,
@@ -175,6 +186,8 @@ import type {
   DigestPreviewPayload,
   DigestHistoryListPayload,
   DigestHistoryPayload,
+  AISettingsPayload,
+  AISettingsPreflightPayload,
   DeliverySettingsPayload,
   DeliverySettingsPreflightPayload,
   DeliveryPreflightPayload,
@@ -183,6 +196,8 @@ import type {
   ItemStatePatch,
   ItemMutationPayload,
   WorkspaceProfilePayload,
+  ReaderFeedbackAction,
+  ReaderFeedbackPayload,
   WorkspaceBriefingPayload,
   WorkspaceRankingPayload,
   WorkspaceAnnotationListPayload,
@@ -200,7 +215,6 @@ import type {
   WorkspaceCapturePayload,
   WorkspaceExportPayload,
   WorkspaceContinuityImportPayload,
-  WorkspaceOpmlImportPayload,
   FeedbackState,
   ArticleKindleFeedbackState,
   ItemSortMode,
@@ -216,13 +230,24 @@ import type {
   UndoEntry,
 } from "./lib/channel-lab-types";
 
+type DeliveryDigestTarget = Pick<DigestHistory, "id" | "title">;
+
+type MagazineArticleHydration = {
+  itemId: string;
+  author: string | null;
+  channelTitle: string | null;
+  category: string | null;
+  contentHtml: string | null;
+  excerpt: string | null;
+  wordCount: number | null;
+};
 
 const initialFeedback: FeedbackState = {
   tone: "idle",
-  title: "Import feedow gotowy",
+  title: "Dodawanie źródeł gotowe",
   lines: [
-    "Dodaj adres feedu albo strony glownej, a potem uruchom reczny sync.",
-    "Kolejka czytnika po lewej wypelni sie po pierwszym udanym syncu.",
+    "Dodaj adres feedu albo strony głównej, a potem pobierz pierwsze wpisy.",
+    "Kolejka czytnika wypełni się po pierwszym udanym pobraniu.",
   ],
 };
 
@@ -307,6 +332,53 @@ function isTypingTarget(target: EventTarget | null) {
   return tagName === "input" || tagName === "textarea" || tagName === "select";
 }
 
+function escapeReaderPreviewHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return character;
+    }
+  });
+}
+
+function paragraphsToReaderPreviewHtml(paragraphs: string[]) {
+  return paragraphs.map((paragraph) => `<p>${escapeReaderPreviewHtml(paragraph)}</p>`).join("");
+}
+
+function countWordsFromHtml(value: string | null | undefined) {
+  return countWords(value ? value.replace(/<[^>]+>/g, " ") : null);
+}
+
+function buildMagazineArticleHydration(detail: ItemDetail, snapshotTitle: string): MagazineArticleHydration {
+  const sanitizedHtml = sanitizeReaderHtml(detail.cleaned_html, snapshotTitle);
+  const fallbackParagraphs = sanitizedHtml
+    ? []
+    : sanitizeReaderParagraphs(splitReaderParagraphs(detail.content_text ?? detail.excerpt), snapshotTitle);
+  const fallbackHtml = fallbackParagraphs.length > 0 ? paragraphsToReaderPreviewHtml(fallbackParagraphs) : null;
+  const contentHtml = sanitizedHtml ?? fallbackHtml;
+  const wordCount = contentHtml ? countWordsFromHtml(contentHtml) : countWords(detail.content_text ?? detail.excerpt);
+
+  return {
+    itemId: detail.id,
+    author: detail.author,
+    category: detail.channel.category,
+    channelTitle: detail.channel.title,
+    contentHtml,
+    excerpt: detail.excerpt,
+    wordCount: wordCount > 0 ? wordCount : null,
+  };
+}
+
 import {
   clamp,
   splitReaderParagraphs,
@@ -354,6 +426,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [sourceAddMode, setSourceAddMode] = useState<SourceAddModeId>("website");
   const [showSourceOptions, setShowSourceOptions] = useState(false);
   const [sourceLanguageFilter, setSourceLanguageFilter] = useState("all");
+  const [lastAddedSource, setLastAddedSource] = useState<Channel | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([]);
@@ -428,6 +501,11 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [digestCandidateStatus, setDigestCandidateStatus] = useState<DigestCandidatePreviewStatus>("idle");
   const [digestCandidateMessage, setDigestCandidateMessage] = useState<string | null>(null);
   const [digestHistory, setDigestHistory] = useState<DigestHistory[]>([]);
+  const [selectedMagazineIssueId, setSelectedMagazineIssueId] = useState<string | null>(null);
+  const [aiSettings, setAISettings] = useState<AISettings | null>(null);
+  const [aiSettingsMessage, setAISettingsMessage] = useState<string | null>(null);
+  const [aiPreflight, setAIPreflight] = useState<AISettingsPreflight | null>(null);
+  const [aiSettingsDraft, setAISettingsDraft] = useState<AISettingsDraft>(() => createAISettingsDraft(null));
   const [deliverySettings, setDeliverySettings] = useState<DeliverySettings | null>(null);
   const [deliverySettingsMessage, setDeliverySettingsMessage] = useState<string | null>(null);
   const [deliveryPreflight, setDeliveryPreflight] = useState<DeliveryPreflight | null>(null);
@@ -442,6 +520,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   });
   const [digestBusy, setDigestBusy] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [aiSettingsBusy, setAISettingsBusy] = useState(false);
+  const [aiPreflightBusy, setAIPreflightBusy] = useState(false);
   const [deliveryBusy, setDeliveryBusy] = useState(false);
   const [articleKindleBusyId, setArticleKindleBusyId] = useState<string | null>(null);
   const [articleKindleFeedback, setArticleKindleFeedback] = useState<ArticleKindleFeedbackState | null>(null);
@@ -456,6 +536,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [workspaceProfile, setWorkspaceProfile] = useState<WorkspaceProfile | null>(null);
   const [workspaceBriefing, setWorkspaceBriefing] = useState<WorkspaceBriefing | null>(null);
   const [rankingItems, setRankingItems] = useState<WorkspaceRankingItem[]>([]);
+  const [hiddenRankingItems, setHiddenRankingItems] = useState<WorkspaceRankingItem[]>([]);
+  const [readerQueueMode, setReaderQueueMode] = useState<AppReaderMode>("for_you");
   const [sourceHealthEntries, setSourceHealthEntries] = useState<WorkspaceSourceHealthEntry[]>([]);
   const [sourceGroups, setSourceGroups] = useState<WorkspaceSourceGroup[]>([]);
   const [storyClusters, setStoryClusters] = useState<WorkspaceStoryCluster[]>([]);
@@ -477,6 +559,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [sourceGroupColor, setSourceGroupColor] = useState("#155e75");
   const [captureUrl, setCaptureUrl] = useState("");
   const [opmlDraft, setOpmlDraft] = useState("");
+  const [opmlPreview, setOpmlPreview] = useState<SourceOpmlPreviewPayload | null>(null);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [opmlImportBusy, setOpmlImportBusy] = useState(false);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
@@ -495,6 +578,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const requestedReadSurface = useMemo(() => {
     return parseReadRouteSearch(searchParams).surface ?? null;
   }, [searchParams]);
+  const requestedMagazineIssueId = useMemo(() => {
+    return parseMagazineRouteSearch(searchParams).issue ?? null;
+  }, [searchParams]);
 
   const deferredItemSearch = useDeferredValue(itemSearch);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -509,6 +595,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const sourcePreviewRequestIdRef = useRef(0);
   const sourcePreviewAbortRef = useRef<AbortController | null>(null);
   const lastSourcePreviewKeyRef = useRef<string | null>(null);
+  const magazineHydrationAttemptedRef = useRef(new Set<string>());
 
   function getReaderScrollSnapshot(surface: HTMLDivElement) {
     const computedStyle = window.getComputedStyle(surface);
@@ -589,18 +676,46 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }),
     [feedFilter, libraryScopedItems],
   );
-  const queueItems = useMemo(
-    () =>
-      dedupeStoryQueue(
-        orderQueueItemsWithRanking(visibleItems, rankingItems, {
-          deferredSearch: deferredItemSearch,
-          libraryView: libraryView === "continue" ? "inbox" : libraryView,
+  const queueItems = useMemo(() => {
+    const rankingLibraryView = libraryView === "continue" ? "inbox" : libraryView;
+    const canUseCuratedQueue = rankingLibraryView === "inbox" && itemSortMode === "newest";
+    const queueRankingItems = readerQueueMode === "hidden" ? hiddenRankingItems : rankingItems;
+    const rankedIds = new Set(queueRankingItems.map((entry) => entry.item.id));
+    const rankedPool = visibleItems.filter((item) => rankedIds.has(item.id));
+    const shouldDedupe =
+      storyQueueGrouped &&
+      (libraryView === "inbox" || libraryView === "continue") &&
+      !deferredItemSearch.trim();
+
+    if ((readerQueueMode === "for_you" || readerQueueMode === "hidden") && canUseCuratedQueue) {
+      return dedupeStoryQueue(
+        orderQueueItemsWithRanking(rankedPool, queueRankingItems, {
+          deferredSearch: "",
+          libraryView: rankingLibraryView,
           itemSortMode,
         }),
-        storyQueueGrouped && (libraryView === "inbox" || libraryView === "continue") && !deferredItemSearch.trim(),
-      ),
-    [deferredItemSearch, itemSortMode, libraryView, rankingItems, storyQueueGrouped, visibleItems],
-  );
+        shouldDedupe,
+      );
+    }
+
+    return dedupeStoryQueue(
+      orderQueueItemsWithRanking(visibleItems, rankingItems, {
+        deferredSearch: readerQueueMode === "latest" ? "latest" : deferredItemSearch,
+        libraryView: rankingLibraryView,
+        itemSortMode,
+      }),
+      shouldDedupe,
+    );
+  }, [
+    deferredItemSearch,
+    hiddenRankingItems,
+    itemSortMode,
+    libraryView,
+    rankingItems,
+    readerQueueMode,
+    storyQueueGrouped,
+    visibleItems,
+  ]);
   const visibleUnreadCount = useMemo(
     () => queueItems.filter((item) => !item.is_read).length,
     [queueItems],
@@ -608,6 +723,24 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const visibleFavoriteCount = useMemo(
     () => queueItems.filter((item) => item.is_favorite).length,
     [queueItems],
+  );
+  const rankingExplanations = useMemo(
+    () =>
+      Object.fromEntries(
+        [...hiddenRankingItems, ...rankingItems].map((entry) => [
+          entry.item.id,
+          {
+            negativeSignals: entry.breakdown.matched_negative_signals ?? [],
+            positiveSignals: entry.breakdown.matched_positive_signals ?? entry.breakdown.matched_interests ?? [],
+            qualityFlags: entry.quality_flags ?? entry.breakdown.quality_flags ?? [],
+            reason: entry.breakdown.reason,
+            score: entry.breakdown.final_score,
+            visibility: entry.visibility ?? entry.breakdown.visibility,
+            visibilityReason: entry.visibility_reason ?? entry.breakdown.visibility_reason,
+          },
+        ]),
+      ),
+    [hiddenRankingItems, rankingItems],
   );
   const totalUnreadCount = channels.reduce((sum, channel) => sum + channel.unread_count, 0);
   const continueReadingCount = useMemo(
@@ -682,6 +815,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     );
   }, [channels, feedCountsByChannelId]);
   const latestDigest = digestHistory[0] ?? null;
+  const selectedMagazineIssue = useMemo(
+    () => digestHistory.find((issue) => issue.id === selectedMagazineIssueId) ?? digestHistory[0] ?? null,
+    [digestHistory, selectedMagazineIssueId],
+  );
   const selectedBulkItems = useMemo(
     () => queueItems.filter((item) => selectedItemIds.includes(item.id)),
     [queueItems, selectedItemIds],
@@ -765,6 +902,19 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         smtp_from: payload.settings.smtp_from ?? "",
         kindle_email: payload.settings.kindle_email ?? "",
       });
+    });
+    return payload.settings;
+  }
+
+  async function loadAISettings() {
+    const { response, payload } = await fetchApi<AISettingsPayload>("/api/v1/settings/ai");
+    if (!response.ok || isErrorEnvelope(payload)) {
+      throw new Error(getPayloadMessage(payload, "Nie udało się wczytać ustawień AI."));
+    }
+
+    startTransition(() => {
+      setAISettings(payload.settings);
+      setAISettingsDraft(createAISettingsDraft(payload.settings));
     });
     return payload.settings;
   }
@@ -957,6 +1107,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       profileResult,
       briefingResult,
       rankingResult,
+      hiddenRankingResult,
       sourceHealthResult,
       sourceGroupResult,
       storyResult,
@@ -966,7 +1117,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     ] = await Promise.allSettled([
       fetchWorkspace<WorkspaceProfilePayload>("/api/v1/workspace/profile"),
       fetchWorkspace<WorkspaceBriefingPayload>("/api/v1/workspace/briefing"),
-      fetchWorkspace<WorkspaceRankingPayload>("/api/v1/workspace/ranking?limit=14"),
+      fetchWorkspace<WorkspaceRankingPayload>("/api/v1/workspace/ranking?limit=14&mode=for_you"),
+      fetchWorkspace<WorkspaceRankingPayload>("/api/v1/workspace/ranking?limit=30&mode=hidden&include_hidden=true"),
       fetchWorkspace<WorkspaceSourceHealthPayload>("/api/v1/workspace/source-health"),
       fetchWorkspace<WorkspaceSourceGroupListPayload>("/api/v1/workspace/source-groups"),
       fetchWorkspace<WorkspaceStoryClusterPayload>("/api/v1/workspace/stories?limit=6"),
@@ -984,6 +1136,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
       if (rankingResult.status === "fulfilled") {
         setRankingItems(rankingResult.value.items);
+      }
+      if (hiddenRankingResult.status === "fulfilled") {
+        setHiddenRankingItems(hiddenRankingResult.value.items);
       }
       if (sourceHealthResult.status === "fulfilled") {
         setSourceHealthEntries(sourceHealthResult.value.items);
@@ -1589,31 +1744,122 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }
 
-  async function handleImportOpml() {
+  function handleOpmlDraftChange(value: string) {
+    setOpmlDraft(value);
+    setOpmlPreview(null);
+  }
+
+  async function handlePreviewOpmlImport() {
     if (!opmlDraft.trim()) {
       return;
     }
     setOpmlImportBusy(true);
     try {
-      const payload = await fetchWorkspace<WorkspaceOpmlImportPayload>("/api/v1/workspace/opml/import", {
+      const { response, payload } = await fetchApi<SourceOpmlPreviewPayload>("/api/v1/source-management/opml/import/preview", {
         method: "POST",
-        body: JSON.stringify({ opml: opmlDraft.trim() }),
+        body: JSON.stringify({ opml_content: opmlDraft.trim() }),
       });
-      setOpmlDraft("");
-      await Promise.all([loadChannels(), loadWorkspaceOverview()]);
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się sprawdzić OPML."));
+      }
+      setOpmlPreview(payload);
       setFeedback({
         tone: "success",
-        title: "Import OPML zakonczony",
+        title: "Podgląd OPML gotowy",
         lines: [
-          `Zaimportowano ${payload.imported_count} ${payload.imported_count === 1 ? "zrodlo" : "zrodla"}.`,
-          `Pominieto ${payload.duplicate_count} ${payload.duplicate_count === 1 ? "duplikat" : "duplikatow"}.`,
+          `Nowe źródła: ${payload.summary.new_feeds}, duplikaty: ${payload.summary.existing_feeds + payload.summary.duplicate_feeds}.`,
+          `Foldery: ${payload.summary.folder_count}, błędne wpisy: ${payload.summary.invalid_feeds}.`,
         ],
       });
     } catch (error) {
       setFeedback({
         tone: "error",
-        title: "Nie udalo sie zaimportowac OPML",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Nie udało się sprawdzić OPML",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+      });
+    } finally {
+      setOpmlImportBusy(false);
+    }
+  }
+
+  async function handleReaderFeedback(itemId: string, action: ReaderFeedbackAction) {
+    const item = items.find((entry) => entry.id === itemId) ?? (selectedItem?.id === itemId ? selectedItem : null);
+    if (!item) {
+      return;
+    }
+    setItemActionId(itemId);
+    try {
+      await fetchWorkspace<ReaderFeedbackPayload>("/api/v1/workspace/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          action,
+          item_id: itemId,
+          source_id: item.channel_id,
+          reason: "reader_action",
+        }),
+      });
+      await loadWorkspaceOverview();
+      setFeedback({
+        tone: "success",
+        title:
+          action === "more_like_this" || action === "important"
+            ? "Zapamietalem, ze to jest wazne"
+            : action === "mute_source"
+              ? "Zrodlo zostalo wyciszone"
+              : action === "hide_topic"
+                ? "Temat zostal ukryty"
+                : "Podobne wpisy beda ukrywane",
+        lines: [
+          action === "more_like_this" || action === "important"
+            ? "Ranking Dla mnie bedzie mocniej szukal podobnych tekstow."
+            : "Ranking Dla mnie odswiezyl sygnaly i ograniczy podobny szum.",
+        ],
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        title: "Nie udalo sie zapisac feedbacku czytelnika",
+        lines: [error instanceof Error ? error.message : "Nieznany blad rankingu."],
+      });
+    } finally {
+      setItemActionId(null);
+    }
+  }
+
+  async function handleImportOpml() {
+    if (!opmlDraft.trim()) {
+      return;
+    }
+    if (!opmlPreview) {
+      await handlePreviewOpmlImport();
+      return;
+    }
+    setOpmlImportBusy(true);
+    try {
+      const { response, payload } = await fetchApi<SourceOpmlImportPayload>("/api/v1/source-management/opml/import", {
+        method: "POST",
+        body: JSON.stringify({ opml_content: opmlDraft.trim() }),
+      });
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się zaimportować OPML."));
+      }
+      setOpmlDraft("");
+      setOpmlPreview(null);
+      await Promise.all([loadChannels(), loadWorkspaceOverview()]);
+      setFeedback({
+        tone: "success",
+        title: "Import OPML zakończony",
+        lines: [
+          `Zaimportowano ${payload.summary.new_feeds} ${payload.summary.new_feeds === 1 ? "źródło" : "źródła"}.`,
+          `Pominięto ${payload.summary.existing_feeds + payload.summary.duplicate_feeds} duplikatów.`,
+          "Możesz teraz pobrać wpisy z aktywnych źródeł.",
+        ],
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        title: "Nie udało się zaimportować OPML",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     } finally {
       setOpmlImportBusy(false);
@@ -1734,6 +1980,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           loadChannels(),
           loadSyncRuns(),
           loadDigestHistory(),
+          loadAISettings(),
           loadDeliverySettings(),
           loadWorkspaceOverview(),
           loadAnnotationHub(""),
@@ -1758,7 +2005,113 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [apiBaseUrl, authStatus, latestDigest?.id]);
 
   useEffect(() => {
-    if (authStatus !== "ready" || currentSection !== "digest") {
+    setSelectedMagazineIssueId((current) => {
+      const requestedIssue =
+        currentSection === "magazines" && requestedMagazineIssueId && digestHistory.some((issue) => issue.id === requestedMagazineIssueId)
+          ? requestedMagazineIssueId
+          : null;
+      if (requestedIssue) {
+        return requestedIssue;
+      }
+
+      if (current && digestHistory.some((issue) => issue.id === current)) {
+        return current;
+      }
+
+      return digestHistory[0]?.id ?? null;
+    });
+  }, [currentSection, digestHistory, requestedMagazineIssueId]);
+
+  useEffect(() => {
+    if (authStatus !== "ready" || currentSection !== "magazines" || !selectedMagazineIssue) {
+      return;
+    }
+
+    const articlesToHydrate = selectedMagazineIssue.selection_snapshot.filter((article) => {
+      const hydrationKey = `${selectedMagazineIssue.id}:${article.item_id}`;
+      return article.item_id && !article.content_html && !magazineHydrationAttemptedRef.current.has(hydrationKey);
+    });
+
+    if (articlesToHydrate.length === 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    for (const article of articlesToHydrate) {
+      magazineHydrationAttemptedRef.current.add(`${selectedMagazineIssue.id}:${article.item_id}`);
+    }
+
+    async function hydrateMagazineIssueArticles() {
+      const hydratedEntries = await Promise.all(
+        articlesToHydrate.map(async (article) => {
+          try {
+            const { response, payload } = await fetchApi<ItemDetailPayload>(`/api/v1/items/${encodeURIComponent(article.item_id)}`, {
+              signal: controller.signal,
+            });
+            if (!response.ok || isErrorEnvelope(payload)) {
+              return null;
+            }
+
+            return buildMagazineArticleHydration(payload.item, article.title);
+          } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") {
+              throw error;
+            }
+            return null;
+          }
+        }),
+      );
+
+      const hydrationByItemId = new Map(
+        hydratedEntries
+          .filter((entry): entry is MagazineArticleHydration => Boolean(entry?.contentHtml || entry?.excerpt))
+          .map((entry) => [entry.itemId, entry]),
+      );
+
+      if (hydrationByItemId.size === 0 || controller.signal.aborted) {
+        return;
+      }
+
+      startTransition(() => {
+        setDigestHistory((current) =>
+          current.map((issue) => {
+            if (issue.id !== selectedMagazineIssue.id) {
+              return issue;
+            }
+
+            return {
+              ...issue,
+              selection_snapshot: issue.selection_snapshot.map((article) => {
+                const hydrated = hydrationByItemId.get(article.item_id);
+                if (!hydrated) {
+                  return article;
+                }
+
+                return {
+                  ...article,
+                  author: article.author ?? hydrated.author,
+                  category: article.category ?? hydrated.category,
+                  channel_title: article.channel_title ?? hydrated.channelTitle,
+                  content_html: article.content_html ?? hydrated.contentHtml,
+                  excerpt: article.excerpt ?? hydrated.excerpt,
+                  word_count: article.word_count ?? hydrated.wordCount,
+                };
+              }),
+            };
+          }),
+        );
+      });
+    }
+
+    void hydrateMagazineIssueArticles();
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, authStatus, currentSection, selectedMagazineIssue]);
+
+  useEffect(() => {
+    if (authStatus !== "ready" || (currentSection !== "digest" && currentSection !== "magazines")) {
       return;
     }
     const controller = new AbortController();
@@ -1838,8 +2191,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       location: window.location,
       storage: window.localStorage,
     });
+    const bootReadSearch = parseReadRouteSearch(window.location.search);
 
     setPreferredSection(bootState.preferredSection);
+    setReaderQueueMode(bootReadSearch.mode ?? (bootReadSearch.scope === "all" ? "all" : "for_you"));
     setViewPreferences(bootState.viewPreferences);
     dispatchReaderDisplay({
       type: "restore_display_state",
@@ -2103,6 +2458,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       readSurfaceMode === "article" &&
       (readingItemId === activeItemId || requestedReadSurface === "article");
 
+    if (currentSection === "magazines" && requestedMagazineIssueId && !selectedMagazineIssueId) {
+      return;
+    }
+
     const nextUrl = buildAppHref({
       section: currentSection,
       libraryView,
@@ -2111,6 +2470,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       q: itemSearch.trim() || null,
       item: activeItemId,
       surface: shouldPersistArticleSurface ? "article" : null,
+      issue: currentSection === "magazines" ? selectedMagazineIssueId : null,
+      mode: currentSection === "read" ? readerQueueMode : null,
     });
     if (currentUrl !== nextUrl) {
       window.history.replaceState(null, "", nextUrl);
@@ -2124,7 +2485,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     preferencesReady,
     readSurfaceMode,
     readingItemId,
+    requestedMagazineIssueId,
     requestedReadSurface,
+    readerQueueMode,
+    selectedMagazineIssueId,
     showReadItems,
   ]);
 
@@ -2141,6 +2505,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         sort: itemSortMode,
         q: itemSearch.trim() || null,
         item: activeItemId,
+        mode: preferredSection === "read" ? readerQueueMode : null,
         surface:
           preferredSection === "read" && readSurfaceMode === "article" && readingItemId && readingItemId === activeItemId
             ? "article"
@@ -2156,6 +2521,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     preferencesReady,
     preferredSection,
     readSurfaceMode,
+    readerQueueMode,
     readingItemId,
     router,
     showReadItems,
@@ -2377,7 +2743,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         setFeedback({
           tone: "idle",
           title: "Podgląd źródła",
-          lines: ["Sprawdzam bezpośredni feed, autodiscovery na stronie i heurystyki RSS. Nic nie zapisuję bez potwierdzenia."],
+          lines: ["Sprawdzam bezpośredni feed, wykrywanie na stronie i heurystyki RSS. Nic nie zapisuję bez potwierdzenia."],
         });
       }
 
@@ -2436,7 +2802,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           setFeedback({
             tone: "error",
             title: "channel_preview_failed",
-            lines: [isErrorEnvelope(payload) ? payload.error?.message ?? "Podgląd kanału nie powiódł się." : "Podgląd kanału nie powiódł się."],
+            lines: [isErrorEnvelope(payload) ? payload.error?.message ?? "Podgląd źródła nie powiódł się." : "Podgląd źródła nie powiódł się."],
           });
           if (origin === "manual") {
             pendingSourceFocusTargetRef.current = "results";
@@ -2478,8 +2844,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         setChannelPreview(null);
         setFeedback({
           tone: "error",
-          title: "Zadanie nie powiodlo sie",
-          lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+          title: "Zadanie nie powiodło się",
+          lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
         });
         if (origin === "manual") {
           pendingSourceFocusTargetRef.current = "results";
@@ -2505,6 +2871,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     cancelSourcePreviewRequest();
     lastSourcePreviewKeyRef.current = null;
     setChannelPreview(null);
+    setLastAddedSource(null);
     setSourceLanguageFilter("all");
     setShowSourceOptions(false);
     setSourceSurfaceMode("add");
@@ -2517,6 +2884,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   function handleSourceDraftInputChange(nextValue: string) {
     setInputUrl(nextValue);
+    setLastAddedSource(null);
 
     const previewMode = sourceAddMode === "web_feed" ? "web_feed" : "website";
     const nextRequestKey = buildSourcePreviewRequestKey(previewMode, nextValue);
@@ -2588,22 +2956,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     setFeedback({
       tone: "idle",
       title: "Zapisywanie źródła",
-      lines: ["Wybrany feed jest teraz dodawany do Twojej biblioteki. Po zapisie pokażemy kolejny krok: sync."],
+      lines: ["Wybrany feed jest teraz dodawany do biblioteki. Po zapisie pokażemy kolejny krok: pobranie wpisów."],
     });
 
     try {
-      const { response, payload } = await fetchApi<ChannelCreatePayload>("/api/v1/channels", {
+      const { response, payload } = await fetchApi<SourceCreatePayload>("/api/v1/source-management/sources", {
         method: "POST",
         body: JSON.stringify({
-          input_url: resolvedUrl,
+          ...(feedUrl || channelPreview?.feed?.feed_url
+            ? { feed_url: resolvedUrl }
+            : { input_url: resolvedUrl }),
           category: category || undefined,
+          initial_sync: "none",
+          on_duplicate: "return_existing",
         }),
       });
       if (!response.ok || isErrorEnvelope(payload)) {
         setFeedback({
           tone: "error",
           title: isErrorEnvelope(payload) ? payload.error?.code ?? "channel_add_failed" : "channel_add_failed",
-          lines: [getPayloadMessage(payload, "Dodanie kanału nie powiodło się.")],
+          lines: [getPayloadMessage(payload, "Dodanie źródła nie powiodło się.")],
         });
         return;
       }
@@ -2614,24 +2986,108 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       resetSourcePreviewState();
       setShowSourceOptions(false);
       setSourceSurfaceMode("add");
-      pendingSourceFocusTargetRef.current = "input";
+      setLastAddedSource(payload.source);
       setFeedback({
         tone: "success",
-        title: "Kanał zapisany",
+        title:
+          payload.status === "existing"
+            ? "Źródło jest już w bibliotece"
+            : payload.status === "reactivated"
+              ? "Źródło przywrócone"
+              : "Źródło zapisane",
         lines: [
-          `Tryb wykrywania: ${payload.discovery.mode}`,
-          `Rozwiązany feed: ${payload.discovery.resolved_feed_url}`,
-          "Najlepszy następny krok: uruchom sync, aby pobrać najnowsze wpisy i policzyć czytelność feedu.",
+          `Wykrywanie feedu: ${payload.discovery.mode}.`,
+          `Adres feedu: ${payload.discovery.resolved_feed_url ?? payload.source.feed_url}.`,
+          "Teraz pobierz pierwsze wpisy, żeby źródło pojawiło się w czytniku i w stanie zdrowia.",
         ],
       });
     } catch (error) {
       setFeedback({
         tone: "error",
-        title: "Zadanie nie powiodlo sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Zadanie nie powiodło się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     } finally {
       setSubscribeBusy(false);
+    }
+  }
+
+  function handleSourceSuccessAddNext() {
+    setLastAddedSource(null);
+    setInputUrl("");
+    setCategory("");
+    resetSourcePreviewState();
+    setShowSourceOptions(false);
+    setSourceSurfaceMode("add");
+    setSourceAddMode("website");
+    pendingSourceFocusTargetRef.current = "input";
+    setFeedback(initialFeedback);
+    window.setTimeout(() => {
+      sourceInputRef.current?.focus();
+    }, 0);
+  }
+
+  function handleSourceSuccessOpen() {
+    if (!lastAddedSource) {
+      return;
+    }
+    setReaderFeedFilter({ kind: "channel", value: lastAddedSource.id });
+    router.push(
+      buildAppHref({
+        section: "read",
+        libraryView: "inbox",
+        scope: "all",
+        sort: itemSortMode,
+        q: null,
+      }),
+    );
+  }
+
+  async function handleSourceSuccessSync() {
+    if (!lastAddedSource) {
+      return;
+    }
+    setIsSyncing(true);
+    setFeedback({
+      tone: "idle",
+      title: "Pobieranie pierwszych wpisów",
+      lines: [`Tworzę zadanie pobierania tylko dla źródła: ${lastAddedSource.title}.`],
+    });
+
+    try {
+      const { response, payload } = await fetchApi<SourceSyncPayload>(
+        `/api/v1/source-management/sources/${lastAddedSource.id}/sync`,
+        {
+          method: "POST",
+        },
+      );
+      if (!response.ok || isErrorEnvelope(payload)) {
+        setIsSyncing(false);
+        setFeedback({
+          tone: "error",
+          title: isErrorEnvelope(payload) ? payload.error?.code ?? "source_sync_failed" : "source_sync_failed",
+          lines: [getPayloadMessage(payload, "Nie udało się pobrać pierwszych wpisów.")],
+        });
+        return;
+      }
+
+      upsertRun(payload.run);
+      setFeedback({
+        tone: "idle",
+        title: "Pobieranie wpisów uruchomione",
+        lines: [
+          `Zadanie ${payload.run.id} zostało zapisane i działa w tle.`,
+          "Po zakończeniu odświeżymy kolejkę czytnika i status źródła.",
+        ],
+      });
+      void pollRun(payload.run.id);
+    } catch (error) {
+      setIsSyncing(false);
+      setFeedback({
+        tone: "error",
+        title: "Pobieranie wpisów nie powiodło się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+      });
     }
   }
 
@@ -2659,17 +3115,17 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
         const summaryLine =
           payload.run.status === "completed"
-            ? `Sync finished cleanly. ${payload.run.items_created} new item(s) from ${payload.run.channels_succeeded} channel(s).`
+            ? `Pobieranie zakończone. Nowe wpisy: ${payload.run.items_created}, źródła OK: ${payload.run.channels_succeeded}.`
             : payload.run.status === "partial_success"
-              ? `Sync finished with mixed results. ${payload.run.channels_failed} channel(s) failed and ${payload.run.items_created} new item(s) were still saved.`
-              : payload.run.error_message ?? "Sync did not finish cleanly.";
+              ? `Pobieranie zakończone częściowo. Nieudane źródła: ${payload.run.channels_failed}, zapisane nowe wpisy: ${payload.run.items_created}.`
+              : payload.run.error_message ?? "Pobieranie nie zakończyło się poprawnie.";
 
         setFeedback({
           tone: payload.run.status === "completed" ? "success" : "error",
-          title: `Sync ${payload.run.status}`,
+          title: payload.run.status === "completed" ? "Pierwsze wpisy pobrane" : `Pobieranie: ${payload.run.status}`,
           lines: [
             summaryLine,
-            `Items seen: ${payload.run.items_seen}, items skipped: ${payload.run.items_skipped}.`,
+            `Widziane wpisy: ${payload.run.items_seen}, pominięte: ${payload.run.items_skipped}.`,
             ...payload.run.errors.slice(0, 3).map((error) => `${error.channel_title}: ${error.message}`),
           ],
         });
@@ -2682,10 +3138,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     setIsSyncing(false);
     setFeedback({
       tone: "error",
-      title: "Oczekiwanie na sync przekroczylo czas",
+      title: "Oczekiwanie na pobieranie przekroczyło czas",
       lines: [
-        "Uruchomienie zostalo przyjete, ale przegladarka nie zobaczyla jeszcze stanu koncowego.",
-        "Uzyj panelu ostatnich syncow, aby sprawdzic zapisany status.",
+        "Uruchomienie zostało przyjęte, ale przeglądarka nie zobaczyła jeszcze stanu końcowego.",
+        "Użyj panelu ostatnich zadań, aby sprawdzić zapisany status.",
       ],
     });
   }
@@ -2695,11 +3151,11 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     setIsSyncing(true);
     setFeedback({
       tone: "idle",
-      title: "Kolejkowanie syncu",
+      title: "Kolejkowanie pobierania",
       lines: [
         channelIds.length > 0
-          ? `Backend tworzy zapisany run syncu dla: ${options.label ?? channelIds.join(", ")}.`
-          : "Backend tworzy zapisany run syncu i pobierze w tle kazdy aktywny kanal.",
+          ? `Backend tworzy zapisane zadanie pobierania dla: ${options.label ?? channelIds.join(", ")}.`
+          : "Backend tworzy zapisane zadanie i pobierze w tle każde aktywne źródło.",
       ],
     });
 
@@ -2716,7 +3172,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         setFeedback({
           tone: "error",
           title: isErrorEnvelope(payload) ? payload.error?.code ?? "sync_queue_failed" : "sync_queue_failed",
-          lines: [getPayloadMessage(payload, "Nie udalo sie uruchomic syncu.")],
+          lines: [getPayloadMessage(payload, "Nie udało się uruchomić pobierania.")],
         });
         return;
       }
@@ -2724,10 +3180,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       upsertRun(payload.run);
       setFeedback({
         tone: "idle",
-        title: "Sync przyjety",
+        title: "Pobieranie przyjęte",
         lines: [
-          `Run ${payload.run.id} zostal zapisany i czeka na zakonczenie.`,
-          "Lista runow i kolejka czytnika odswieza sie po zakonczeniu pracy w tle.",
+          `Zadanie ${payload.run.id} zostało zapisane i czeka na zakończenie.`,
+          "Lista zadań i kolejka czytnika odświeżą się po zakończeniu pracy w tle.",
         ],
       });
       void pollRun(payload.run.id);
@@ -2735,8 +3191,8 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       setIsSyncing(false);
       setFeedback({
         tone: "error",
-        title: "Zadanie nie powiodlo sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Zadanie nie powiodło się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     }
   }
@@ -2851,7 +3307,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
       if ("digest_candidate" in patch) {
         setDigestPreview(null);
-        if (currentSection === "digest") {
+        if (currentSection === "digest" || currentSection === "magazines") {
           void loadDigestCandidatePreview();
         }
       }
@@ -3015,9 +3471,44 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   function buildDigestSelectionPayload() {
+    const now = new Date();
     return buildPersistedDigestSelectionPayload({
       limit: 25,
+      now,
+      title: currentSection === "magazines" ? `Magazyn RSSmaster ${now.toISOString().slice(0, 10)}` : undefined,
     });
+  }
+
+  function markDigestCandidatesEmpty(message = "Nie ma jeszcze zapisanych kandydatów digestu.") {
+    startTransition(() => {
+      setDigestPreview(null);
+      setDigestCandidatePreview(null);
+    });
+    setDigestCandidateStatus("empty");
+    setDigestCandidateMessage(message);
+  }
+
+  async function getPersistedDigestCandidatePresence(options: { signal?: AbortSignal } = {}) {
+    try {
+      const params = new URLSearchParams({
+        digest_candidate: "true",
+        limit: "1",
+      });
+      const { response, payload } = await fetchApi<ItemListPayload>(`/api/v1/items?${params.toString()}`, {
+        signal: options.signal,
+      });
+
+      if (!response.ok || isErrorEnvelope(payload) || !payload || !Array.isArray(payload.items)) {
+        return null;
+      }
+
+      return payload.items.length > 0;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw error;
+      }
+      return null;
+    }
   }
 
   async function loadDigestCandidatePreview(options: { signal?: AbortSignal } = {}) {
@@ -3025,6 +3516,12 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     setDigestCandidateMessage(null);
 
     try {
+      const hasPersistedCandidates = await getPersistedDigestCandidatePresence(options);
+      if (hasPersistedCandidates === false) {
+        markDigestCandidatesEmpty();
+        return null;
+      }
+
       const { response, payload } = await fetchApi<DigestPreviewPayload>("/api/v1/digests/preview", {
         method: "POST",
         signal: options.signal,
@@ -3033,11 +3530,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       if (!response.ok || isErrorEnvelope(payload)) {
         if (isDigestSelectionEmptyPayload(payload)) {
-          startTransition(() => {
-            setDigestCandidatePreview(null);
-          });
-          setDigestCandidateStatus("empty");
-          setDigestCandidateMessage(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
+          markDigestCandidatesEmpty(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
           return null;
         }
         throw new Error(getPayloadMessage(payload, "Nie udało się sprawdzić kolejki digestu."));
@@ -3065,18 +3558,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   async function handleDigestPreview() {
     setDigestBusy(true);
     try {
+      const hasPersistedCandidates = await getPersistedDigestCandidatePresence();
+      if (hasPersistedCandidates === false) {
+        markDigestCandidatesEmpty();
+        setFeedback({
+          tone: "idle",
+          title: "Brak kandydatów do digestu",
+          lines: [
+            "Oznacz artykuł przyciskiem Digest w czytniku. Podgląd korzysta z trwałej kolejki, a nie z aktualnie widocznych filtrów.",
+          ],
+        });
+        return;
+      }
+
       const { response, payload } = await fetchApi<DigestPreviewPayload>("/api/v1/digests/preview", {
         method: "POST",
         body: JSON.stringify(buildDigestSelectionPayload()),
       });
       if (!response.ok || isErrorEnvelope(payload)) {
         if (isDigestSelectionEmptyPayload(payload)) {
-          startTransition(() => {
-            setDigestPreview(null);
-            setDigestCandidatePreview(null);
-          });
-          setDigestCandidateStatus("empty");
-          setDigestCandidateMessage(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
+          markDigestCandidatesEmpty(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
           setFeedback({
             tone: "idle",
             title: "Brak kandydatów do digestu",
@@ -3117,14 +3618,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   async function handleDigestBuild() {
     setDigestBusy(true);
     try {
+      const hasPersistedCandidates = await getPersistedDigestCandidatePresence();
+      if (hasPersistedCandidates === false) {
+        markDigestCandidatesEmpty();
+        setFeedback({
+          tone: "idle",
+          title: "Nie ma czego zbudować",
+          lines: [
+            "Najpierw oznacz artykuły jako Digest. Build używa trwałych kandydatów z biblioteki, więc wyszukiwanie i filtr czytnika nie tworzą już ukrytej selekcji.",
+          ],
+        });
+        return;
+      }
+
       const { response, payload } = await fetchApi<DigestHistoryPayload>("/api/v1/digests/build", {
         method: "POST",
         body: JSON.stringify(buildDigestSelectionPayload()),
       });
       if (!response.ok || isErrorEnvelope(payload)) {
         if (isDigestSelectionEmptyPayload(payload)) {
-          setDigestCandidateStatus("empty");
-          setDigestCandidateMessage(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
+          markDigestCandidatesEmpty(getPayloadMessage(payload, "Nie ma jeszcze zapisanych kandydatów digestu."));
           setFeedback({
             tone: "idle",
             title: "Nie ma czego zbudować",
@@ -3138,11 +3651,15 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
 
       await Promise.all([loadDigestHistory(), loadDeliveryLogs(payload.digest.id), loadDigestCandidatePreview()]);
+      setSelectedMagazineIssueId(payload.digest.id);
+      if (currentSection === "magazines") {
+        router.push(buildAppHref({ section: "magazines", issue: payload.digest.id }));
+      }
       setFeedback({
         tone: "success",
-        title: "Artefakt digestu utworzony",
+        title: "Wydanie magazynu utworzone",
         lines: [
-          `${payload.digest.title} z ${payload.digest.article_count} artykulami zostal zapisany lokalnie.`,
+          `${payload.digest.title} z ${payload.digest.article_count} artykułami zostało zapisane lokalnie.`,
           payload.digest.artifact.path ? `Artefakt: ${payload.digest.artifact.path}` : "Metadane artefaktu jeszcze czekaja.",
         ],
       });
@@ -3154,6 +3671,64 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       });
     } finally {
       setDigestBusy(false);
+    }
+  }
+
+  async function handleSaveAISettings() {
+    const patch = buildAISettingsPatch(aiSettingsDraft, aiSettings);
+    if (Object.keys(patch).length === 0) {
+      setAISettingsMessage("Brak zmian w ustawieniach AI.");
+      return;
+    }
+
+    setAISettingsBusy(true);
+    setAISettingsMessage(null);
+    try {
+      const { response, payload } = await fetchApi<AISettingsPayload>("/api/v1/settings/ai", {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się zapisać ustawień AI."));
+      }
+
+      startTransition(() => {
+        setAISettings(payload.settings);
+        setAISettingsDraft(createAISettingsDraft(payload.settings));
+      });
+      setAISettingsMessage("Ustawienia AI zapisane.");
+    } catch (error) {
+      setAISettingsMessage(error instanceof Error ? error.message : "Nie udało się zapisać ustawień AI.");
+    } finally {
+      setAISettingsBusy(false);
+    }
+  }
+
+  async function handleAISettingsPreflight() {
+    setAIPreflightBusy(true);
+    setAISettingsMessage(null);
+    try {
+      const { response, payload } = await fetchApi<AISettingsPreflightPayload>("/api/v1/settings/ai/preflight", {
+        method: "POST",
+      });
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się sprawdzić konfiguracji AI."));
+      }
+
+      setAIPreflight(payload);
+      setFeedback({
+        tone: payload.can_use_ai ? "success" : "error",
+        title: `Preflight AI: ${payload.status}`,
+        lines: payload.checks.map((check) => `${check.name}: ${check.message}`),
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        title: "Preflight AI nie powiódł się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+      });
+    } finally {
+      setAIPreflightBusy(false);
     }
   }
 
@@ -3218,12 +3793,12 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }
 
-  async function handleDeliveryPreflight(targetKind: "kindle" | "smtp") {
-    if (!latestDigest) {
+  async function handleDeliveryPreflight(targetKind: "kindle" | "smtp", digest: DeliveryDigestTarget | null = latestDigest) {
+    if (!digest) {
       setFeedback({
         tone: "error",
-        title: "Brak dostepnego digestu",
-        lines: ["Zbuduj artefakt digestu przed uruchomieniem preflightu wysylki."],
+        title: "Brak dostępnego wydania",
+        lines: ["Zbuduj artefakt magazynu przed uruchomieniem preflightu wysyłki."],
       });
       return;
     }
@@ -3233,7 +3808,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       const { response, payload } = await fetchApi<DeliveryPreflightPayload>("/api/v1/delivery/preflight", {
         method: "POST",
         body: JSON.stringify({
-          digest_id: latestDigest.id,
+          digest_id: digest.id,
           target_kind: targetKind,
         }),
       });
@@ -3246,26 +3821,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       });
       setFeedback({
         tone: payload.preflight.can_send ? "success" : "error",
-        title: `Preflight wysylki: ${payload.preflight.status}`,
+        title: `Preflight wydania: ${payload.preflight.status}`,
         lines: payload.preflight.checks.map((check) => `${check.name}: ${check.message}`),
       });
     } catch (error) {
       setFeedback({
         tone: "error",
-        title: "Preflight wysylki nie powiodl sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Preflight wysyłki nie powiódł się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     } finally {
       setDeliveryBusy(false);
     }
   }
 
-  async function handleSendDigest(mode: "dry_run" | "send", targetKind: "kindle" | "smtp") {
-    if (!latestDigest) {
+  async function handleSendDigest(mode: "dry_run" | "send", targetKind: "kindle" | "smtp", digest: DeliveryDigestTarget | null = latestDigest) {
+    if (!digest) {
       setFeedback({
         tone: "error",
-        title: "Brak dostepnego digestu",
-        lines: ["Zbuduj artefakt digestu przed wysylka."],
+        title: "Brak dostępnego wydania",
+        lines: ["Zbuduj artefakt magazynu przed wysyłką."],
       });
       return;
     }
@@ -3275,32 +3850,32 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       const { response, payload } = await fetchApi<DeliveryDispatchPayload>("/api/v1/delivery/send", {
         method: "POST",
         body: JSON.stringify({
-          digest_id: latestDigest.id,
+          digest_id: digest.id,
           target_kind: targetKind,
           mode,
         }),
       });
       if (!response.ok || isErrorEnvelope(payload)) {
-        throw new Error(getPayloadMessage(payload, "Nie udalo sie wyslac digestu."));
+        throw new Error(getPayloadMessage(payload, "Nie udało się wysłać wydania."));
       }
 
       startTransition(() => {
         setDeliveryPreflight(payload.preflight);
       });
-      await Promise.all([loadDeliveryLogs(latestDigest.id), loadDigestHistory()]);
+      await Promise.all([loadDeliveryLogs(digest.id), loadDigestHistory()]);
       setFeedback({
         tone: payload.run.status === "completed" ? "success" : "error",
-        title: `Wysylka ${payload.run.status}`,
+        title: `Wysyłka wydania ${payload.run.status}`,
         lines: [
           `${payload.log.status} dla ${payload.log.target_kind} ${payload.log.recipient ?? "odbiorca jeszcze nieustalony"}.`,
-          payload.log.provider_message_id ? `Id wiadomosci dostawcy: ${payload.log.provider_message_id}` : "Brak identyfikatora od dostawcy.",
+          payload.log.provider_message_id ? `Id wiadomości dostawcy: ${payload.log.provider_message_id}` : "Brak identyfikatora od dostawcy.",
         ],
       });
     } catch (error) {
       setFeedback({
         tone: "error",
-        title: "Wysylka nie powiodla sie",
-        lines: [error instanceof Error ? error.message : "Nieznany blad przegladarki."],
+        title: "Wysyłka nie powiodła się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
       });
     } finally {
       setDeliveryBusy(false);
@@ -4392,7 +4967,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     });
   }, [category, currentSourceAddMode.label, inputUrl, primarySourceCandidate, sourceExistingChannel, sourceGroups]);
   const shouldShowSourceFeedback =
-    (feedback.tone !== "idle" && sourcePreviewState !== "error") || subscribeBusy || opmlImportBusy || captureBusy;
+    (!lastAddedSource && feedback.tone !== "idle" && sourcePreviewState !== "error") ||
+    subscribeBusy ||
+    opmlImportBusy ||
+    captureBusy;
   const hasReaderSearch = deferredItemSearch.trim().length > 0;
 
   useEffect(() => {
@@ -4509,7 +5087,12 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     sources: {
       eyebrow: "Źródła",
       title: "Dodawanie źródeł",
-      description: "Dodaj stronę albo feed, zobacz wynik discovery i dopiero wtedy zapisz źródło do biblioteki.",
+      description: "Dodaj stronę albo feed, zobacz wynik wykrywania i dopiero wtedy zapisz źródło do biblioteki.",
+    },
+    magazines: {
+      eyebrow: "Magazyny",
+      title: "Magazyny",
+      description: "Archiwum numerów Kindle z najciekawszymi artykułami z Twoich źródeł.",
     },
     digest: {
       eyebrow: "Digest",
@@ -4536,6 +5119,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         sort: itemSortMode,
         q: itemSearch.trim() || null,
         item: activeItemId,
+        mode: readerQueueMode,
       }),
       meta: totalUnreadCount,
     },
@@ -4564,6 +5148,14 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       meta: persistedDigestCandidateCount ?? digestCandidateIds.length,
     },
     {
+      id: "magazines" as const,
+      shortLabel: "M",
+      label: "Magazyny",
+      icon: <KindleIcon className="app-icon workspace-nav-rail-glyph" />,
+      href: buildAppHref({ section: "magazines" }),
+      meta: digestHistory.length,
+    },
+    {
       id: "settings" as const,
       shortLabel: "U",
       label: "Ustawienia",
@@ -4579,9 +5171,19 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       : feedFilter.kind === "category"
         ? feedFilter.value
         : "Wszystkie feedy";
+  const readerQueueModeLabel =
+    readerQueueMode === "for_you"
+      ? "Dla mnie"
+      : readerQueueMode === "latest"
+        ? "Najnowsze"
+        : readerQueueMode === "hidden"
+          ? "Ukryte"
+          : "Wszystkie";
   const activeFeedScopeLabel =
     libraryView === "inbox"
-      ? activeFeedScopeBaseLabel
+      ? feedFilter.kind === "all"
+        ? readerQueueModeLabel
+        : `${readerQueueModeLabel} - ${activeFeedScopeBaseLabel}`
       : feedFilter.kind === "all"
         ? getLibraryViewLabel(libraryView)
         : `${getLibraryViewLabel(libraryView)} - ${activeFeedScopeBaseLabel}`;
@@ -4598,11 +5200,13 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       showReadItems?: boolean;
       sort?: ItemSortMode;
       surface?: "article" | "browse";
+      mode?: AppReaderMode;
     },
   ) {
     const hasSearchOverride = options?.search !== undefined;
     const nextShowReadItems = options?.showReadItems ?? viewPreferences[nextLibraryView]?.showReadItems ?? showReadItems;
     const nextSort = options?.sort ?? itemSortMode;
+    const nextReaderQueueMode = options?.mode ?? readerQueueMode;
     const nextItemId = options?.itemId ?? null;
     const nextSearchText = (hasSearchOverride ? (options?.search ?? "") : itemSearch).trim();
     const shouldOpenArticle = options?.surface === "article" && Boolean(nextItemId);
@@ -4623,6 +5227,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       q: nextSearchText || null,
       item: nextItemId,
       surface: shouldOpenArticle ? "article" : null,
+      mode: nextReaderQueueMode,
     });
 
     pendingContinuityRouteRestoreRef.current = {
@@ -4637,6 +5242,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       }),
     );
     setPreferredSection("read");
+    setReaderQueueMode(nextReaderQueueMode);
     dispatchReader({
       type: "navigate_library_view",
       activeItemId: nextItemId,
@@ -5073,6 +5679,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           kindleReady={Boolean(deliverySettings?.smtp_ready)}
           onBackToFeed={() => dispatchReader({ type: "show_browse" })}
           onReextract={() => void handleReextractItem(selectedItem, "write")}
+          onReaderFeedback={(action) => void handleReaderFeedback(selectedItem.id, action)}
           onSendToKindle={() => void handleSendArticleToKindle(selectedItem)}
           onToggleArchive={() =>
             void mutateItemState(selectedItem, {
@@ -5258,9 +5865,20 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         items={queueItems}
         message={itemsMessage}
         messageTone={itemsStatus === "error" ? "error" : "default"}
+        rankingExplanations={rankingExplanations}
         onItemSearchChange={setReaderItemSearch}
         onOpenItem={(itemId) => dispatchReader({ type: "open_item", itemId })}
         onRefresh={() => void loadItems()}
+        onReaderFeedback={(itemId, action) => void handleReaderFeedback(itemId, action)}
+        onReaderQueueModeChange={(mode) => {
+          const nextShowReadItems = mode === "all" ? true : mode === "for_you" || mode === "hidden" ? false : showReadItems;
+          navigateToReadLibraryView("inbox", {
+            mode,
+            search: "",
+            showReadItems: nextShowReadItems,
+            sort: "newest",
+          });
+        }}
         onSelectItem={(itemId) => dispatchReader({ type: "select_item", itemId })}
         onShowReadItemsChange={setReaderShowReadItems}
         onSortModeChange={setReaderItemSortMode}
@@ -5285,6 +5903,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         }}
         showMessage={Boolean(itemsMessage && itemsStatus !== "unsupported")}
         showReadItems={showReadItems}
+        readerQueueMode={readerQueueMode}
         visibleUnreadCount={visibleUnreadCount}
       />
     );
@@ -5521,11 +6140,13 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         {...{
           activeChannelCount, activeChannelId, activateSourceAddMode, archivedChannelCount, category, channelPreview,
           channels, continuityImportInputRef, currentSourceAddMode, draftCategories, feedback, focusFirstItemFromChannel, handleArchive,
-          handleCategorySave, handleConfirmChannelAdd, handleCreateSourceGroup, handleExportWorkspace, handleImportOpml,
+          handleCategorySave, handleConfirmChannelAdd, handleCreateSourceGroup, handleExportWorkspace, handleImportOpml, handleOpmlDraftChange, handlePreviewOpmlImport,
           handleSourceControlUpdate, handleSourceDraftInputChange, handleSourceTierChange, handleStateToggle, handleSubmit,
-          handleSyncAll, inputUrl, isPending, isSyncing, latestRun, latestRunSummaryLine, opmlDraft, opmlImportBusy,
+          handleSyncAll, inputUrl, isPending, isSyncing, lastAddedSource, latestRun, latestRunSummaryLine, opmlDraft, opmlImportBusy, opmlPreview,
+          onSourceSuccessAddNext: handleSourceSuccessAddNext, onSourceSuccessOpen: handleSourceSuccessOpen,
+          onSourceSuccessSync: handleSourceSuccessSync,
           pendingSourceFocusTargetRef, previewBusy, primarySourceCandidate, renderUiFeedbackCard, resetSourcePreviewState,
-          setCategory, setDraftCategories, setOpmlDraft, setShowSourceOptions, setSourceGroupColor, setSourceGroupDraft,
+          setCategory, setDraftCategories, setShowSourceOptions, setSourceGroupColor, setSourceGroupDraft,
           setSourceLanguageFilter, setSourceSurfaceMode, shouldShowSourceFeedback, showSourceOptions, sourceAddMode,
           sourceBackofficeHeadingId, sourceBackofficeRegionId, sourceBackofficeRegionRef, sourceCategoryInputRef,
           sourceExistingChannel, sourceFeedbackRegionId, sourceGroupColor, sourceGroupDraft, sourceGroups, sourceHealthEntries,
@@ -5578,6 +6199,47 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     );
   }
 
+  function handleSelectMagazineIssue(issueId: string) {
+    setSelectedMagazineIssueId(issueId);
+    router.push(buildAppHref({ section: "magazines", issue: issueId }));
+  }
+
+  function renderUiMagazineSection() {
+    return (
+      <MagazineSection
+        activeIssueId={selectedMagazineIssueId}
+        buildDisabled={digestBusy || digestCandidateStatus === "loading"}
+        busy={digestBusy}
+        copy={uiSectionCopy.magazines}
+        countLabel={`${persistedDigestCandidateCount ?? digestCandidateIds.length} zapisanych`}
+        deliveryBusy={deliveryBusy}
+        deliveryPreflight={deliveryPreflight}
+        deliverySettings={deliverySettings}
+        feedbackCard={renderUiFeedbackCard()}
+        formatDeliveryStatus={getDeliveryStatusLabel}
+        formatTimestamp={formatTimestamp}
+        history={digestHistory}
+        message={digestCandidateMessage}
+        onBackToReader={() => router.push(buildAppHref({ section: "read" }))}
+        onBuild={() => void handleDigestBuild()}
+        onDeliveryPreflight={(digest) => void handleDeliveryPreflight("kindle", digest)}
+        onPreview={() => void handleDigestPreview()}
+        onSelectIssue={handleSelectMagazineIssue}
+        onSendDigestDryRun={(digest) => void handleSendDigest("dry_run", "kindle", digest)}
+        onSendDigestLive={(digest) => void handleSendDigest("send", "kindle", digest)}
+        onShowDigestQueue={() =>
+          navigateToReadLibraryView("digest", {
+            search: "",
+            showReadItems: true,
+          })
+        }
+        preview={digestPreview ?? digestCandidatePreview}
+        previewDisabled={digestBusy || digestCandidateStatus === "loading"}
+        status={digestCandidateStatus}
+      />
+    );
+  }
+
   function handleDeliverySettingsDraftChange(field: keyof DeliverySettingsDraft, value: string) {
     setSettingsDraft((current) => ({
       ...current,
@@ -5585,10 +6247,26 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     }));
   }
 
+  function handleAISettingsDraftChange(field: keyof AISettingsDraft, value: string | boolean) {
+    setAISettingsDraft((current) => ({
+      ...current,
+      [field]: value,
+      ...(field === "openai_api_key" && typeof value === "string" && value.trim()
+        ? { clear_openai_api_key: false }
+        : {}),
+    }));
+  }
+
   function renderUiSettingsSection() {
     return (
       <WorkspaceSettingsSection
         activeChannelCount={activeChannelCount}
+        aiPreflight={aiPreflight}
+        aiPreflightBusy={aiPreflightBusy}
+        aiSettings={aiSettings}
+        aiSettingsBusy={aiSettingsBusy}
+        aiSettingsDraft={aiSettingsDraft}
+        aiSettingsMessage={aiSettingsMessage}
         apiBaseUrl={apiBaseUrl}
         authenticatedAccount={authenticatedAccount}
         authBusy={authBusy}
@@ -5602,6 +6280,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         hasLocalAccounts={hasLocalAccounts}
         interestDraft={interestDraft}
         interestWeight={interestWeight}
+        onAISettingsDraftChange={handleAISettingsDraftChange}
+        onAISettingsPreflight={() => void handleAISettingsPreflight()}
+        onAISettingsSave={() => void handleSaveAISettings()}
         onDeliverySettingsDraftChange={handleDeliverySettingsDraftChange}
         onDeliverySettingsPreflight={() => void handleDeliverySettingsPreflight()}
         onDeliverySettingsSave={() => void handleSaveDeliverySettings()}
@@ -5626,10 +6307,21 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           ? renderUiSourcesSection()
         : currentSection === "digest"
           ? renderUiDigestSection()
-          : currentSection === "settings"
-            ? renderUiSettingsSection()
-            : renderUiReadSection();
+          : currentSection === "magazines"
+            ? renderUiMagazineSection()
+            : currentSection === "settings"
+              ? renderUiSettingsSection()
+              : renderUiReadSection();
   const isReadFeedSection = currentSection === "read";
+  const readerArticleShellActive = isReadFeedSection && readSurfaceMode !== "browse";
+  const readerFocusShellActive = isReadFeedSection && readSurfaceMode !== "browse" && isFocusedMode;
+  const appShellClassName = [
+    `app-shell-${currentSection}`,
+    readerArticleShellActive ? "app-shell-reader-article" : "",
+    readerFocusShellActive ? "app-shell-reader-focus" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const authReturnContext =
     currentSection === "sources"
       ? {
@@ -5642,20 +6334,25 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
             label: "Digest",
             description: "Po zalogowaniu wrócisz do przygotowania digestu z zapisanych kandydatów.",
           }
-        : currentSection === "settings"
+        : currentSection === "magazines"
           ? {
-              label: "Ustawienia",
-              description: "Po zalogowaniu wrócisz do konfiguracji lokalnej biblioteki i dostawy.",
+              label: "Magazyny",
+              description: "Po zalogowaniu wrócisz do pakowania kandydatów digestu w wydania Kindle.",
             }
-          : currentSection === "discover"
+          : currentSection === "settings"
             ? {
-                label: "Odkrywaj",
-                description: "Po zalogowaniu wrócisz do przeglądania odkryć i rekomendowanych historii.",
+                label: "Ustawienia",
+                description: "Po zalogowaniu wrócisz do konfiguracji lokalnej biblioteki i dostawy.",
               }
-            : {
-                label: "Czytnik",
-                description: "Po zalogowaniu wrócisz do swojej kolejki czytania z zachowanym adresem widoku.",
-              };
+            : currentSection === "discover"
+              ? {
+                  label: "Odkrywaj",
+                  description: "Po zalogowaniu wrócisz do przeglądania odkryć i rekomendowanych historii.",
+                }
+              : {
+                  label: "Czytnik",
+                  description: "Po zalogowaniu wrócisz do swojej kolejki czytania z zachowanym adresem widoku.",
+                };
 
   if (authStatus !== "ready") {
     return (
@@ -5705,6 +6402,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         type="file"
       />
       <AppShell
+        className={appShellClassName || undefined}
         navRail={
           <div className="workspace-nav-rail">
             <div className="workspace-nav-rail-brand">
@@ -5768,7 +6466,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                   <span className="workspace-appbar-mark">{currentSectionNavItem.icon}</span>
                   <div>
                     <strong>{currentSection === "read" ? activeFeedScopeLabel : uiSectionCopy[currentSection].title}</strong>
-                    <span>{currentSection === "read" ? "Czytnik feedow" : uiSectionCopy[currentSection].description}</span>
+                    <span>{currentSection === "read" ? "Czytnik źródeł" : uiSectionCopy[currentSection].description}</span>
                   </div>
                 </div>
               </div>
@@ -5789,8 +6487,13 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </span>
                 </button>
                 {currentSection === "read" ? (
-                  <button className={`mini-button ${isFocusedMode ? "mini-button-accent" : ""}`} onClick={() => setIsFocusedMode((current) => !current)} type="button">
-                    {isFocusedMode ? "Wyjdz z trybu skupienia" : "Tryb skupienia"}
+                  <button
+                    className={`mini-button reader-focus-toggle ${isFocusedMode ? "mini-button-accent" : ""}`}
+                    data-testid="reader-focus-toggle"
+                    onClick={() => setIsFocusedMode((current) => !current)}
+                    type="button"
+                  >
+                    {isFocusedMode ? "Wyjdź z trybu skupienia" : "Tryb skupienia"}
                   </button>
                 ) : null}
                 <AccountStatus
@@ -5803,7 +6506,9 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
                   onLogin={() => openAuthScreen(hasLocalAccounts ? "login" : "register")}
                   onLogout={() => void handleLogout()}
                 />
-                <span className="runtime-pill runtime-pill-ok">API {apiBaseUrl.replace(/^https?:\/\//, "")}</span>
+                <span className="runtime-pill runtime-pill-ok" title={`API ${apiBaseUrl.replace(/^https?:\/\//, "")}`}>
+                  API online
+                </span>
               </div>
             </div>
           </div>

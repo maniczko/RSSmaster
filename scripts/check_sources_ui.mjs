@@ -276,6 +276,33 @@ async function captureAccessibilitySnapshot(page, selector) {
   }
 }
 
+async function getHorizontalOverflowReport(page) {
+  return page.evaluate(() => {
+    const viewportWidth = document.documentElement.clientWidth;
+    const scrollWidth = document.documentElement.scrollWidth;
+    const offenders = Array.from(document.querySelectorAll("body *"))
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return {
+          className: typeof element.className === "string" ? element.className.slice(0, 180) : "",
+          display: style.display,
+          left: Math.round(rect.left),
+          overflowX: style.overflowX,
+          right: Math.round(rect.right),
+          scrollWidth: element.scrollWidth,
+          tagName: element.tagName.toLowerCase(),
+          testId: element.getAttribute("data-testid"),
+          text: (element.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 140),
+          width: Math.round(rect.width),
+        };
+      })
+      .filter((entry) => entry.width > 0 && (entry.right > viewportWidth + 1 || entry.left < -1))
+      .slice(0, 12);
+    return { viewportWidth, scrollWidth, offenders };
+  });
+}
+
 async function captureFocusState(page) {
   return await page.evaluate(() => {
     const active = document.activeElement;
@@ -304,7 +331,9 @@ function withStandardArtifact(results) {
       { id: "keyboard-skip-link", label: "Skip link focus", status: results.keyboardReachedSkip ? "passed" : "failed" },
       { id: "keyboard-source-input", label: "Source input focus", status: results.keyboardReachedInput ? "passed" : "failed" },
       { id: "source-preview", label: "Homepage and feed preview", status: results.multiCandidateWorks ? "passed" : "failed" },
-      { id: "source-backoffice", label: "Backoffice focus continuity", status: results.backofficeFocusMoved ? "passed" : "failed" },
+      { id: "source-success-panel", label: "Post-add success CTA", status: results.successPanelWorks ? "passed" : "failed" },
+      { id: "source-opml-preview", label: "OPML preview before import", status: results.opmlPreviewWorks ? "passed" : "failed" },
+      { id: "source-backoffice", label: "Source management focus continuity", status: results.backofficeFocusMoved ? "passed" : "failed" },
     ],
     checkName: "check:sources",
     errors: {
@@ -321,6 +350,9 @@ function withStandardArtifact(results) {
     },
     metadata: {
       already_followed_works: results.alreadyFollowedWorks,
+      desktop_render: results.desktopRender,
+      opml_preview_works: results.opmlPreviewWorks,
+      success_panel_works: results.successPanelWorks,
       stale_preview_guarded: results.stalePreviewGuarded,
       transport_failure_quiet: results.transportFailureQuiet,
       tablet_render: results.tabletRender,
@@ -462,6 +494,8 @@ async function main() {
     manualPreviewMovedFocus: false,
     mobileRender: false,
     multiCandidateWorks: false,
+    desktopRender: false,
+    opmlPreviewWorks: false,
     pageErrors,
     runDir,
     isolatedPaths: {
@@ -472,6 +506,7 @@ async function main() {
     noAccountSession: false,
     status: "running",
     stalePreviewGuarded: false,
+    successPanelWorks: false,
     tabletRender: false,
     transportFailureQuiet: false,
     webUrl,
@@ -539,18 +574,23 @@ async function main() {
     results.liveAnnouncement = await page.getByTestId("source-live-region").textContent();
     assert(results.liveAnnouncement?.includes("Wynik gotowy"), `Nieoczekiwany live region: ${results.liveAnnouncement}`);
     await page.getByRole("button", { name: "Obserwuj" }).click();
-    await page.waitForFunction(() => document.body.innerText.includes("Kanał zapisany"), undefined, { timeout: 20000 });
+    await page.waitForSelector('[data-testid="source-success-panel"]', { timeout: 20000 });
+    await page.waitForFunction(() => document.body.innerText.includes("Źródło zapisane"), undefined, { timeout: 20000 });
+    await page.getByTestId("source-first-sync-button").waitFor({ state: "visible", timeout: 5000 });
+    results.successPanelWorks = true;
     results.a11ySnapshots.resultsRegion = await captureAccessibilitySnapshot(page, '[data-testid="source-results-region"]');
+    await page.getByRole("button", { name: "Dodaj kolejne źródło" }).click();
+    await expectActiveTestId(page, "source-input");
     await page.getByTestId("source-input").fill("");
     await page.getByTestId("source-input").fill(`${fixtureServer.origin}/site-single/`);
     await page.waitForSelector("text=Już obserwujesz", { timeout: 20000 });
-    await page.waitForFunction(() => document.body.innerText.includes("Przejdź do feedu"), undefined, { timeout: 5000 });
+    await page.waitForFunction(() => document.body.innerText.includes("Przejdź do źródła"), undefined, { timeout: 5000 });
     results.alreadyFollowedWorks = true;
 
     await page.getByTestId("source-mode-web_feed").click();
     await expectActiveTestId(page, "source-input");
     await page.getByTestId("source-input").fill(`${fixtureServer.origin}/feeds/manual.xml`);
-    await page.getByRole("button", { name: "Znajdź" }).click();
+    await page.getByRole("button", { name: "Sprawdź źródło" }).click();
     await page.waitForTimeout(3500);
     await page.waitForFunction(() => document.body.innerText.includes("Local Manual Feed"), undefined, {
       timeout: 5000,
@@ -570,7 +610,7 @@ async function main() {
     await page.getByTestId("source-input").fill(`${fixtureServer.origin}/site-single/`);
     await page.waitForTimeout(100);
     await page.getByTestId("source-input").fill(`${fixtureServer.origin}/site-multi/`);
-    await page.waitForSelector("text=Wiele kandydatów", { timeout: 20000 });
+    await page.waitForSelector("text=Wiele wyników", { timeout: 20000 });
     await page.waitForSelector("text=Alpha Feed", { timeout: 20000 });
     await page.waitForSelector("text=Beta Feed", { timeout: 20000 });
     const staleSingleVisible = await page.locator("text=Local Single Feed").count();
@@ -579,10 +619,10 @@ async function main() {
     results.multiCandidateWorks = true;
 
     await page.getByTestId("source-input").fill("http://127.0.0.1:9/nope");
-    await page.waitForSelector("text=Feed jest chwilowo niedostepny", { timeout: 20000 });
+    await page.waitForSelector("text=Źródło jest chwilowo niedostępne", { timeout: 20000 });
     const transportAnnouncement = await page.getByTestId("source-live-region").textContent();
     assert(
-      transportAnnouncement?.includes("Nie udalo sie polaczyc z podanym zrodlem"),
+      transportAnnouncement?.includes("Nie udało się połączyć z podanym źródłem"),
       `Nieoczekiwany komunikat transport failure: ${transportAnnouncement}`,
     );
     const transportBodyText = await page.locator("body").textContent();
@@ -591,6 +631,19 @@ async function main() {
       "UI pokazuje surowy angielski komunikat transport failure.",
     );
     results.transportFailureQuiet = true;
+
+    await page.getByTestId("source-mode-import").click();
+    await expectActiveTestId(page, "source-opml-textarea");
+    await page.getByTestId("source-opml-textarea").fill(
+      `<?xml version="1.0"?><opml version="2.0"><body><outline text="Manual" title="Manual" type="rss" xmlUrl="${fixtureServer.origin}/feeds/manual.xml" /></body></opml>`,
+    );
+    await page.getByTestId("source-opml-preview-button").click();
+    await page.waitForSelector('[data-testid="source-opml-preview-card"]', { timeout: 20000 });
+    const opmlPreviewText = await page.getByTestId("source-opml-preview-card").textContent();
+    assert(opmlPreviewText?.includes("Podgląd importu"), `Nieoczekiwany podgląd OPML: ${opmlPreviewText}`);
+    results.opmlPreviewWorks = true;
+    await page.getByTestId("source-mode-website").click();
+    await expectActiveTestId(page, "source-input");
 
     await page.getByTestId("source-manage-toggle").press("Enter");
     await page.waitForFunction(
@@ -607,16 +660,34 @@ async function main() {
     await page.getByTestId("source-manage-toggle").press("Enter");
     await expectActiveTestId(page, "source-input");
 
+    await page.setViewportSize({ width: 1440, height: 1200 });
+    await page.waitForSelector('[data-testid="source-main-heading"]', { timeout: 5000 });
+    await page.waitForSelector('[data-testid="source-input"]', { timeout: 5000 });
+    let overflowReport = await getHorizontalOverflowReport(page);
+    assert(
+      overflowReport.scrollWidth <= overflowReport.viewportWidth + 1,
+      `Desktop viewport has horizontal overflow: ${JSON.stringify(overflowReport)}`,
+    );
+    results.desktopRender = true;
+
     await page.setViewportSize({ width: 1024, height: 900 });
     await page.waitForSelector('[data-testid="source-main-heading"]', { timeout: 5000 });
     await page.waitForSelector('[data-testid="source-input"]', { timeout: 5000 });
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "Tablet viewport has horizontal overflow.");
+    overflowReport = await getHorizontalOverflowReport(page);
+    assert(
+      overflowReport.scrollWidth <= overflowReport.viewportWidth + 1,
+      `Tablet viewport has horizontal overflow: ${JSON.stringify(overflowReport)}`,
+    );
     results.tabletRender = true;
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForSelector('[data-testid="source-main-heading"]', { timeout: 5000 });
     await page.waitForSelector('[data-testid="source-input"]', { timeout: 5000 });
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "Mobile viewport has horizontal overflow.");
+    overflowReport = await getHorizontalOverflowReport(page);
+    assert(
+      overflowReport.scrollWidth <= overflowReport.viewportWidth + 1,
+      `Mobile viewport has horizontal overflow: ${JSON.stringify(overflowReport)}`,
+    );
     results.mobileRender = true;
 
     assert(pageErrors.length === 0, `pageErrors=${JSON.stringify(pageErrors)}`);

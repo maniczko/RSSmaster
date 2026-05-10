@@ -33,6 +33,7 @@
     "check:reader": "node scripts/check_reader_ui.mjs",
     "check:reader:interaction": "node scripts/check_reader_interaction_ui.mjs",
     "check:reader:real-queue": "node scripts/check_reader_real_queue_ui.mjs",
+    "check:magazines": "node scripts/check_magazines_ui.mjs",
     "check:perf:browser": "node scripts/check_perf_browser.mjs",
     "check:perf:workspace": "python scripts/check_perf_workspace.py",
     "check:sources": "node scripts/check_sources_ui.mjs",

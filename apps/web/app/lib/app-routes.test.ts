@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildBrowserPath,
   buildAppHref,
+  parseMagazineRouteSearch,
   parseAppPath,
   parseLegacyQueryPath,
   parseReadRouteSearch,
@@ -34,8 +35,9 @@ describe("app route helpers", () => {
         q: "money.pl",
         item: "itm_123",
         surface: "article",
+        mode: "hidden",
       }),
-    ).toBe("/read/archive?scope=all&sort=oldest&q=money.pl&item=itm_123&surface=article");
+    ).toBe("/read/archive?scope=all&sort=oldest&q=money.pl&item=itm_123&surface=article&mode=hidden");
   });
 
   it("does not leak reader query params into non-read sections", () => {
@@ -51,6 +53,30 @@ describe("app route helpers", () => {
     ).toBe("/discover");
   });
 
+  it("parses and builds the magazines section route", () => {
+    expect(parseAppPath("/magazines")).toEqual({
+      section: "magazines",
+      libraryView: "inbox",
+    });
+    expect(buildAppHref({ section: "magazines" })).toBe("/magazines");
+    expect(buildAppHref({ section: "magazines", issue: "dig_123" })).toBe("/magazines?issue=dig_123");
+    expect(parseMagazineRouteSearch("?issue=%20dig_123%20")).toEqual({ issue: "dig_123" });
+  });
+
+  it("keeps magazine issue params separate from reader params", () => {
+    expect(
+      buildAppHref({
+        section: "magazines",
+        scope: "all",
+        sort: "oldest",
+        q: "money.pl",
+        item: "itm_123",
+        surface: "article",
+        issue: "dig_456",
+      }),
+    ).toBe("/magazines?issue=dig_456");
+  });
+
   it("parses legacy root query params into a read route", () => {
     expect(parseLegacyQueryPath("?view=digest&scope=unread&sort=newest&q=ai&surface=article")).toEqual({
       section: "read",
@@ -64,13 +90,14 @@ describe("app route helpers", () => {
   });
 
   it("parses canonical reader query params without leaking invalid values", () => {
-    expect(parseReadRouteSearch("?view=unknown&scope=all&sort=oldest&q=money.pl&item=%20itm_123%20&surface=article")).toEqual({
+    expect(parseReadRouteSearch("?view=unknown&scope=all&sort=oldest&q=money.pl&item=%20itm_123%20&surface=article&mode=hidden")).toEqual({
       legacyLibraryView: undefined,
       scope: "all",
       sort: "oldest",
       q: "money.pl",
       item: "itm_123",
       surface: "article",
+      mode: "hidden",
     });
   });
 

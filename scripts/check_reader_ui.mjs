@@ -499,6 +499,7 @@ async function captureReaderArticle(apiUrl, articleUrl) {
 }
 
 async function tabUntilFocusText(page, expectedText, maxSteps = 20) {
+  const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
   for (let step = 0; step < maxSteps; step += 1) {
     await page.keyboard.press("Tab");
     const activeText = await page.evaluate(() => {
@@ -508,7 +509,7 @@ async function tabUntilFocusText(page, expectedText, maxSteps = 20) {
       }
       return (active.innerText || active.textContent || active.getAttribute("aria-label") || "").trim();
     });
-    if (activeText.includes(expectedText)) {
+    if (expectedTexts.some((text) => activeText.includes(text))) {
       return true;
     }
   }
@@ -761,7 +762,7 @@ async function main() {
 
       await page.locator("body").click({ position: { x: 20, y: 20 } });
       caseResult.focusTrail.push({ step: "back-button", focus: await captureFocusState(page) });
-      caseResult.keyboardReachedBackButton = await tabUntilFocusText(page, "Wroc do feedu");
+      caseResult.keyboardReachedBackButton = await tabUntilFocusText(page, ["Wróć do feedu", "Wroc do feedu"]);
       caseResult.focusTrail.push({ step: "notes-button", focus: await captureFocusState(page) });
       caseResult.keyboardReachedNotesButton = await tabUntilFocusText(page, "Notatki");
 

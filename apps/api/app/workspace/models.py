@@ -4,6 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+ReaderFeedbackAction = Literal["more_like_this", "less_like_this", "hide_topic", "mute_source", "important"]
+RankingMode = Literal["for_you", "latest", "all", "hidden"]
+
 
 class WorkspaceItemCardModel(BaseModel):
     id: str
@@ -79,6 +82,11 @@ class RankingBreakdownModel(BaseModel):
     final_score: float
     matched_interests: list[str]
     reason: str
+    visibility: Literal["shown", "hidden"] = "shown"
+    visibility_reason: str | None = None
+    matched_positive_signals: list[str] = Field(default_factory=list)
+    matched_negative_signals: list[str] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)
 
 
 class RankedItemModel(BaseModel):
@@ -88,11 +96,36 @@ class RankedItemModel(BaseModel):
     source_cap: int
     source_window_hours: int
     breakdown: RankingBreakdownModel
+    visibility: Literal["shown", "hidden"] = "shown"
+    visibility_reason: str | None = None
+    quality_flags: list[str] = Field(default_factory=list)
 
 
 class RankingResponse(BaseModel):
     generated_at: str
     items: list[RankedItemModel]
+
+
+class ReaderFeedbackRequest(BaseModel):
+    item_id: str
+    action: ReaderFeedbackAction
+    topic: str | None = None
+    source_id: str | None = None
+    reason: str | None = None
+
+
+class ReaderFeedbackModel(BaseModel):
+    id: str
+    item_id: str | None
+    source_id: str | None
+    action: ReaderFeedbackAction
+    topic: str | None
+    reason: str | None
+    created_at: str
+
+
+class ReaderFeedbackResponse(BaseModel):
+    feedback: ReaderFeedbackModel
 
 
 class BriefingStatsModel(BaseModel):

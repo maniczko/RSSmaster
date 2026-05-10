@@ -16,11 +16,13 @@ Turn `rssmaster` from a reverse-chronological stream into a bounded, explainable
    - paused sources
    - snoozed sources
    - muted sources
+   - reader feedback source mutes and hard topic hides
    - sources over their active budget
 3. Scoring
    - `final_score = relevance_score + user_preference_score + source_quality_score + freshness_score + originality_score + engagement_score - duplicate_penalty - noise_penalty - saturation_penalty`
    - already-read items are removed from the recommendation queue
-   - repetitive low-signal headlines (for example template quote/FX updates) are demoted unless the user profile explicitly signals interest
+   - repetitive low-signal headlines (for example template quote/FX updates) are hidden from `Dla mnie` unless the user profile explicitly signals topic interest
+   - source matches alone do not override low-signal suppression
 4. Ordering
    - source budgets are spent on the best-scoring candidates from each source, not simply the newest ones
    - higher `final_score` first
@@ -54,9 +56,11 @@ Turn `rssmaster` from a reverse-chronological stream into a bounded, explainable
 - interests can be `boost`, `prefer`, `neutral`, or `suppress`
 - source tier can be `priority`, `default`, or `muted`
 - sources can also be paused or snoozed without destructive unsubscribe flows
+- reader feedback can record `more_like_this`, `less_like_this`, `hide_topic`, `mute_source`, or `important`
 
 ## UI Contract
 
-- ranked queue is the default for `Inbox + newest + no explicit search`
+- `Dla mnie` is the default ranked queue for `Inbox + newest`; `Wszystkie` remains the explicit full-library escape hatch
+- `scope=all` means full library visibility, not a quality-filtered recommendation promise
 - story grouping can hide repeated rewrites while keeping alternates accessible
 - briefing surfaces should reuse the same ranking snapshot instead of inventing a second ordering model

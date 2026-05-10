@@ -9,6 +9,8 @@ from app.db.initializer import connect
 
 DELIVERY_SETTINGS_KEY = "delivery_profile"
 DELIVERY_SETTINGS_DESCRIPTION = "User-managed SMTP and Kindle delivery settings."
+AI_SETTINGS_KEY = "ai_profile"
+AI_SETTINGS_DESCRIPTION = "User-managed AI provider and OpenAI model settings."
 
 
 class SettingsRepository:

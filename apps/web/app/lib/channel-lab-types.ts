@@ -127,13 +127,40 @@ export type DigestPreview = {
   }>;
 };
 
+export type DigestSelectionSnapshotItem = {
+  item_id: string;
+  position: number;
+  channel_id: string | null;
+  channel_title: string | null;
+  category: string | null;
+  title: string;
+  author?: string | null;
+  source_url: string | null;
+  excerpt?: string | null;
+  published_at: string | null;
+  content_html?: string | null;
+  word_count?: number | null;
+  content_hash: string | null;
+};
+
 export type DigestHistory = {
   id: string;
+  job_run_id?: string | null;
   status: "pending" | "building" | "completed" | "failed" | "sent" | "archived";
   title: string;
+  period_start: string | null;
+  period_end: string | null;
   article_count: number;
+  selection_snapshot: DigestSelectionSnapshotItem[];
+  category_summary: Array<{
+    category: string;
+    article_count: number;
+  }>;
   generated_at: string | null;
   sent_at: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  error_code?: string | null;
   error_message: string | null;
   artifact: {
     path: string | null;
@@ -165,6 +192,39 @@ export type DeliverySettingsDraft = {
   smtp_password: string;
   smtp_from: string;
   kindle_email: string;
+};
+
+export type AISettings = {
+  enabled: boolean;
+  provider: "openai";
+  chat_model: string;
+  embedding_model: string;
+  openai_api_key: {
+    configured: boolean;
+    redacted_value: string | null;
+  };
+  ready: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+  issues: string[];
+};
+
+export type AISettingsDraft = {
+  enabled: boolean;
+  chat_model: string;
+  embedding_model: string;
+  openai_api_key: string;
+  clear_openai_api_key: boolean;
+};
+
+export type AISettingsPreflight = {
+  status: "ready" | "needs_configuration" | "connection_failed";
+  can_use_ai: boolean;
+  checks: Array<{
+    name: string;
+    status: "passed" | "failed" | "warning" | "skipped";
+    message: string;
+  }>;
 };
 
 export type DeliveryPreflight = {
@@ -268,6 +328,9 @@ export type WorkspaceRankingItem = {
   candidate_reason: string | null;
   source_cap: number;
   source_window_hours: number;
+  visibility: "shown" | "hidden";
+  visibility_reason: string | null;
+  quality_flags: string[];
   breakdown: {
     relevance_score: number;
     user_preference_score: number;
@@ -278,9 +341,34 @@ export type WorkspaceRankingItem = {
     duplicate_penalty: number;
     noise_penalty: number;
     saturation_penalty: number;
+    diversity_penalty: number;
     final_score: number;
     matched_interests: string[];
+    matched_positive_signals: string[];
+    matched_negative_signals: string[];
+    quality_flags: string[];
+    visibility: "shown" | "hidden";
+    visibility_reason: string | null;
     reason: string;
+  };
+};
+
+export type ReaderFeedbackAction =
+  | "more_like_this"
+  | "less_like_this"
+  | "hide_topic"
+  | "mute_source"
+  | "important";
+
+export type ReaderFeedbackPayload = {
+  feedback: {
+    id: string;
+    item_id: string | null;
+    source_id: string | null;
+    action: ReaderFeedbackAction;
+    topic: string | null;
+    reason: string | null;
+    created_at: string;
   };
 };
 
@@ -385,6 +473,56 @@ export type ChannelCreatePayload = {
   };
 };
 
+export type SourceCreatePayload = {
+  status: "created" | "existing" | "reactivated";
+  source: Channel;
+  discovery: {
+    mode: string;
+    resolved_feed_url: string | null;
+    candidates: string[];
+  };
+  initial_sync_run?: SyncRun | null;
+};
+
+export type SourceSyncPayload = {
+  source: Channel;
+  run: SyncRun;
+};
+
+export type SourceOpmlSummary = {
+  total_feeds: number;
+  new_feeds: number;
+  existing_feeds: number;
+  invalid_feeds: number;
+  duplicate_feeds: number;
+  folder_count: number;
+};
+
+export type SourceOpmlPreviewPayload = {
+  summary: SourceOpmlSummary;
+  folders: Array<{
+    path: string[];
+    feed_count: number;
+  }>;
+  feeds: Array<{
+    title: string;
+    feed_url: string;
+    site_url: string | null;
+    folder_path: string[];
+    already_subscribed: boolean;
+    existing_source_id: string | null;
+  }>;
+  warnings: string[];
+};
+
+export type SourceOpmlImportPayload = {
+  summary: SourceOpmlSummary;
+  created_sources: Channel[];
+  existing_source_ids: string[];
+  created_folder_ids: string[];
+  warnings: string[];
+};
+
 export type ChannelMutationPayload = {
   channel: Channel;
 };
@@ -458,6 +596,12 @@ export type DigestHistoryPayload = {
 export type DeliverySettingsPayload = {
   settings: DeliverySettings;
 };
+
+export type AISettingsPayload = {
+  settings: AISettings;
+};
+
+export type AISettingsPreflightPayload = AISettingsPreflight;
 
 export type DeliverySettingsPreflightPayload = {
   preflight: {

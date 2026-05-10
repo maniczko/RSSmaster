@@ -25,6 +25,7 @@ import type {
   ChannelPreviewItem,
   ChannelPreviewPayload,
   FeedbackState,
+  SourceOpmlPreviewPayload,
   SourceSurfaceMode,
   SyncRun,
   WorkspaceSourceGroup,
@@ -87,6 +88,8 @@ type WorkspaceSourcesSectionProps = {
   handleCreateSourceGroup: () => unknown;
   handleExportWorkspace: () => unknown;
   handleImportOpml: () => unknown;
+  handleOpmlDraftChange: (value: string) => void;
+  handlePreviewOpmlImport: () => unknown;
   handleSourceControlUpdate: (channelId: string, patch: Partial<WorkspaceSourceHealthEntry["control"]>) => unknown;
   handleSourceDraftInputChange: (value: string) => void;
   handleSourceTierChange: (channelId: string, tier: "priority" | "default" | "muted") => unknown;
@@ -96,11 +99,16 @@ type WorkspaceSourcesSectionProps = {
   inputUrl: string;
   isPending: boolean;
   isSyncing: boolean;
+  lastAddedSource: Channel | null;
   latestRun: SyncRun | null;
   latestRunSummaryLine: string;
   onCapture: () => void;
+  onSourceSuccessAddNext: () => void;
+  onSourceSuccessOpen: () => void;
+  onSourceSuccessSync: () => unknown;
   opmlDraft: string;
   opmlImportBusy: boolean;
+  opmlPreview: SourceOpmlPreviewPayload | null;
   pendingSourceFocusTargetRef: LooseRef<"input" | "import" | "category" | "results" | "backoffice" | null>;
   previewBusy: boolean;
   primarySourceCandidate: ChannelPreviewCandidate | null;
@@ -108,7 +116,6 @@ type WorkspaceSourcesSectionProps = {
   resetSourcePreviewState: (options?: { clearFeedbackError?: boolean; clearPreview?: boolean }) => void;
   setCategory: StateSetter<string>;
   setDraftCategories: StateSetter<Record<string, string>>;
-  setOpmlDraft: StateSetter<string>;
   setShowSourceOptions: StateSetter<boolean>;
   setSourceGroupColor: StateSetter<string>;
   setSourceGroupDraft: StateSetter<string>;
@@ -175,6 +182,8 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
     handleCreateSourceGroup,
     handleExportWorkspace,
     handleImportOpml,
+    handleOpmlDraftChange,
+    handlePreviewOpmlImport,
     handleSourceControlUpdate,
     handleSourceDraftInputChange,
     handleSourceTierChange,
@@ -184,11 +193,16 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
     inputUrl,
     isPending,
     isSyncing,
+    lastAddedSource,
     latestRun,
     latestRunSummaryLine,
     onCapture,
+    onSourceSuccessAddNext,
+    onSourceSuccessOpen,
+    onSourceSuccessSync,
     opmlDraft,
     opmlImportBusy,
+    opmlPreview,
     pendingSourceFocusTargetRef,
     previewBusy,
     primarySourceCandidate,
@@ -196,7 +210,6 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
     resetSourcePreviewState,
     setCategory,
     setDraftCategories,
-    setOpmlDraft,
     setShowSourceOptions,
     setSourceGroupColor,
     setSourceGroupDraft,
@@ -260,6 +273,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
     const primarySourceAddModes = enabledSourceAddModes.filter((mode) => mode.id === "website" || mode.id === "web_feed");
     const importSourceAddMode = enabledSourceAddModes.find((mode) => mode.id === "import_feeds") ?? null;
     const upcomingSourceAddModes = sourceAddModes.filter((mode) => !mode.enabled);
+    const showSourceLanguageFilter = channelPreview?.status === "multiple_candidates" && sourceLanguageOptions.length > 1;
     const showTopicSuggestions =
       showWebsiteMode && Boolean(inputUrl.trim() || category.trim() || primarySourceCandidate || sourceExistingChannel);
     const sourceHeroTitle = showSourceImportMode
@@ -268,13 +282,13 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
         ? "Dodaj stronę i sprawdź wykryty feed"
         : "Dodaj bezpośredni RSS lub Atom";
     const sourceHeroDescription = showSourceImportMode
-      ? "Przenieś feedy z innego czytnika bez ręcznego przepisywania adresów i od razu przygotuj bibliotekę do syncu."
+      ? "Przenieś feedy z innego czytnika bez ręcznego przepisywania adresów i od razu przygotuj bibliotekę do pobrania wpisów."
       : showWebsiteMode
-        ? "Wklej domenę albo adres strony. Najpierw pokażemy wynik discovery, a dopiero potem zapiszesz źródło."
+        ? "Wklej domenę albo adres strony. Najpierw pokażemy wykryty podgląd, a dopiero potem zapiszesz źródło."
         : "Wklej bezpośredni RSS albo Atom. Najpierw zobaczysz podgląd, a dopiero potem zapiszesz źródło.";
     const sourceSearchHint = showWebsiteMode
-      ? "Podgląd uruchamia się automatycznie po chwili. Enter sprawdza od razu."
-      : "Enter sprawdza podany adres i pokazuje podgląd przed zapisem.";
+      ? "RSSmaster może sprawdzić adres automatycznie po chwili, ale przycisk zawsze uruchamia podgląd od razu."
+      : "Enter lub przycisk sprawdza podany adres i pokazuje podgląd przed zapisem.";
 
     return (
       <section className="section-screen section-screen-sources">
@@ -308,12 +322,14 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                 {showBackoffice ? "Wróć do dodawania" : "Zarządzaj źródłami"}
               </span>
             </button>
-            <button className="action-button compact-button" disabled={isSyncing || channels.length === 0} onClick={() => void handleSyncAll()} type="button">
-              <span className="button-with-icon">
-                <SyncIcon className="app-icon button-inline-icon" />
-                {isSyncing ? "Syncowanie..." : "Sync aktywnych"}
-              </span>
-            </button>
+            {showBackoffice ? (
+              <button className="action-button compact-button" disabled={isSyncing || channels.length === 0} onClick={() => void handleSyncAll()} type="button">
+                <span className="button-with-icon">
+                  <SyncIcon className="app-icon button-inline-icon" />
+                  {isSyncing ? "Pobieram..." : "Pobierz z aktywnych"}
+                </span>
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -345,7 +361,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                   </li>
                   <li>
                     <strong>2</strong>
-                    <span>Sprawdzamy feed i pokazujemy preview</span>
+                    <span>Sprawdzamy feed i pokazujemy podgląd</span>
                   </li>
                   <li>
                     <strong>3</strong>
@@ -361,25 +377,54 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                     <span>Wklej OPML albo listę feedów</span>
                     <textarea
                       ref={sourceImportTextareaRef}
-                      onChange={(event) => setOpmlDraft(event.target.value)}
+                      data-testid="source-opml-textarea"
+                      onChange={(event) => handleOpmlDraftChange(event.target.value)}
                       placeholder="Wklej tutaj OPML, aby przenieść feedy z innego czytnika RSS"
                       rows={9}
                     value={opmlDraft}
                   />
                 </label>
+                {opmlPreview ? (
+                  <section className="source-opml-preview-card" data-testid="source-opml-preview-card" aria-live="polite">
+                    <div>
+                      <span className="panel-badge panel-badge-with-icon">
+                        <StatusIcon className="app-icon app-icon-xs" />
+                        Podgląd importu
+                      </span>
+                      <h4>Sprawdzone źródła przed importem</h4>
+                      <p>
+                        Nowe: {opmlPreview.summary.new_feeds}, duplikaty: {opmlPreview.summary.existing_feeds + opmlPreview.summary.duplicate_feeds},
+                        błędne: {opmlPreview.summary.invalid_feeds}, foldery: {opmlPreview.summary.folder_count}.
+                      </p>
+                    </div>
+                    {opmlPreview.feeds.length > 0 ? (
+                      <ul>
+                        {opmlPreview.feeds.slice(0, 5).map((feed) => (
+                          <li key={feed.feed_url}>
+                            <strong>{feed.title}</strong>
+                            <span>{feed.already_subscribed ? "Już w bibliotece" : "Nowe źródło"}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </section>
+                ) : null}
                 <div className="source-import-actions">
-                  <button className="action-button" disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handleImportOpml()} type="button">
-                    {opmlImportBusy ? "Importowanie..." : "Importuj feedy"}
+                  <button className="secondary-button" data-testid="source-opml-preview-button" disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handlePreviewOpmlImport()} type="button">
+                    {opmlImportBusy && !opmlPreview ? "Sprawdzam..." : "Sprawdź OPML"}
                   </button>
-                  <span>RSSmaster zachowa adresy feedów i po imporcie od razu uruchomisz ręczny sync.</span>
+                  <button className="action-button" data-testid="source-opml-import-button" disabled={!opmlDraft.trim() || opmlImportBusy || !opmlPreview} onClick={() => void handleImportOpml()} type="button">
+                    {opmlImportBusy && opmlPreview ? "Importowanie..." : "Importuj źródła"}
+                  </button>
+                  <span>RSSmaster zachowa adresy feedów, a po imporcie od razu pobierzesz pierwsze wpisy.</span>
                 </div>
               </div>
             ) : (
               <>
                 <form
                   aria-describedby={sourceSearchHintId}
-                  aria-label="Dodaj źródło przez preview"
-                  className={`source-search-shell ${showWebsiteMode ? "source-search-shell-website" : ""}`}
+                  aria-label="Dodaj źródło przez podgląd"
+                  className={`source-search-shell ${showSourceLanguageFilter ? "source-search-shell-with-filter" : ""}`}
                   data-testid="source-search-form"
                   onSubmit={handleSubmit}
                   role="search"
@@ -421,26 +466,26 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                     ) : null}
                   </label>
 
-                  <select
-                    aria-label="Filtr wyników po języku"
-                    className="source-search-select"
-                    data-testid="source-language-filter"
-                    onChange={(event) => setSourceLanguageFilter(event.target.value)}
-                    title="Filtr wyników po języku"
-                    value={sourceLanguageFilter}
-                  >
-                    {sourceLanguageOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  {!showWebsiteMode ? (
-                    <button className="source-search-submit" disabled={previewBusy || subscribeBusy || isPending} type="submit">
-                      {previewBusy ? "Szukam..." : "Znajdź"}
-                    </button>
+                  {showSourceLanguageFilter ? (
+                    <select
+                      aria-label="Filtr wyników po języku"
+                      className="source-search-select"
+                      data-testid="source-language-filter"
+                      onChange={(event) => setSourceLanguageFilter(event.target.value)}
+                      title="Filtr wyników po języku"
+                      value={sourceLanguageFilter}
+                    >
+                      {sourceLanguageOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   ) : null}
+
+                  <button className="source-search-submit" disabled={previewBusy || subscribeBusy || isPending} type="submit">
+                    {previewBusy ? "Sprawdzam..." : "Sprawdź źródło"}
+                  </button>
                 </form>
 
                 <div className="source-search-subline">
@@ -493,14 +538,59 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
               </>
             )}
 
-            {shouldShowSourceFeedback ? (
-              <div className="source-feedback-card">
-                {renderUiFeedbackCard({ live: true, regionId: sourceFeedbackRegionId, testId: "source-feedback-card" })}
-              </div>
-            ) : null}
+                {shouldShowSourceFeedback ? (
+                  <div className="source-feedback-card">
+                    {renderUiFeedbackCard({ live: true, regionId: sourceFeedbackRegionId, testId: "source-feedback-card" })}
+                  </div>
+                ) : null}
 
-            {!showSourceImportMode ? (
-              <div
+                {lastAddedSource ? (
+                  <section
+                    aria-live="polite"
+                    className="source-success-panel"
+                    data-testid="source-success-panel"
+                    role="status"
+                  >
+                    <div className="source-success-panel-copy">
+                      <span className="panel-badge panel-badge-with-icon">
+                        <StatusIcon className="app-icon app-icon-xs" />
+                        Gotowe do pobrania
+                      </span>
+                      <h3>{feedback.title}</h3>
+                      <p>
+                        {lastAddedSource.title} jest zapisane. Pobierz pierwsze wpisy, aby od razu sprawdzić, czy źródło
+                        ma czytelne artykuły.
+                      </p>
+                      {feedback.lines.length > 0 ? (
+                        <ul className="source-success-facts">
+                          {feedback.lines.map((line, lineIndex) => (
+                            <li key={`${line}-${lineIndex}`}>{line}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                    <div className="source-success-actions">
+                      <button
+                        className="action-button"
+                        data-testid="source-first-sync-button"
+                        disabled={isSyncing}
+                        onClick={onSourceSuccessSync}
+                        type="button"
+                      >
+                        {isSyncing ? "Pobieram..." : "Pobierz pierwsze wpisy"}
+                      </button>
+                      <button className="secondary-button" onClick={onSourceSuccessAddNext} type="button">
+                        Dodaj kolejne źródło
+                      </button>
+                      <button className="source-result-secondary-action" onClick={onSourceSuccessOpen} type="button">
+                        Przejdź do źródła
+                      </button>
+                    </div>
+                  </section>
+                ) : null}
+
+                {!showSourceImportMode ? (
+                  <div
                 aria-busy={sourcePreviewState === "loading"}
                 aria-labelledby={sourceResultsHeadingId}
                 className="source-results-section"
@@ -533,7 +623,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                     <p>
                       {sourcePreviewSlow
                         ? "To trwa dłużej niż zwykle. Zwykle oznacza to wolną stronę, blokadę po stronie źródła albo konieczność użycia bezpośredniego RSS."
-                        : "Sprawdzam adres bez zapisywania go do biblioteki. Jeśli strona ma RSS/Atom, za chwilę zobaczysz preview i przycisk Obserwuj."}
+                        : "Sprawdzam adres bez zapisywania go do biblioteki. Jeśli strona ma RSS/Atom, za chwilę zobaczysz podgląd i przycisk Obserwuj."}
                     </p>
                     <ol className="source-discovery-steps" aria-label="Postęp sprawdzania źródła">
                       <li className="source-discovery-step-active">
@@ -541,11 +631,11 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                         <span>Normalizacja URL</span>
                       </li>
                       <li className="source-discovery-step-active">
-                        <strong>Discovery</strong>
+                        <strong>Wykrywanie</strong>
                         <span>RSS, Atom i znaczniki strony</span>
                       </li>
                       <li className={sourcePreviewSlow ? "source-discovery-step-waiting" : ""}>
-                        <strong>Preview</strong>
+                        <strong>Podgląd</strong>
                         <span>Próbka najnowszych wpisów</span>
                       </li>
                     </ol>
@@ -609,7 +699,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                               <span>{candidate.feed_url}</span>
                               {candidate.already_subscribed && existingChannel ? (
                                 <button className="secondary-button" onClick={() => focusFirstItemFromChannel(existingChannel)} type="button">
-                                  Przejdź do feedu
+                                  Przejdź do źródła
                                 </button>
                               ) : (
                                 <button className="action-button compact-button" disabled={subscribeBusy} onClick={() => void handleConfirmChannelAdd(candidate.feed_url)} type="button">
@@ -661,7 +751,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                             {sourceExistingChannel.state !== "archived" ? (
                               <>
                                 <button className="secondary-button" onClick={() => focusFirstItemFromChannel(sourceExistingChannel)} type="button">
-                                  Przejdź do feedu
+                                  Przejdź do źródła
                                 </button>
                                 <button className="source-result-secondary-action" disabled={activeChannelId === sourceExistingChannel.id} onClick={() => void handleArchive(sourceExistingChannel)} type="button">
                                   <span className="button-with-icon">
@@ -681,8 +771,8 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                     </div>
                     <div className="source-result-guidance" aria-label="Co stanie się po dodaniu źródła">
                       <span>Gotowe do zapisu</span>
-                      <strong>Preview jest wykryte. Dodanie źródła nie uruchomi jeszcze masowego importu bez Twojej decyzji.</strong>
-                      <p>Po kliknięciu Obserwuj możesz od razu uruchomić sync i sprawdzić czytelność feedu w backoffice źródeł.</p>
+                      <strong>Podgląd jest gotowy. Dodanie źródła nie pobierze jeszcze masowo wpisów bez Twojej decyzji.</strong>
+                      <p>Po kliknięciu Obserwuj możesz od razu pobrać wpisy i sprawdzić czytelność źródła w zarządzaniu.</p>
                     </div>
 
                     {sourcePreviewItems.length > 0 ? (
@@ -705,8 +795,8 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                         <strong>Feed gotowy do obserwowania</strong>
                         <p>
                           {sourceExistingChannel
-                            ? "To źródło jest już w bibliotece, ale ten feed nie udostępnił krótkiego preview ostatnich wpisów."
-                            : "Feed został wykryty poprawnie, ale nie zwrócił krótkiego preview ostatnich wpisów."}
+                            ? "To źródło jest już w bibliotece, ale feed nie udostępnił krótkiego podglądu ostatnich wpisów."
+                            : "Feed został wykryty poprawnie, ale nie zwrócił krótkiego podglądu ostatnich wpisów."}
                         </p>
                       </div>
                     )}
@@ -717,15 +807,24 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                     className="source-empty-state"
                     data-testid="source-empty-state"
                     role={sourcePreviewState === "error" ? "status" : undefined}
-                  >
-                    <strong>{sourcePreviewState === "error" ? feedback.title : "Zacznij od adresu strony"}</strong>
-                    <p>
-                      {sourcePreviewState === "error"
-                        ? feedback.lines[0] ?? "Nie udało się wykryć poprawnego feedu dla podanego adresu."
-                        : "Wklej adres strony lub feedu. Najpierw pokażemy wykryty wynik, a dopiero potem zapiszesz źródło do biblioteki."}
-                    </p>
-                  </div>
-                )}
+                      >
+                        <strong>{sourcePreviewState === "error" ? feedback.title : "Zacznij od adresu strony"}</strong>
+                        {sourcePreviewState === "error" ? (
+                          <ul className="source-error-list">
+                            {(feedback.lines.length > 0
+                              ? feedback.lines
+                              : ["Nie udało się wykryć poprawnego feedu dla podanego adresu."]).map((line, lineIndex) => (
+                              <li key={`${line}-${lineIndex}`}>{line}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p>
+                            Wklej adres strony lub feedu. Najpierw pokażemy wykryty podgląd, a dopiero potem zapiszesz
+                            źródło do biblioteki.
+                          </p>
+                        )}
+                      </div>
+                    )}
               </div>
             ) : null}
           </div>
@@ -738,7 +837,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
               </span>
               {showTopicSuggestions ? (
                 <>
-                  <p>Klik ustawia kategorie pomocnicza. Nie zmienia wykrywania feedu ani samego preview.</p>
+                  <p>Klik ustawia kategorię pomocniczą. Nie zmienia wykrywania feedu ani samego podglądu.</p>
                   <div className="source-topic-list">
                     {sourceTopicChips.map((chip) => (
                       <button
@@ -769,8 +868,8 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
               <strong>{activeChannelCount} aktywnych źródeł</strong>
               <p>
                 {latestRun
-                  ? `Ostatni sync: ${formatTimestamp(latestRun.completed_at ?? latestRun.created_at, "brak znacznika czasu")}.`
-                  : "Jeszcze nie masz zakończonego syncu dla tej biblioteki."}
+                  ? `Ostatnie pobieranie: ${formatTimestamp(latestRun.completed_at ?? latestRun.created_at, "brak znacznika czasu")}.`
+                  : "Jeszcze nie masz zakończonego pobierania dla tej biblioteki."}
               </p>
               <p>{latestRunSummaryLine}</p>
               <div className="source-aside-metrics">
@@ -781,20 +880,22 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
               <button className="secondary-button" disabled={isSyncing || channels.length === 0} onClick={() => void handleSyncAll()} type="button">
                 <span className="button-with-icon">
                   <SyncIcon className="app-icon button-inline-icon" />
-                  {isSyncing ? "Syncowanie..." : "Uruchom sync"}
+                  {isSyncing ? "Pobieram..." : "Pobierz wpisy"}
                 </span>
               </button>
             </section>
           </aside>
         </div>
 
+        {showBackoffice ? (
+          <>
         <div className="source-ops-divider">
           <div>
             <span className="panel-badge panel-badge-with-icon">
               <BackofficeIcon className="app-icon app-icon-xs" />
-              Backoffice źródeł
+              Zarządzanie źródłami
             </span>
-            <h3 id={sourceBackofficeHeadingId}>Stan, pakiety i reczne operacje</h3>
+            <h3 id={sourceBackofficeHeadingId}>Stan, pakiety i ręczne operacje</h3>
           </div>
           <button
             aria-controls={sourceBackofficeRegionId}
@@ -811,7 +912,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
             }}
             type="button"
           >
-            {showBackoffice ? "Ukryj backoffice" : "Pokaż backoffice"}
+            Ukryj zarządzanie
           </button>
         </div>
 
@@ -862,7 +963,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                           onClick={() => void handleSyncAll({ channelIds: [entry.channel_id], label: entry.title })}
                           tone={entry.reading_readiness === "blocked" || entry.health_status === "error" ? "accent" : "default"}
                         >
-                          Syncuj teraz
+                          Pobierz teraz
                         </WorkspaceButton>
                         <WorkspaceButton disabled={workspaceBusy} onClick={() => void handleSourceControlUpdate(entry.channel_id, { snoozed_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })}>
                           Wstrzymaj na 1d
@@ -912,7 +1013,7 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
                   </div>
                   <WorkspaceChip>Dedykowany ekran capture obsługuje deep link, bookmarklet i systemowe udostępnianie.</WorkspaceChip>
                   <WorkspaceChip>Continuity bundle przywraca feedy, stany biblioteki i lokalny kontekst czytania.</WorkspaceChip>
-                  <textarea onChange={(event) => setOpmlDraft(event.target.value)} placeholder="Wklej tutaj OPML, aby przenieść feedy z innego czytnika RSS" rows={5} value={opmlDraft} />
+                  <textarea onChange={(event) => handleOpmlDraftChange(event.target.value)} placeholder="Wklej tutaj OPML, aby przenieść feedy z innego czytnika RSS" rows={5} value={opmlDraft} />
                   <WorkspaceButton disabled={!opmlDraft.trim() || opmlImportBusy} onClick={() => void handleImportOpml()} tone="accent">
                     {opmlImportBusy ? "Importowanie..." : "Importuj OPML"}
                   </WorkspaceButton>
@@ -922,14 +1023,14 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
               <section className="ops-section">
                 <div className="ops-section-header">
                   <div>
-                    <span className="panel-badge">Ręczny sync</span>
-                    <h3>Ostatnie runy</h3>
+                    <span className="panel-badge">Pobieranie wpisów</span>
+                    <h3>Ostatnie zadania</h3>
                   </div>
-                  <span>{syncRuns.length} runów</span>
+                  <span>{syncRuns.length} zadań</span>
                 </div>
 
                 {syncRuns.length === 0 ? (
-                  <p className="empty-state">Brak runów syncu. Dodaj źródło i uruchom pierwszy ręczny sync.</p>
+                  <p className="empty-state">Brak zadań pobierania. Dodaj źródło i pobierz pierwsze wpisy.</p>
                 ) : (
                   <ul className="ops-list">
                     {syncRuns.map((run) => (
@@ -1001,11 +1102,13 @@ export function WorkspaceSourcesSection(props: WorkspaceSourcesSectionProps) {
           </div>
         ) : (
           <div className="source-backoffice-collapsed">
-            <strong>Backoffice zostaje w tle</strong>
-            <p>Pakiety źródeł, ręczne synchronizacje, capture i zarządzanie kanałami są schowane, aby pierwszy ekran został skupiony na prostym dodawaniu strony.</p>
+            <strong>Zarządzanie zostaje w tle</strong>
+            <p>Pakiety źródeł, ręczne pobieranie, capture i zarządzanie kanałami są schowane, aby pierwszy ekran został skupiony na prostym dodawaniu strony.</p>
           </div>
         )}
         </div>
+          </>
+        ) : null}
       </section>
     );
 }

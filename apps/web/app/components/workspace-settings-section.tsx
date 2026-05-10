@@ -2,6 +2,9 @@ import type { ReactNode } from "react";
 
 import type { RankingPreference } from "@/app/lib/editorial-support";
 import type {
+  AISettings,
+  AISettingsDraft,
+  AISettingsPreflight,
   AuthAccount,
   DeliverySettings,
   DeliverySettingsDraft,
@@ -10,6 +13,7 @@ import type {
 } from "@/app/lib/channel-lab-types";
 
 import { AccountStatus } from "./local-auth";
+import { AISettingsPanel } from "./ai-settings-panel";
 import { DeliverySettingsPanel } from "./delivery-settings-panel";
 import { RankingPreferencesPanel } from "./ranking-preferences-panel";
 import {
@@ -34,6 +38,12 @@ type RuntimeLink = {
 
 type WorkspaceSettingsSectionProps = {
   activeChannelCount: number;
+  aiPreflight: AISettingsPreflight | null;
+  aiPreflightBusy: boolean;
+  aiSettings: AISettings | null;
+  aiSettingsBusy: boolean;
+  aiSettingsDraft: AISettingsDraft;
+  aiSettingsMessage: string | null;
   apiBaseUrl: string;
   authenticatedAccount: AuthAccount | null;
   authBusy: boolean;
@@ -50,6 +60,9 @@ type WorkspaceSettingsSectionProps = {
   onDeliverySettingsDraftChange: (field: keyof DeliverySettingsDraft, value: string) => void;
   onDeliverySettingsPreflight: () => void;
   onDeliverySettingsSave: () => void;
+  onAISettingsDraftChange: (field: keyof AISettingsDraft, value: string | boolean) => void;
+  onAISettingsPreflight: () => void;
+  onAISettingsSave: () => void;
   onInterestDraftChange: (value: string) => void;
   onInterestWeightChange: (value: WorkspaceInterest["weight"]) => void;
   onLogin: () => void;
@@ -65,6 +78,12 @@ type WorkspaceSettingsSectionProps = {
 
 export function WorkspaceSettingsSection({
   activeChannelCount,
+  aiPreflight,
+  aiPreflightBusy,
+  aiSettings,
+  aiSettingsBusy,
+  aiSettingsDraft,
+  aiSettingsMessage,
   apiBaseUrl,
   authenticatedAccount,
   authBusy,
@@ -81,6 +100,9 @@ export function WorkspaceSettingsSection({
   onDeliverySettingsDraftChange,
   onDeliverySettingsPreflight,
   onDeliverySettingsSave,
+  onAISettingsDraftChange,
+  onAISettingsPreflight,
+  onAISettingsSave,
   onInterestDraftChange,
   onInterestWeightChange,
   onLogin,
@@ -129,6 +151,31 @@ export function WorkspaceSettingsSection({
               hasLocalAccounts={hasLocalAccounts}
               onLogin={onLogin}
               onLogout={onLogout}
+            />
+          </section>
+
+          <section className="ops-section">
+            <div className="ops-section-header">
+              <div>
+                <span className="panel-badge panel-badge-with-icon">
+                  <StatusIcon className="app-icon app-icon-xs" />
+                  AI
+                </span>
+                <h3>AI i OpenAI</h3>
+              </div>
+              <span>{aiSettings?.ready ? "gotowe" : aiSettings?.enabled ? "wymaga konfiguracji" : "wyłączone"}</span>
+            </div>
+            <AISettingsPanel
+              busy={aiSettingsBusy}
+              draft={aiSettingsDraft}
+              message={aiSettingsMessage}
+              onDraftChange={onAISettingsDraftChange}
+              onPreflight={onAISettingsPreflight}
+              onSave={onAISettingsSave}
+              preflight={aiPreflight}
+              preflightBusy={aiPreflightBusy}
+              settings={aiSettings}
+              showButtonIcons
             />
           </section>
 

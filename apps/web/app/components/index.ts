@@ -1,4 +1,5 @@
 export * from "@/app/components/app-shell";
+export * from "@/app/components/ai-settings-panel";
 export * from "@/app/components/article-queue-list";
 export * from "@/app/components/annotation-panel";
 export * from "@/app/components/capture-studio";
@@ -11,6 +12,7 @@ export * from "@/app/components/feed-browser";
 export * from "@/app/components/feed-stream";
 export * from "@/app/components/library-views-nav";
 export * from "@/app/components/local-auth";
+export * from "@/app/components/magazine-section";
 export * from "@/app/components/ranking-preferences-panel";
 export * from "@/app/components/read-layout";
 export * from "@/app/components/reader-article-card";

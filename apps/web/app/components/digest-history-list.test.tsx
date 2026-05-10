@@ -18,6 +18,7 @@ describe("DigestHistoryList", () => {
             error_message: null,
             artifact: {
               path: "output/digest.epub",
+              size_bytes: 1500,
             },
           },
         ]}
@@ -28,7 +29,11 @@ describe("DigestHistoryList", () => {
     expect(markup).toContain("Gotowy");
     expect(markup).toContain("7 artykul(y)");
     expect(markup).toContain("dzisiaj");
-    expect(markup).toContain("Artefakt: output/digest.epub");
+    expect(markup).toContain("Artefakt");
+    expect(markup).toContain("digest.epub");
+    expect(markup).toContain("2 KB");
+    expect(markup).toContain('data-slot="badge"');
+    expect(markup).toContain('title="output/digest.epub"');
   });
 
   it("can render an explicit empty state or nothing", () => {

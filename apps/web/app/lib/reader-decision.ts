@@ -40,7 +40,7 @@ export function getReaderDecisionButtonLabel(action: ReaderDecisionAction) {
 }
 
 export function getReaderDecisionNextLine(nextItemTitle: string | null | undefined) {
-  return nextItemTitle ? `Dalej: ${nextItemTitle}` : "To ostatni artykul w biezacej kolejce.";
+  return nextItemTitle ? `Dalej: ${nextItemTitle}` : "To ostatni artykuł w bieżącej kolejce.";
 }
 
 export function buildReaderDecisionPatch(action: ReaderDecisionAction): ReaderDecisionPatch {
@@ -58,8 +58,8 @@ export function buildReaderDecisionPatch(action: ReaderDecisionAction): ReaderDe
 
 export function getReaderDecisionResultLine(hasAdvanced: boolean) {
   return hasAdvanced
-    ? "Biezacy artykul zostal zaktualizowany, a fokus przesunal sie dalej w kolejce."
-    : "Biezacy artykul zostal zaktualizowany. W tym wycinku kolejki nie ma kolejnego artykulu.";
+    ? "Bieżący artykuł został zaktualizowany, a fokus przesunął się dalej w kolejce."
+    : "Bieżący artykuł został zaktualizowany. W tym wycinku kolejki nie ma kolejnego artykułu.";
 }
 
 export function resolveReaderDecisionNextItemId<TItem extends ReaderDecisionQueueItem>(

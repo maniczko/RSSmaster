@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
-SCHEMA_VERSION = 1
-SCHEMA_NAME = "rssmaster_schema_v1"
+SCHEMA_VERSION = 2
+SCHEMA_NAME = "rssmaster_schema_v2"
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 REQUIRED_TABLES = {
     "annotations",
@@ -23,6 +23,7 @@ REQUIRED_TABLES = {
     "item_tags",
     "profile_interests",
     "ranking_state",
+    "reader_feedback",
     "reader_profiles",
     "saved_searches",
     "schema_migrations",
@@ -47,8 +48,36 @@ def apply_schema_v1(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
 
 
+def apply_schema_v2(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS reader_feedback (
+            id TEXT PRIMARY KEY,
+            item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+            source_id TEXT REFERENCES channels(id) ON DELETE SET NULL,
+            action TEXT NOT NULL CHECK (
+                action IN ('more_like_this', 'less_like_this', 'hide_topic', 'mute_source', 'important')
+            ),
+            topic TEXT,
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_reader_feedback_action_topic
+            ON reader_feedback (action, topic);
+
+        CREATE INDEX IF NOT EXISTS idx_reader_feedback_source_id
+            ON reader_feedback (source_id);
+
+        CREATE INDEX IF NOT EXISTS idx_reader_feedback_item_id
+            ON reader_feedback (item_id);
+        """
+    )
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
-    SchemaMigration(version=SCHEMA_VERSION, name=SCHEMA_NAME, apply=apply_schema_v1),
+    SchemaMigration(version=1, name="rssmaster_schema_v1", apply=apply_schema_v1),
+    SchemaMigration(version=2, name="rssmaster_schema_v2", apply=apply_schema_v2),
 )
 
 

@@ -204,6 +204,49 @@ class SourceManagementRepository:
             for row in rows
         ]
 
+    def create_source(
+        self,
+        *,
+        title: str,
+        site_url: str | None,
+        feed_url: str,
+        normalized_feed_url: str,
+        description: str | None,
+        language: str | None,
+        category: str | None,
+    ) -> str:
+        channel_id = f"chn_{uuid4().hex[:12]}"
+
+        with connect(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO channels (
+                    id,
+                    title,
+                    site_url,
+                    feed_url,
+                    normalized_feed_url,
+                    description,
+                    language,
+                    category
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    channel_id,
+                    title,
+                    site_url,
+                    feed_url,
+                    normalized_feed_url,
+                    description,
+                    language,
+                    category,
+                ],
+            )
+            connection.commit()
+
+        return channel_id
+
     def get_document(self, key: str) -> dict[str, Any] | None:
         with connect(self.database_path) as connection:
             row = connection.execute(
@@ -305,7 +348,7 @@ class SourceManagementRepository:
 
         with connect(self.database_path) as connection:
             for feed in feeds:
-                channel_id = f"chn_{uuid4().hex[:12]}"
+                channel_id = str(feed.get("channel_id") or f"chn_{uuid4().hex[:12]}")
                 try:
                     connection.execute(
                         """

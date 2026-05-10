@@ -124,7 +124,13 @@ After the MVP is stable, likely next layers are:
 - system behavior: compose a deterministic digest and package it for Kindle-safe reading
 - output: stored digest history entry and local artifact
 
-### Flow 5: deliver digest
+### Flow 5: review magazine issues
+
+- input: digest history and currently selected digest candidates
+- system behavior: expose a calm `/magazines` surface for listing issues such as `Wydanie 1/2026`, opening an issue through a shareable `/magazines?issue=<id>` link, reviewing its article snapshot, starting generation, inspecting issue history, and running delivery checks for the opened issue
+- output: a visible magazine issue archive backed by deterministic digest artifacts and selection snapshots
+
+### Flow 6: deliver digest
 
 - input: a built digest and configured delivery settings
 - system behavior: run preflight checks, send, and persist delivery result

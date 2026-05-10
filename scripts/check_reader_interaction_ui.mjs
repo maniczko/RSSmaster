@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createBrowserIssueTracker } from "./lib/browser-issue-tracker.mjs";
 import { prepareSmokeRuntime } from "./lib/local-runtime.mjs";
 import {
   attachPlaywrightArtifact,
@@ -126,6 +127,26 @@ async function captureReaderArticle(apiUrl, articleUrl) {
   return payload.item;
 }
 
+async function fetchSavedReaderQueue(apiUrl, expectedItemIds) {
+  const response = await fetch(`${apiUrl}/api/v1/items?limit=40&view=saved&sort=newest`, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  const payload = await response.json();
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  if (!response.ok || items.length === 0) {
+    throw new Error(`Saved reader queue fetch failed: ${response.status} ${JSON.stringify(payload)}`);
+  }
+
+  const expectedIds = new Set(expectedItemIds);
+  const fixtureItems = items.filter((item) => expectedIds.has(item.id));
+  if (fixtureItems.length < 2) {
+    throw new Error(`Saved reader queue did not include both fixture articles: ${JSON.stringify(items.map((item) => item.id))}`);
+  }
+  return fixtureItems;
+}
+
 async function waitForReaderArticle(page, title) {
   await page.waitForFunction((expectedTitle) => document.body.innerText.includes(expectedTitle), title, {
     timeout: 30000,
@@ -177,11 +198,43 @@ function withStandardArtifact(results, { error = null, status = "passed" } = {})
           mobileTargetMinHeight: results.mobileTargetMinHeight,
         },
       },
+      {
+        id: "reader-premium-surface",
+        label: "Premium reader surface and article width",
+        route: "/read/saved",
+        status: results.premiumReaderSurfaceVisible && results.articleWidthWithinBudget ? "passed" : "failed",
+        screenshot: OUTPUT_SCREENSHOT,
+        notes: {
+          articleWidthPx: results.articleWidthPx,
+          premiumReaderSurfaceVisible: results.premiumReaderSurfaceVisible,
+        },
+      },
+      {
+        id: "reader-focus-mode",
+        label: "Instapaper-style focus mode preserves reader actions",
+        route: "/read/saved",
+        status:
+          results.focusShellVisible &&
+          results.focusChromeReduced &&
+          results.focusFunctionalActionsVisible &&
+          results.focusArticleWidthWithinBudget
+            ? "passed"
+            : "failed",
+        screenshot: OUTPUT_SCREENSHOT,
+        notes: {
+          articleWidthPx: results.focusArticleWidthPx,
+          chromeReduced: results.focusChromeReduced,
+          headerExtraVisibleCount: results.focusHeaderExtraVisibleCount,
+          kindleVisible: results.focusKindleActionVisible,
+          decisionBarVisible: results.focusDecisionBarVisible,
+        },
+      },
     ],
     checkName: "check:reader:interaction",
     errors: {
       console: results.consoleErrors ?? [],
       page: results.pageErrors ?? [],
+      http: [...(results.httpFailures ?? []), ...(results.requestFailures ?? [])],
       harness: error
         ? [
             {
@@ -198,6 +251,19 @@ function withStandardArtifact(results, { error = null, status = "passed" } = {})
       kindle_action_ready: results.kindleActionReady,
       kindle_config_feedback_visible: results.kindleConfigFeedbackVisible,
       no_horizontal_overflow: results.noHorizontalOverflow,
+      premium_reader_surface_visible: results.premiumReaderSurfaceVisible,
+      article_width_px: results.articleWidthPx,
+      article_width_within_budget: results.articleWidthWithinBudget,
+      focus_shell_visible: results.focusShellVisible,
+      focus_chrome_reduced: results.focusChromeReduced,
+      focus_header_extra_visible_count: results.focusHeaderExtraVisibleCount,
+      focus_functional_actions_visible: results.focusFunctionalActionsVisible,
+      focus_article_width_px: results.focusArticleWidthPx,
+      focus_article_width_within_budget: results.focusArticleWidthWithinBudget,
+      browser_issues: {
+        ignored_console: results.ignoredConsoleIssues ?? [],
+        ignored_request: results.ignoredRequestFailures ?? [],
+      },
     },
     routes: [
       {
@@ -206,7 +272,7 @@ function withStandardArtifact(results, { error = null, status = "passed" } = {})
         viewport: "mobile",
         status,
         screenshot: OUTPUT_SCREENSHOT,
-        ready: results.openedNewerArticle && results.decisionBarVisible,
+        ready: results.openedNewerArticle && results.decisionBarVisible && results.focusShellVisible,
         overflow: results.noHorizontalOverflow === false,
         keyboardReachable: null,
         consoleErrorCount: results.consoleErrors?.length ?? 0,
@@ -247,14 +313,8 @@ async function main() {
     const fixtureServer = await startFixtureServer();
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    const consoleErrors = [];
-    const pageErrors = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") {
-        consoleErrors.push(message.text());
-      }
-    });
-    page.on("pageerror", (error) => pageErrors.push(String(error)));
+    const issueTracker = createBrowserIssueTracker();
+    issueTracker.attachToPage(page);
 
     const results = {
       openedNewerArticle: false,
@@ -264,10 +324,25 @@ async function main() {
       kindleActionVisible: false,
       kindleActionReady: false,
       kindleConfigFeedbackVisible: false,
+      premiumReaderSurfaceVisible: false,
+      articleWidthPx: 0,
+      articleWidthWithinBudget: false,
+      focusShellVisible: false,
+      focusChromeReduced: false,
+      focusHeaderExtraVisibleCount: 0,
+      focusFunctionalActionsVisible: false,
+      focusKindleActionVisible: false,
+      focusDecisionBarVisible: false,
+      focusArticleWidthPx: 0,
+      focusArticleWidthWithinBudget: false,
       mobileTargetMinHeight: false,
       noHorizontalOverflow: false,
-      consoleErrors,
-      pageErrors,
+      consoleErrors: issueTracker.consoleIssues,
+      httpFailures: issueTracker.httpFailures,
+      ignoredConsoleIssues: issueTracker.ignoredConsoleIssues,
+      ignoredRequestFailures: issueTracker.ignoredRequestFailures,
+      pageErrors: issueTracker.pageErrors,
+      requestFailures: issueTracker.requestFailures,
       runtime: {
         apiUrl,
         authMode: runtime.authMode,
@@ -278,15 +353,72 @@ async function main() {
     };
 
     try {
-      await captureReaderArticle(apiUrl, `${fixtureServer.origin}/old-article`);
+      const olderItem = await captureReaderArticle(apiUrl, `${fixtureServer.origin}/old-article`);
       const newerItem = await captureReaderArticle(apiUrl, `${fixtureServer.origin}/new-article`);
+      const savedQueue = await fetchSavedReaderQueue(apiUrl, [olderItem.id, newerItem.id]);
+      const preferredIndex = savedQueue.findIndex((item, index) => item.id === newerItem.id && index < savedQueue.length - 1);
+      const currentItemIndex = preferredIndex >= 0 ? preferredIndex : 0;
+      const currentItem = savedQueue[currentItemIndex];
+      const nextItem = savedQueue[currentItemIndex + 1];
+      assert(currentItem?.id && nextItem?.title, `Saved reader queue does not expose a next item: ${JSON.stringify(savedQueue)}`);
 
-      await page.goto(`${webUrl}/read/saved?scope=all&sort=newest&surface=article&item=${encodeURIComponent(newerItem.id)}`, {
+      await page.goto(`${webUrl}/read/saved?scope=all&sort=newest&surface=article&item=${encodeURIComponent(currentItem.id)}`, {
         waitUntil: "domcontentloaded",
       });
-      await waitForReaderArticle(page, "Reader interaction newer article");
+      await waitForReaderArticle(page, currentItem.title);
       results.openedNewerArticle = true;
+      results.premiumReaderSurfaceVisible = await page.getByTestId("premium-reader-surface").isVisible();
+      const articleWidthMetrics = await page.getByTestId("reader-article-width").first().evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        return {
+          viewportWidth: window.innerWidth,
+          width: rect.width,
+        };
+      });
+      results.articleWidthPx = Math.round(articleWidthMetrics.width);
+      results.articleWidthWithinBudget =
+        articleWidthMetrics.width >= 280 && articleWidthMetrics.width <= articleWidthMetrics.viewportWidth;
       results.decisionBarVisible = await page.getByTestId("reader-decision-bar").isVisible();
+      await page.getByTestId("reader-focus-toggle").click();
+      await page.locator(".app-shell-reader-focus").waitFor({ state: "visible", timeout: 10000 });
+      const focusMetrics = await page.evaluate(() => {
+        const articleWidthNode = document.querySelector('[data-testid="reader-article-width"]');
+        const navRail = document.querySelector(".app-nav-rail");
+        const sidebar = document.querySelector(".app-sidebar");
+        const decisionBar = document.querySelector('[data-testid="reader-decision-bar"]');
+        const kindleAction = document.querySelector('[data-testid="reader-send-kindle"]');
+        const headerExtras = Array.from(document.querySelectorAll(".workspace-appbar-status > :not(.reader-focus-toggle)"));
+        const articleRect = articleWidthNode?.getBoundingClientRect();
+        const isVisible = (node) => {
+          if (!(node instanceof HTMLElement)) {
+            return false;
+          }
+          const rect = node.getBoundingClientRect();
+          const style = window.getComputedStyle(node);
+          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        };
+
+        return {
+          articleWidth: articleRect?.width ?? 0,
+          decisionVisible: isVisible(decisionBar),
+          headerExtraVisibleCount: headerExtras.filter(isVisible).length,
+          kindleVisible: isVisible(kindleAction),
+          navRailVisible: isVisible(navRail),
+          sidebarVisible: isVisible(sidebar),
+          shellVisible: Boolean(document.querySelector(".app-shell-reader-focus")),
+          viewportWidth: window.innerWidth,
+        };
+      });
+      results.focusShellVisible = focusMetrics.shellVisible;
+      results.focusHeaderExtraVisibleCount = focusMetrics.headerExtraVisibleCount;
+      results.focusChromeReduced =
+        !focusMetrics.navRailVisible && !focusMetrics.sidebarVisible && focusMetrics.headerExtraVisibleCount === 0;
+      results.focusKindleActionVisible = focusMetrics.kindleVisible;
+      results.focusDecisionBarVisible = focusMetrics.decisionVisible;
+      results.focusFunctionalActionsVisible = focusMetrics.kindleVisible && focusMetrics.decisionVisible;
+      results.focusArticleWidthPx = Math.round(focusMetrics.articleWidth);
+      results.focusArticleWidthWithinBudget =
+        focusMetrics.articleWidth >= 280 && focusMetrics.articleWidth <= focusMetrics.viewportWidth;
       const kindleButton = page.getByTestId("reader-send-kindle");
       results.kindleActionVisible = await kindleButton.isVisible();
       const kindleActionLabel = (await kindleButton.getAttribute("aria-label")) ?? "";
@@ -315,8 +447,8 @@ async function main() {
 
       await readNextButton.click();
       await page.waitForFunction(
-        () => document.body.innerText.includes("Reader interaction older article"),
-        undefined,
+        (expectedTitle) => document.body.innerText.includes(expectedTitle),
+        nextItem.title,
         { timeout: 30000 },
       );
       results.actionAdvancedToNext = true;
@@ -337,16 +469,25 @@ async function main() {
       results.noHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
       assert(results.decisionBarVisible, "Reader decision bar is not visible.");
+      assert(results.premiumReaderSurfaceVisible, "Premium reader surface is not visible.");
+      assert(results.articleWidthWithinBudget, `Reader article width is outside the mobile viewport budget: ${JSON.stringify(articleWidthMetrics)}`);
+      assert(results.focusShellVisible, "Reader focus shell class is not active after toggling focus mode.");
+      assert(results.focusChromeReduced, `Reader focus mode did not reduce nav/sidebar chrome: ${JSON.stringify(focusMetrics)}`);
+      assert(results.focusFunctionalActionsVisible, `Reader focus mode hid required actions: ${JSON.stringify(focusMetrics)}`);
+      assert(results.focusArticleWidthWithinBudget, `Reader focus article width is outside the viewport budget: ${JSON.stringify(focusMetrics)}`);
       assert(results.kindleActionVisible, "Reader Kindle action is not visible in the article topbar.");
       assert(results.kindleConfigFeedbackVisible, "Reader Kindle action did not show configuration feedback.");
       assert(results.mobileTargetMinHeight, `Primary mobile target is too small or not pointer: ${JSON.stringify(buttonMetrics)}`);
       assert(results.actionAdvancedToNext, "Reader action + next did not advance to the next article.");
       assert(results.undoEnabled, "Undo action is not enabled after decision action.");
       assert(results.noHorizontalOverflow, "Mobile reader has horizontal overflow.");
-      assert(pageErrors.length === 0, `pageErrors=${JSON.stringify(pageErrors)}`);
-      assert(consoleErrors.length === 0, `consoleErrors=${JSON.stringify(consoleErrors)}`);
+      assert(!issueTracker.hasBlockingIssues, `reader browser issues=${issueTracker.formatBlockingIssues()}`);
 
       await page.screenshot({ path: OUTPUT_SCREENSHOT, fullPage: true });
+    } catch (error) {
+      await page.screenshot({ path: OUTPUT_SCREENSHOT, fullPage: true }).catch(() => {});
+      await writeFile(OUTPUT_JSON, JSON.stringify(withStandardArtifact(results, { error, status: "failed" }), null, 2), "utf8");
+      throw error;
     } finally {
       await browser.close();
       await fixtureServer.close();

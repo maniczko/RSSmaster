@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, alias="RSSMASTER_SMTP_PASSWORD")
     smtp_from: str | None = Field(default=None, alias="RSSMASTER_SMTP_FROM")
     kindle_email: str | None = Field(default=None, alias="RSSMASTER_KINDLE_EMAIL")
+    ai_enabled: bool = Field(default=False, alias="RSSMASTER_AI_ENABLED")
+    ai_provider: str = Field(default="openai", alias="RSSMASTER_AI_PROVIDER")
+    openai_api_key: str | None = Field(default=None, alias="RSSMASTER_OPENAI_API_KEY")
+    openai_chat_model: str = Field(default="gpt-5.2", alias="RSSMASTER_OPENAI_CHAT_MODEL")
+    openai_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="RSSMASTER_OPENAI_EMBEDDING_MODEL",
+    )
 
     @field_validator("environment")
     @classmethod
@@ -100,6 +108,30 @@ class Settings(BaseSettings):
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    @field_validator("openai_api_key")
+    @classmethod
+    def normalize_optional_openai_api_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("ai_provider")
+    @classmethod
+    def validate_ai_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != "openai":
+            raise ValueError("RSSMASTER_AI_PROVIDER currently supports only 'openai'.")
+        return normalized
+
+    @field_validator("openai_chat_model", "openai_embedding_model")
+    @classmethod
+    def validate_openai_model_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("OpenAI model settings must not be empty.")
+        return cleaned
 
     @field_validator("sentry_traces_sample_rate")
     @classmethod
@@ -147,8 +179,16 @@ class Settings(BaseSettings):
         required_fields = [self.smtp_host, self.smtp_username, self.smtp_password, self.smtp_from, self.kindle_email]
         return all(bool(value) for value in required_fields)
 
+    @property
+    def ai_ready(self) -> bool:
+        required_fields = [self.openai_api_key, self.openai_chat_model, self.openai_embedding_model]
+        return self.ai_enabled and self.ai_provider == "openai" and all(bool(value) for value in required_fields)
+
     def public_dict(self) -> dict[str, object]:
         return {
+            "ai_enabled": self.ai_enabled,
+            "ai_provider": self.ai_provider,
+            "ai_ready": self.ai_ready,
             "api_host": self.api_host,
             "api_port": self.api_port,
             "api_url": self.api_url,
@@ -161,6 +201,8 @@ class Settings(BaseSettings):
             "digest_max_items": self.digest_max_items,
             "environment": self.environment,
             "fetch_timeout_seconds": self.fetch_timeout_seconds,
+            "openai_chat_model": self.openai_chat_model,
+            "openai_embedding_model": self.openai_embedding_model,
             "sentry_enabled": bool(self.sentry_dsn),
             "sentry_traces_sample_rate": self.sentry_traces_sample_rate,
             "smtp_ready": self.smtp_ready,
