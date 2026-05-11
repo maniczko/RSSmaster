@@ -25,117 +25,37 @@ class ItemRepository:
         self.database_path = database_path
         self._ensure_library_schema()
 
+    def count_items(self, filters: ItemListFilters) -> int:
+        clauses: list[str] = []
+        params: list[object] = []
+        self._apply_list_filters(filters, clauses, params, include_cursor=False)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM items i
+                INNER JOIN channels c
+                    ON c.id = i.channel_id
+                {where_sql}
+                """,
+                params,
+            ).fetchone()
+
+        return int(row["count"] or 0) if row is not None else 0
+
     def list_items(self, filters: ItemListFilters) -> RepositoryItemListResult:
         clauses: list[str] = []
         params: list[object] = []
         cursor_clause_sql, order_sql = resolve_sort_sql(filters.sort)
-
-        if filters.channel_ids:
-            placeholders = ", ".join("?" for _ in filters.channel_ids)
-            clauses.append(f"i.channel_id IN ({placeholders})")
-            params.extend(filters.channel_ids)
-        if filters.categories:
-            placeholders = ", ".join("?" for _ in filters.categories)
-            clauses.append(f"c.category IN ({placeholders})")
-            params.extend(filters.categories)
-        if filters.view == "inbox":
-            clauses.append("i.archived_at IS NULL")
-            clauses.append("i.is_favorite = 0")
-        elif filters.view == "saved":
-            clauses.append("i.archived_at IS NULL")
-            clauses.append("i.is_favorite = 1")
-        elif filters.view == "archive":
-            clauses.append("i.archived_at IS NOT NULL")
-        if filters.is_read is not None:
-            clauses.append("i.is_read = ?")
-            params.append(int(filters.is_read))
-        if filters.is_favorite is not None:
-            clauses.append("i.is_favorite = ?")
-            params.append(int(filters.is_favorite))
-        if filters.digest_candidate is not None:
-            clauses.append("i.digest_candidate = ?")
-            params.append(int(filters.digest_candidate))
-        if filters.published_after:
-            clauses.append("datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at)) >= datetime(?)")
-            params.append(filters.published_after)
-        if filters.published_before:
-            clauses.append("datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at)) <= datetime(?)")
-            params.append(filters.published_before)
-        if filters.cursor is not None:
-            clauses.append(cursor_clause_sql)
-            params.extend([filters.cursor.sort_value, filters.cursor.sort_value, filters.cursor.item_id])
-        if filters.search:
-            pattern = f"%{escape_like(filters.search.lower())}%"
-            clauses.append(
-                """
-                (
-                    lower(i.title) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(i.author, '')) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(i.excerpt, '')) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(i.content_text, '')) LIKE ? ESCAPE '\\'
-                    OR lower(c.title) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(c.description, '')) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(c.category, '')) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(c.feed_url, '')) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(c.normalized_feed_url, '')) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(c.site_url, '')) LIKE ? ESCAPE '\\'
-                    OR lower(COALESCE(c.language, '')) LIKE ? ESCAPE '\\'
-                    OR lower(i.source_url) LIKE ? ESCAPE '\\'
-                    OR lower(i.normalized_source_url) LIKE ? ESCAPE '\\'
-                    OR EXISTS(
-                        SELECT 1
-                        FROM item_tags it
-                        INNER JOIN tags t
-                            ON t.id = it.tag_id
-                        WHERE it.item_id = i.id
-                            AND lower(t.name) LIKE ? ESCAPE '\\'
-                    )
-                    OR EXISTS(
-                        SELECT 1
-                        FROM collection_items ci
-                        INNER JOIN collections co
-                            ON co.id = ci.collection_id
-                        WHERE ci.item_id = i.id
-                            AND (
-                                lower(co.name) LIKE ? ESCAPE '\\'
-                                OR lower(COALESCE(co.description, '')) LIKE ? ESCAPE '\\'
-                            )
-                    )
-                    OR EXISTS(
-                        SELECT 1
-                        FROM annotations a
-                        WHERE a.item_id = i.id
-                            AND a.archived_at IS NULL
-                            AND (
-                                lower(COALESCE(a.quote_text, '')) LIKE ? ESCAPE '\\'
-                                OR lower(COALESCE(a.note_text, '')) LIKE ? ESCAPE '\\'
-                            )
-                    )
-                )
-                """
-            )
-            params.extend(
-                [
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                ]
-            )
+        self._apply_list_filters(
+            filters,
+            clauses,
+            params,
+            include_cursor=True,
+            cursor_clause_sql=cursor_clause_sql,
+        )
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
@@ -212,6 +132,122 @@ class ItemRepository:
             has_more=has_more,
             limit=filters.limit,
         )
+
+    def _apply_list_filters(
+        self,
+        filters: ItemListFilters,
+        clauses: list[str],
+        params: list[object],
+        *,
+        include_cursor: bool,
+        cursor_clause_sql: str | None = None,
+    ) -> None:
+        if filters.channel_ids:
+            placeholders = ", ".join("?" for _ in filters.channel_ids)
+            clauses.append(f"i.channel_id IN ({placeholders})")
+            params.extend(filters.channel_ids)
+        if filters.categories:
+            placeholders = ", ".join("?" for _ in filters.categories)
+            clauses.append(f"c.category IN ({placeholders})")
+            params.extend(filters.categories)
+        if filters.view == "inbox":
+            clauses.append("i.archived_at IS NULL")
+            clauses.append("i.is_favorite = 0")
+        elif filters.view == "saved":
+            clauses.append("i.archived_at IS NULL")
+            clauses.append("i.is_favorite = 1")
+        elif filters.view == "archive":
+            clauses.append("i.archived_at IS NOT NULL")
+        if filters.is_read is not None:
+            clauses.append("i.is_read = ?")
+            params.append(int(filters.is_read))
+        if filters.is_favorite is not None:
+            clauses.append("i.is_favorite = ?")
+            params.append(int(filters.is_favorite))
+        if filters.digest_candidate is not None:
+            clauses.append("i.digest_candidate = ?")
+            params.append(int(filters.digest_candidate))
+        if filters.published_after:
+            clauses.append("datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at)) >= datetime(?)")
+            params.append(filters.published_after)
+        if filters.published_before:
+            clauses.append("datetime(COALESCE(i.published_at, i.discovered_at, i.ingested_at)) <= datetime(?)")
+            params.append(filters.published_before)
+        if include_cursor and filters.cursor is not None and cursor_clause_sql is not None:
+            clauses.append(cursor_clause_sql)
+            params.extend([filters.cursor.sort_value, filters.cursor.sort_value, filters.cursor.item_id])
+        if filters.search:
+            pattern = f"%{escape_like(filters.search.lower())}%"
+            clauses.append(
+                """
+                (
+                    lower(i.title) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(i.author, '')) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(i.excerpt, '')) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(i.content_text, '')) LIKE ? ESCAPE '\\'
+                    OR lower(c.title) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(c.description, '')) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(c.category, '')) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(c.feed_url, '')) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(c.normalized_feed_url, '')) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(c.site_url, '')) LIKE ? ESCAPE '\\'
+                    OR lower(COALESCE(c.language, '')) LIKE ? ESCAPE '\\'
+                    OR lower(i.source_url) LIKE ? ESCAPE '\\'
+                    OR lower(i.normalized_source_url) LIKE ? ESCAPE '\\'
+                    OR EXISTS(
+                        SELECT 1
+                        FROM item_tags it
+                        INNER JOIN tags t
+                            ON t.id = it.tag_id
+                        WHERE it.item_id = i.id
+                            AND lower(t.name) LIKE ? ESCAPE '\\'
+                    )
+                    OR EXISTS(
+                        SELECT 1
+                        FROM collection_items ci
+                        INNER JOIN collections co
+                            ON co.id = ci.collection_id
+                        WHERE ci.item_id = i.id
+                            AND (
+                                lower(co.name) LIKE ? ESCAPE '\\'
+                                OR lower(COALESCE(co.description, '')) LIKE ? ESCAPE '\\'
+                            )
+                    )
+                    OR EXISTS(
+                        SELECT 1
+                        FROM annotations a
+                        WHERE a.item_id = i.id
+                            AND a.archived_at IS NULL
+                            AND (
+                                lower(COALESCE(a.quote_text, '')) LIKE ? ESCAPE '\\'
+                                OR lower(COALESCE(a.note_text, '')) LIKE ? ESCAPE '\\'
+                            )
+                    )
+                )
+                """
+            )
+            params.extend(
+                [
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                ]
+            )
 
     def get_by_id(self, item_id: str) -> dict[str, object] | None:
         with connect(self.database_path) as connection:

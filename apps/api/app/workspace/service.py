@@ -256,18 +256,18 @@ class WorkspaceService:
         profile = self.get_profile()
         ranking = self.get_ranking(limit=max(6, int(profile["daily_reading_goal"])))
         recommended = ranking["items"]
-        inbox = self.item_repository.list_items(
-            self._filters(view="inbox", limit=200)
-        ).items
-        saved = self.item_repository.list_items(
-            self._filters(view="saved", limit=200)
-        ).items
-        archive = self.item_repository.list_items(
-            self._filters(view="archive", limit=200)
-        ).items
-        digest = self.item_repository.list_items(
-            self._filters(view=None, digest_candidate=True, limit=200)
-        ).items
+        unread_count = self.item_repository.count_items(
+            self._filters(view="inbox", is_read=False, limit=1)
+        )
+        saved_count = self.item_repository.count_items(
+            self._filters(view="saved", limit=1)
+        )
+        archived_count = self.item_repository.count_items(
+            self._filters(view="archive", limit=1)
+        )
+        digest_count = self.item_repository.count_items(
+            self._filters(view=None, digest_candidate=True, limit=1)
+        )
         story_rows = build_story_cluster_response_items(
             self.repository.list_story_cluster_rows(limit=4),
             limit=4,
@@ -277,7 +277,7 @@ class WorkspaceService:
         warning_lines = summarize_source_warnings(source_health=source_health)
         summary_lines = [
             f"{format_polish_article_count(len(recommended))} w rankingu jest gotowych do sprawdzenia teraz.",
-            f"{format_polish_article_count(len(saved))} pozostaje w zapisanej bibliotece.",
+            f"{format_polish_article_count(saved_count)} pozostaje w zapisanej bibliotece.",
             f"{format_polish_story_cluster_count(len(story_rows))} {polish_story_cluster_availability(len(story_rows))} do porównania źródeł.",
         ]
         if profile.get("learned_interests"):
@@ -290,10 +290,10 @@ class WorkspaceService:
         return {
             "generated_at": ranking["generated_at"],
             "stats": {
-                "unread_count": len([item for item in inbox if not item["is_read"]]),
-                "saved_count": len(saved),
-                "digest_count": len(digest),
-                "archived_count": len(archive),
+                "unread_count": unread_count,
+                "saved_count": saved_count,
+                "digest_count": digest_count,
+                "archived_count": archived_count,
                 "recommended_count": len(recommended),
             },
             "summary_lines": summary_lines,
@@ -1018,7 +1018,14 @@ class WorkspaceService:
         return profile
 
     @staticmethod
-    def _filters(*, view: str | None, limit: int, digest_candidate: bool | None = None):
+    def _filters(
+        *,
+        view: str | None,
+        limit: int,
+        digest_candidate: bool | None = None,
+        is_read: bool | None = None,
+        is_favorite: bool | None = None,
+    ):
         from app.items.models import ItemListFilters
         from app.items.service import normalize_item_sort
 
@@ -1027,8 +1034,8 @@ class WorkspaceService:
             categories=(),
             view=view,
             sort=normalize_item_sort("newest"),
-            is_read=None,
-            is_favorite=None,
+            is_read=is_read,
+            is_favorite=is_favorite,
             digest_candidate=digest_candidate,
             search=None,
             published_after=None,

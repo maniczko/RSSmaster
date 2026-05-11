@@ -243,6 +243,76 @@ class WorkspaceContinuityTests(unittest.TestCase):
         self.assertEqual(warnings[0], "Local Single Feed: Never fetched successfully yet.")
         self.assertEqual(warnings[1], "Inne zrodlo: Sync error: 429 Too many requests.")
 
+    def test_briefing_stats_use_library_counts(self) -> None:
+        inbox_item_id = self.capture_item("https://example.com/articles/briefing-inbox", "Briefing inbox")
+        saved_item_id = self.capture_item("https://example.com/articles/briefing-saved", "Briefing saved")
+        digest_item_id = self.capture_item("https://example.com/articles/briefing-digest", "Briefing digest")
+        archived_item_id = self.capture_item("https://example.com/articles/briefing-archive", "Briefing archive")
+
+        self.item_repository.update_item_state(
+            saved_item_id,
+            is_read=None,
+            update_is_read=False,
+            is_favorite=True,
+            update_is_favorite=True,
+            is_archived=None,
+            update_is_archived=False,
+            digest_candidate=None,
+            update_digest_candidate=False,
+        )
+        self.item_repository.update_item_state(
+            digest_item_id,
+            is_read=False,
+            update_is_read=True,
+            is_favorite=None,
+            update_is_favorite=False,
+            is_archived=None,
+            update_is_archived=False,
+            digest_candidate=True,
+            update_digest_candidate=True,
+        )
+        self.item_repository.update_item_state(
+            archived_item_id,
+            is_read=None,
+            update_is_read=False,
+            is_favorite=None,
+            update_is_favorite=False,
+            is_archived=True,
+            update_is_archived=True,
+            digest_candidate=None,
+            update_digest_candidate=False,
+        )
+        self.item_repository.update_item_state(
+            inbox_item_id,
+            is_read=False,
+            update_is_read=True,
+            is_favorite=None,
+            update_is_favorite=False,
+            is_archived=None,
+            update_is_archived=False,
+            digest_candidate=None,
+            update_digest_candidate=False,
+        )
+
+        payload = self.service.get_briefing()
+        expected_unread_count = self.item_repository.count_items(
+            self.service._filters(view="inbox", is_read=False, limit=1)
+        )
+        expected_saved_count = self.item_repository.count_items(
+            self.service._filters(view="saved", limit=1)
+        )
+        expected_digest_count = self.item_repository.count_items(
+            self.service._filters(view=None, digest_candidate=True, limit=1)
+        )
+        expected_archived_count = self.item_repository.count_items(
+            self.service._filters(view="archive", limit=1)
+        )
+
+        self.assertEqual(payload["stats"]["unread_count"], expected_unread_count)
+        self.assertEqual(payload["stats"]["saved_count"], expected_saved_count)
+        self.assertEqual(payload["stats"]["digest_count"], expected_digest_count)
+        self.assertEqual(payload["stats"]["archived_count"], expected_archived_count)
+
 
 if __name__ == "__main__":
     unittest.main()
