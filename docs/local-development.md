@@ -15,7 +15,7 @@
 
 The bootstrap script creates `.venv` automatically and installs backend requirements into it.
 
-Optional AI readiness is configured with `RSSMASTER_AI_ENABLED`, `RSSMASTER_AI_PROVIDER=openai`, `RSSMASTER_OPENAI_API_KEY`, `RSSMASTER_OPENAI_CHAT_MODEL`, and `RSSMASTER_OPENAI_EMBEDDING_MODEL`. The `/settings` panel can override these values in the local `settings` table; v1 only saves and preflights configuration and does not run reader prompts or embeddings.
+Optional AI readiness is configured with `RSSMASTER_AI_ENABLED`, `RSSMASTER_AI_PROVIDER=openai`, `RSSMASTER_OPENAI_API_KEY`, `RSSMASTER_OPENAI_CHAT_MODEL`, and `RSSMASTER_OPENAI_EMBEDDING_MODEL`. The `/settings` panel can override these values in the local `settings` table. Reader V1 can generate an on-demand article insight through `/api/v1/ai/items/{item_id}/insight`; embeddings remain configuration/preflight-only until semantic search or reranking is implemented.
 
 ## Expected ports
 

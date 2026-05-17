@@ -664,7 +664,7 @@ Request:
 }
 ```
 
-When `item_ids` is omitted, the backend selects persisted `items.digest_candidate = true` rows. This is the canonical UI path for `/digest`: reader route, search, sort, and visible queue state must not change the digest candidate set. The selection is still capped by the configured digest item limit.
+When `item_ids` is omitted, the backend selects persisted `items.digest_candidate = true` rows, oversamples the candidate window, then applies deterministic magazine-style ranking before returning the final capped set. Ranking considers unread/favorite state, digest-candidate state, local readability/word count, title quality, relative freshness inside the candidate set, duplicate content hashes/URLs/titles, and source diversity. This is the canonical UI path for `/digest`: reader route, search, sort, and visible queue state must not change the digest candidate set. The final selection is still capped by the configured digest item limit.
 
 Explicit `item_ids` remain supported for tests and future bulk-selection flows. Explicit mode ignores digest-candidate filtering and returns `selection_mode = "explicit"`.
 
@@ -673,9 +673,12 @@ Response includes:
 - `title`
 - `selection_mode`
 - `stats.article_count`
+- `stats.candidate_count`
+- `stats.deduplicated_count`
+- `stats.source_count`
 - `stats.word_count`
 - `stats.estimated_read_minutes`
-- `selection_snapshot`
+- `selection_snapshot` with optional `magazine_score` and `ranking_reason` for explainability
 - `category_summary`
 
 ### `POST /api/v1/digests/build`
@@ -1016,7 +1019,7 @@ Response:
 
 ### `GET /api/v1/settings/ai`
 
-Returns safe AI configuration with the OpenAI key redacted. V1 only stores readiness for future AI features; it does not run prompts or embeddings in the reader.
+Returns safe AI configuration with the OpenAI key redacted. This configuration gates reader AI actions such as article insight generation. Embeddings remain configuration-only in this iteration.
 
 ```json
 {
@@ -1075,6 +1078,107 @@ Response:
       "message": "OpenAI potwierdziło dostęp do modelu gpt-5.2."
     }
   ]
+}
+```
+
+## AI
+
+### `POST /api/v1/ai/items/{item_id}/insight`
+
+Generates an on-demand AI insight for one locally readable article using the configured OpenAI chat model. The endpoint is intentionally stateless in V1: it does not persist the generated summary, tags, or score. It uses local `cleaned_html`, then `content_text`, then `excerpt`, capped before sending to the provider.
+
+Response:
+
+```json
+{
+  "insight": {
+    "item_id": "itm_123",
+    "generated_at": "2026-05-11T09:40:00Z",
+    "model": "gpt-5.2",
+    "source": "openai",
+    "summary": "Krótka synteza artykułu po polsku.",
+    "key_points": ["Pierwszy konkret.", "Drugi konkret."],
+    "tags": ["rynek", "banki"],
+    "reading_time_hint": "Warto przeczytać rano przed przeglądem portfela.",
+    "relevance_score": 82,
+    "digest_recommendation": "include"
+  }
+}
+```
+
+Errors:
+
+- `409 ai_not_ready` when AI is disabled, the OpenAI key is missing, or models are not configured.
+- `422 item_not_readable_for_ai` when the item has too little local text for a useful insight.
+- `502 ai_provider_error` when OpenAI rejects the request.
+- `503 ai_provider_unreachable` or `504 ai_provider_timeout` for network/provider availability failures.
+
+### `GET /api/v1/settings/magazine`
+
+Returns the local magazine schedule and generation profile. V1 stores this as `settings.key = "magazine_profile"` and uses it as configuration evidence only; actual issue history is still projected from `digest_history`.
+
+```json
+{
+  "settings": {
+    "frequency": "weekly",
+    "timezone": "Europe/Warsaw",
+    "time_of_day": "06:15",
+    "day_of_week": 5,
+    "article_limit": 25,
+    "source_scope": "digest_candidates",
+    "output_format": "epub",
+    "kindle_delivery_enabled": false,
+    "ready": true,
+    "updated_at": "2026-05-05T12:00:00Z",
+    "updated_by": "user",
+    "issues": []
+  }
+}
+```
+
+### `PATCH /api/v1/settings/magazine`
+
+Request:
+
+```json
+{
+  "frequency": "weekly",
+  "timezone": "Europe/Warsaw",
+  "time_of_day": "06:15",
+  "day_of_week": 5,
+  "article_limit": 25,
+  "source_scope": "digest_candidates",
+  "output_format": "epub",
+  "kindle_delivery_enabled": false
+}
+```
+
+Rules:
+
+- `frequency` is `disabled`, `manual`, `daily`, or `weekly`.
+- `time_of_day` uses local `HH:MM`; it matters for `daily` and `weekly`.
+- `day_of_week` is `1..7` and matters for `weekly`.
+- `source_scope` is `digest_candidates`, `favorites`, or `all_active`.
+- `output_format` is currently fixed to `epub`.
+- Sending `null` for a field clears the local override and falls back to the runtime default where one exists.
+
+### `POST /api/v1/settings/magazine/preflight`
+
+Validates schedule readiness without generating or delivering a magazine. Kindle delivery readiness is reported as a warning when enabled but SMTP/Kindle settings are incomplete; it does not block EPUB generation.
+
+```json
+{
+  "preflight": {
+    "status": "ready",
+    "can_generate": true,
+    "checks": [
+      {
+        "name": "frequency",
+        "status": "passed",
+        "message": "Harmonogram magazynu jest ustawiony: weekly."
+      }
+    ]
+  }
 }
 ```
 

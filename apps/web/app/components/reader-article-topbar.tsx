@@ -6,6 +6,7 @@ import {
   KindleIcon,
   NoteIcon,
   ReaderIcon,
+  SparkIcon,
 } from "@/app/components/ui-icons";
 
 import { Button } from "@/app/components/ui/button";
@@ -17,6 +18,8 @@ type ReaderArticleTopbarProps = {
   isArchived: boolean;
   isFavorite: boolean;
   isRead: boolean;
+  aiBusy?: boolean;
+  aiReady?: boolean;
   kindleBusy?: boolean;
   kindleReady?: boolean;
   reextractBusy?: boolean;
@@ -25,6 +28,7 @@ type ReaderArticleTopbarProps = {
   onBackToFeed: () => void;
   onReextract?: () => void;
   onReaderFeedback?: (action: "more_like_this" | "less_like_this" | "hide_topic" | "mute_source" | "important") => void;
+  onGenerateAIInsight?: () => void;
   onSendToKindle: () => void;
   onToggleArchive: () => void;
   onToggleDigest: () => void;
@@ -40,11 +44,14 @@ export function ReaderArticleTopbar({
   isArchived,
   isFavorite,
   isRead,
+  aiBusy = false,
+  aiReady = false,
   kindleBusy = false,
   kindleReady = false,
   onBackToFeed,
   onReextract,
   onReaderFeedback,
+  onGenerateAIInsight,
   onSendToKindle,
   onToggleArchive,
   onToggleDigest,
@@ -76,7 +83,13 @@ export function ReaderArticleTopbar({
 
       <div className="feed-reader-topbar-actions">
         {canReextract ? (
-          <Button className="mini-button mini-button-accent" disabled={busy || reextractBusy} onClick={onReextract} type="button" variant="outline">
+          <Button
+            className="mini-button mini-button-accent reader-secondary-action"
+            disabled={busy || reextractBusy}
+            onClick={onReextract}
+            type="button"
+            variant="outline"
+          >
             <span className="button-with-icon">
               <ReaderIcon className="app-icon button-inline-icon" />
               <span className="reader-action-label">Ponów ekstrakcję</span>
@@ -84,23 +97,50 @@ export function ReaderArticleTopbar({
           </Button>
         ) : null}
         {onReaderFeedback ? (
-          <>
-            <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("less_like_this")} type="button" variant="outline">
-              <span className="reader-action-label">Mniej takich</span>
-            </Button>
-            <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("more_like_this")} type="button" variant="outline">
-              <span className="reader-action-label">Więcej takich</span>
-            </Button>
-            <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("important")} type="button" variant="outline">
-              <span className="reader-action-label">To ważne</span>
-            </Button>
-            <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("hide_topic")} type="button" variant="outline">
-              <span className="reader-action-label">Ukryj temat</span>
-            </Button>
-            <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("mute_source")} type="button" variant="outline">
-              <span className="reader-action-label">Wycisz źródło</span>
-            </Button>
-          </>
+          <details className="reader-feedback-menu reader-secondary-action">
+            <summary>
+              <SparkIcon className="app-icon button-inline-icon" />
+              <span>Dopasuj</span>
+            </summary>
+            <div className="reader-feedback-menu-panel">
+              <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("less_like_this")} type="button" variant="outline">
+                Mniej takich
+              </Button>
+              <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("more_like_this")} type="button" variant="outline">
+                Więcej takich
+              </Button>
+              <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("important")} type="button" variant="outline">
+                To ważne
+              </Button>
+              <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("hide_topic")} type="button" variant="outline">
+                Ukryj temat
+              </Button>
+              <Button className="mini-button" disabled={busy} onClick={() => onReaderFeedback("mute_source")} type="button" variant="outline">
+                Wycisz źródło
+              </Button>
+            </div>
+          </details>
+        ) : null}
+        {onGenerateAIInsight ? (
+          <Button
+            aria-label={aiReady ? "Wygeneruj insight AI dla artykułu" : "Skonfiguruj AI i wygeneruj insight artykułu"}
+            className={`mini-button mini-button-ai ${aiReady ? "mini-button-ai-ready" : ""}`}
+            data-testid="reader-generate-ai-insight"
+            disabled={busy || aiBusy}
+            onClick={onGenerateAIInsight}
+            title={
+              aiReady
+                ? "Wygeneruj krótkie podsumowanie, punkty i tagi przez OpenAI"
+                : "Najpierw włącz AI i zapisz klucz OpenAI w Ustawieniach"
+            }
+            type="button"
+            variant="outline"
+          >
+            <span className="button-with-icon">
+              <SparkIcon className="app-icon button-inline-icon" />
+              <span className="reader-action-label reader-action-label-priority">{aiBusy ? "AI pracuje..." : "Insight AI"}</span>
+            </span>
+          </Button>
         ) : null}
         <Button
           aria-label={kindleReady ? "Wyślij artykuł na Kindle" : "Skonfiguruj i wyślij artykuł na Kindle"}

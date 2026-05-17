@@ -42,6 +42,8 @@ The orchestration core treats each job as a persisted run with:
 
 In rssmaster this model persists in `job_runs` and should remain the canonical audit trail for every background operation.
 
+The local regression guard for this contract is `npm run check:orchestration`. It runs an isolated scheduled sync with one healthy feed and one failing feed, then continues through digest build and delivery dry-run. The check verifies the corresponding `job_runs`, partial feed error visibility, digest archive row, delivery log, generated artifact, and a `monitoring_report` in `output/job-orchestration-check.json`. It does not prove a hosted scheduler daemon, Inngest, live SMTP, or Kindle inbox acceptance.
+
 ## Payload envelope
 
 The orchestration core passes a stable envelope into each step:

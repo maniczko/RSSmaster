@@ -148,6 +148,7 @@ After the MVP is stable, likely next layers are:
 ## Source of truth links
 
 - documentation ownership and cross-link rules: `docs/documentation-map.md`
+- magazine issue model: `docs/magazine-model.md`
 - architecture and runtime shape: `docs/architecture.md`
 - local setup and operations: `docs/local-development.md`
 - API surface: `docs/api-contract.md`

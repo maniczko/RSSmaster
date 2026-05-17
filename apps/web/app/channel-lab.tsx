@@ -139,6 +139,7 @@ import {
   type DigestCandidatePreviewStatus,
 } from "./lib/digest-selection";
 import { buildAISettingsPatch, createAISettingsDraft } from "./lib/ai-settings";
+import { buildMagazineSettingsPatch, createMagazineSettingsDraft } from "./lib/magazine-settings";
 import { sourceAddModes, type SourceAddModeId } from "./lib/source-add-modes";
 
 import type {
@@ -151,6 +152,9 @@ import type {
   AISettings,
   AISettingsDraft,
   AISettingsPreflight,
+  MagazineSettings,
+  MagazineSettingsDraft,
+  MagazineSettingsPreflight,
   DeliverySettings,
   DeliverySettingsDraft,
   DeliveryPreflight,
@@ -188,11 +192,14 @@ import type {
   DigestHistoryPayload,
   AISettingsPayload,
   AISettingsPreflightPayload,
+  MagazineSettingsPayload,
+  MagazineSettingsPreflightPayload,
   DeliverySettingsPayload,
   DeliverySettingsPreflightPayload,
   DeliveryPreflightPayload,
   DeliveryDispatchPayload,
   DeliveryLogListPayload,
+  ArticleAIInsightPayload,
   ItemStatePatch,
   ItemMutationPayload,
   WorkspaceProfilePayload,
@@ -216,6 +223,7 @@ import type {
   WorkspaceExportPayload,
   WorkspaceContinuityImportPayload,
   FeedbackState,
+  ArticleAIFeedbackState,
   ArticleKindleFeedbackState,
   ItemSortMode,
   ViewDensity,
@@ -506,6 +514,12 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [aiSettingsMessage, setAISettingsMessage] = useState<string | null>(null);
   const [aiPreflight, setAIPreflight] = useState<AISettingsPreflight | null>(null);
   const [aiSettingsDraft, setAISettingsDraft] = useState<AISettingsDraft>(() => createAISettingsDraft(null));
+  const [magazineSettings, setMagazineSettings] = useState<MagazineSettings | null>(null);
+  const [magazineSettingsDraft, setMagazineSettingsDraft] = useState<MagazineSettingsDraft>(() =>
+    createMagazineSettingsDraft(null),
+  );
+  const [magazineSettingsMessage, setMagazineSettingsMessage] = useState<string | null>(null);
+  const [magazineSettingsPreflight, setMagazineSettingsPreflight] = useState<MagazineSettingsPreflight | null>(null);
   const [deliverySettings, setDeliverySettings] = useState<DeliverySettings | null>(null);
   const [deliverySettingsMessage, setDeliverySettingsMessage] = useState<string | null>(null);
   const [deliveryPreflight, setDeliveryPreflight] = useState<DeliveryPreflight | null>(null);
@@ -522,7 +536,10 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [aiSettingsBusy, setAISettingsBusy] = useState(false);
   const [aiPreflightBusy, setAIPreflightBusy] = useState(false);
+  const [magazineSettingsBusy, setMagazineSettingsBusy] = useState(false);
   const [deliveryBusy, setDeliveryBusy] = useState(false);
+  const [articleAIBusyId, setArticleAIBusyId] = useState<string | null>(null);
+  const [articleAIFeedback, setArticleAIFeedback] = useState<ArticleAIFeedbackState | null>(null);
   const [articleKindleBusyId, setArticleKindleBusyId] = useState<string | null>(null);
   const [articleKindleFeedback, setArticleKindleFeedback] = useState<ArticleKindleFeedbackState | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -915,6 +932,19 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     startTransition(() => {
       setAISettings(payload.settings);
       setAISettingsDraft(createAISettingsDraft(payload.settings));
+    });
+    return payload.settings;
+  }
+
+  async function loadMagazineSettings() {
+    const { response, payload } = await fetchApi<MagazineSettingsPayload>("/api/v1/settings/magazine");
+    if (!response.ok || isErrorEnvelope(payload)) {
+      throw new Error(getPayloadMessage(payload, "Nie udało się wczytać ustawień magazynu."));
+    }
+
+    startTransition(() => {
+      setMagazineSettings(payload.settings);
+      setMagazineSettingsDraft(createMagazineSettingsDraft(payload.settings));
     });
     return payload.settings;
   }
@@ -1981,6 +2011,7 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           loadSyncRuns(),
           loadDigestHistory(),
           loadAISettings(),
+          loadMagazineSettings(),
           loadDeliverySettings(),
           loadWorkspaceOverview(),
           loadAnnotationHub(""),
@@ -3732,6 +3763,67 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }
 
+  async function handleSaveMagazineSettings() {
+    const patch = buildMagazineSettingsPatch(magazineSettingsDraft, magazineSettings);
+    if (Object.keys(patch).length === 0) {
+      setMagazineSettingsMessage("Brak zmian w harmonogramie magazynu.");
+      return;
+    }
+
+    setMagazineSettingsBusy(true);
+    setMagazineSettingsMessage(null);
+    try {
+      const { response, payload } = await fetchApi<MagazineSettingsPayload>("/api/v1/settings/magazine", {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się zapisać harmonogramu magazynu."));
+      }
+
+      startTransition(() => {
+        setMagazineSettings(payload.settings);
+        setMagazineSettingsDraft(createMagazineSettingsDraft(payload.settings));
+      });
+      setMagazineSettingsMessage("Harmonogram magazynu zapisany.");
+    } catch (error) {
+      setMagazineSettingsMessage(error instanceof Error ? error.message : "Nie udało się zapisać harmonogramu magazynu.");
+    } finally {
+      setMagazineSettingsBusy(false);
+    }
+  }
+
+  async function handleMagazineSettingsPreflight() {
+    setMagazineSettingsBusy(true);
+    setMagazineSettingsMessage(null);
+    try {
+      const { response, payload } = await fetchApi<MagazineSettingsPreflightPayload>(
+        "/api/v1/settings/magazine/preflight",
+        {
+          method: "POST",
+        },
+      );
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się sprawdzić harmonogramu magazynu."));
+      }
+
+      setMagazineSettingsPreflight(payload.preflight);
+      setFeedback({
+        tone: payload.preflight.can_generate ? "success" : "error",
+        title: `Preflight harmonogramu: ${payload.preflight.status}`,
+        lines: payload.preflight.checks.map((check) => `${check.name}: ${check.message}`),
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        title: "Preflight harmonogramu nie powiódł się",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+      });
+    } finally {
+      setMagazineSettingsBusy(false);
+    }
+  }
+
   async function handleSaveDeliverySettings() {
     setSettingsBusy(true);
     setDeliverySettingsMessage(null);
@@ -3879,6 +3971,75 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       });
     } finally {
       setDeliveryBusy(false);
+    }
+  }
+
+  async function handleGenerateArticleAIInsight(item: Item) {
+    if (articleAIBusyId) {
+      return;
+    }
+
+    setArticleAIBusyId(item.id);
+    try {
+      const resolvedAISettings = aiSettings ?? (await loadAISettings());
+      if (!resolvedAISettings.ready) {
+        setArticleAIFeedback({
+          itemId: item.id,
+          tone: "error",
+          title: "Skonfiguruj AI przed analizą artykułu",
+          lines: [
+            "Włącz AI, zapisz klucz OpenAI i uruchom preflight w Ustawieniach.",
+            ...resolvedAISettings.issues.slice(0, 4),
+          ],
+          insight: null,
+        });
+        return;
+      }
+
+      setArticleAIFeedback({
+        itemId: item.id,
+        tone: "idle",
+        title: "AI analizuje artykuł",
+        lines: ["Generuję krótkie podsumowanie, punkty, tagi i rekomendację do magazynu."],
+        insight: null,
+      });
+
+      const { response, payload } = await fetchApi<ArticleAIInsightPayload>(`/api/v1/ai/items/${encodeURIComponent(item.id)}/insight`, {
+        method: "POST",
+      });
+      if (!response.ok || isErrorEnvelope(payload)) {
+        throw new Error(getPayloadMessage(payload, "Nie udało się wygenerować insightu AI."));
+      }
+
+      const recommendationLabel =
+        payload.insight.digest_recommendation === "include"
+          ? "warto dodać do magazynu"
+          : payload.insight.digest_recommendation === "maybe"
+            ? "do rozważenia w magazynie"
+            : "raczej pominąć w magazynie";
+
+      setArticleAIFeedback({
+        itemId: item.id,
+        tone: "success",
+        title: "Insight AI gotowy",
+        lines: [
+          payload.insight.summary,
+          `Ocena: ${payload.insight.relevance_score}/100, ${recommendationLabel}.`,
+          payload.insight.reading_time_hint,
+          payload.insight.tags.length ? `Tagi: ${payload.insight.tags.join(", ")}` : "Brak tagów z AI.",
+        ],
+        insight: payload.insight,
+      });
+    } catch (error) {
+      setArticleAIFeedback({
+        itemId: item.id,
+        tone: "error",
+        title: "Nie udało się wygenerować insightu AI",
+        lines: [error instanceof Error ? error.message : "Nieznany błąd przeglądarki."],
+        insight: null,
+      });
+    } finally {
+      setArticleAIBusyId(null);
     }
   }
 
@@ -5672,12 +5833,15 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           busy={decisionBusy}
           canReextract={canReextractSelected}
           digestCandidate={selectedItem.digest_candidate}
+          aiBusy={articleAIBusyId === selectedItem.id}
+          aiReady={Boolean(aiSettings?.ready)}
           isArchived={selectedItem.is_archived}
           isFavorite={selectedItem.is_favorite}
           isRead={selectedItem.is_read}
           kindleBusy={articleKindleBusyId === selectedItem.id}
           kindleReady={Boolean(deliverySettings?.smtp_ready)}
           onBackToFeed={() => dispatchReader({ type: "show_browse" })}
+          onGenerateAIInsight={() => void handleGenerateArticleAIInsight(selectedItem)}
           onReextract={() => void handleReextractItem(selectedItem, "write")}
           onReaderFeedback={(action) => void handleReaderFeedback(selectedItem.id, action)}
           onSendToKindle={() => void handleSendArticleToKindle(selectedItem)}
@@ -5698,6 +5862,33 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
           showInspector={showReadInspector}
           sourceUrl={selectedItem.source_url}
         />
+
+        {articleAIFeedback && articleAIFeedback.itemId === selectedItem.id ? (
+          <section
+            aria-atomic="true"
+            aria-live="polite"
+            className={`feedback-card feedback-${articleAIFeedback.tone} reader-ai-feedback`}
+            data-testid="reader-ai-feedback"
+            role="status"
+          >
+            <strong>{articleAIFeedback.title}</strong>
+            <ul className="feedback-list">
+              {articleAIFeedback.lines.map((line, lineIndex) => (
+                <li key={`${line}-${lineIndex}`}>{line}</li>
+              ))}
+            </ul>
+            {articleAIFeedback.insight?.key_points.length ? (
+              <div className="reader-ai-key-points">
+                <span>Najważniejsze punkty</span>
+                <ul>
+                  {articleAIFeedback.insight.key_points.map((point, pointIndex) => (
+                    <li key={`${point}-${pointIndex}`}>{point}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         {articleKindleFeedback && articleKindleFeedback.itemId === selectedItem.id ? (
           <section
@@ -6219,10 +6410,18 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
         formatDeliveryStatus={getDeliveryStatusLabel}
         formatTimestamp={formatTimestamp}
         history={digestHistory}
+        magazineSettings={magazineSettings}
+        magazineSettingsBusy={magazineSettingsBusy}
+        magazineSettingsDraft={magazineSettingsDraft}
+        magazineSettingsMessage={magazineSettingsMessage}
+        magazineSettingsPreflight={magazineSettingsPreflight}
         message={digestCandidateMessage}
         onBackToReader={() => router.push(buildAppHref({ section: "read" }))}
         onBuild={() => void handleDigestBuild()}
         onDeliveryPreflight={(digest) => void handleDeliveryPreflight("kindle", digest)}
+        onMagazineSettingsDraftChange={handleMagazineSettingsDraftChange}
+        onMagazineSettingsPreflight={() => void handleMagazineSettingsPreflight()}
+        onMagazineSettingsSave={() => void handleSaveMagazineSettings()}
         onPreview={() => void handleDigestPreview()}
         onSelectIssue={handleSelectMagazineIssue}
         onSendDigestDryRun={(digest) => void handleSendDigest("dry_run", "kindle", digest)}
@@ -6254,6 +6453,13 @@ export function ChannelLab({ apiBaseUrl }: { apiBaseUrl: string }) {
       ...(field === "openai_api_key" && typeof value === "string" && value.trim()
         ? { clear_openai_api_key: false }
         : {}),
+    }));
+  }
+
+  function handleMagazineSettingsDraftChange(field: keyof MagazineSettingsDraft, value: string | boolean) {
+    setMagazineSettingsDraft((current) => ({
+      ...current,
+      [field]: value,
     }));
   }
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from hashlib import sha256
 from pathlib import Path
 import re
 from typing import Literal
@@ -11,9 +10,9 @@ from app.errors import ApiError
 
 from .epub import build_epub_bytes, html_fragment_from_markup, html_fragment_from_text
 from .repository import DigestRepository
+from .storage import EditionStorage
 
 DEFAULT_CATEGORY = "Uncategorized"
-SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(slots=True, frozen=True)
@@ -222,6 +221,7 @@ class DigestService:
 
         effective_limit = min(limit, self.digest_max_items)
         explicit_mode = bool(item_ids)
+        candidate_limit = effective_limit if explicit_mode else min(max(effective_limit * 4, effective_limit), 200)
         rows = self.repository.list_candidate_items(
             item_ids=item_ids,
             category=None if explicit_mode else category,
@@ -230,7 +230,7 @@ class DigestService:
             digest_candidates_only=False if explicit_mode else digest_candidates_only,
             period_start=None if explicit_mode else normalized_period_start,
             period_end=None if explicit_mode else normalized_period_end,
-            limit=effective_limit,
+            limit=candidate_limit,
         )
         if explicit_mode and len(rows) != len(item_ids or []):
             found_ids = {str(row["id"]) for row in rows}
@@ -256,7 +256,17 @@ class DigestService:
                 retryable=False,
             )
 
-        articles = [build_article_payload(index=index, row=row) for index, row in enumerate(rows, start=1)]
+        candidate_articles = [build_article_payload(index=index, row=row) for index, row in enumerate(rows, start=1)]
+        deduplicated_count = (
+            None
+            if explicit_mode
+            else max(0, len(candidate_articles) - len({magazine_dedupe_key(article) for article in candidate_articles}))
+        )
+        articles = (
+            candidate_articles
+            if explicit_mode
+            else select_magazine_articles(candidate_articles, limit=effective_limit)
+        )
         inferred_period_start = normalized_period_start or infer_period_boundary(articles, take_max=False)
         inferred_period_end = normalized_period_end or infer_period_boundary(articles, take_max=True)
         resolved_title = resolve_title(
@@ -268,7 +278,12 @@ class DigestService:
         category_summary = summarize_categories(articles)
         groups = build_groups(articles)
         selection_snapshot = build_selection_snapshot(articles)
-        stats = build_stats(articles=articles, category_summary=category_summary)
+        stats = build_stats(
+            articles=articles,
+            category_summary=category_summary,
+            candidate_count=len(candidate_articles),
+            deduplicated_count=deduplicated_count,
+        )
 
         return DigestSelection(
             title=resolved_title,
@@ -283,11 +298,12 @@ class DigestService:
         )
 
     def _persist_artifact(self, *, digest_id: str, title: str, epub_bytes: bytes) -> tuple[str, str]:
-        self.artifact_root.mkdir(parents=True, exist_ok=True)
-        artifact_name = f"{digest_id}-{slugify(title)}.epub"
-        artifact_path = self.artifact_root / artifact_name
-        artifact_path.write_bytes(epub_bytes)
-        return str(artifact_path), sha256(epub_bytes).hexdigest()
+        artifact = EditionStorage(self.artifact_root).save_epub(
+            edition_id=digest_id,
+            title=title,
+            epub_bytes=epub_bytes,
+        )
+        return artifact.path, artifact.sha256
 
 
 def build_article_payload(*, index: int, row: dict[str, object]) -> dict[str, object]:
@@ -308,9 +324,173 @@ def build_article_payload(*, index: int, row: dict[str, object]) -> dict[str, ob
         "digest_candidate": bool(row["digest_candidate"]),
         "content_html": content_html,
         "word_count": word_count,
+        "magazine_score": None,
+        "ranking_reason": None,
         "_position": index,
         "_content_hash": row.get("content_hash"),
     }
+
+
+def select_magazine_articles(articles: list[dict[str, object]], *, limit: int) -> list[dict[str, object]]:
+    newest_published_at = newest_article_timestamp(articles)
+    scored = [
+        score_magazine_article(article, newest_published_at=newest_published_at)
+        for article in articles
+    ]
+    scored.sort(
+        key=lambda article: (
+            -float(article["magazine_score"] or 0),
+            -timestamp_sort_key(article.get("published_at")),
+            str(article["channel_title"]).lower(),
+            str(article["title"]).lower(),
+            str(article["id"]),
+        )
+    )
+
+    selected: list[dict[str, object]] = []
+    deferred: list[dict[str, object]] = []
+    seen_keys: set[str] = set()
+    source_counts: dict[str, int] = {}
+    max_per_source = max(1, min(3, (limit + 1) // 2))
+
+    for article in scored:
+        dedupe_key = magazine_dedupe_key(article)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+
+        source_key = str(article["channel_id"])
+        if source_counts.get(source_key, 0) < max_per_source:
+            selected.append(article)
+            source_counts[source_key] = source_counts.get(source_key, 0) + 1
+        else:
+            deferred.append(article)
+
+        if len(selected) >= limit:
+            break
+
+    for article in deferred:
+        if len(selected) >= limit:
+            break
+        selected.append(article)
+
+    return renumber_articles(selected[:limit])
+
+
+def score_magazine_article(
+    article: dict[str, object],
+    *,
+    newest_published_at: datetime | None,
+) -> dict[str, object]:
+    scored = dict(article)
+    score = 50.0
+    reasons: list[str] = []
+
+    if not bool(article["is_read"]):
+        score += 14
+        reasons.append("nieprzeczytane")
+    else:
+        score -= 8
+
+    if bool(article["is_favorite"]):
+        score += 22
+        reasons.append("zapisane")
+
+    if bool(article["digest_candidate"]):
+        score += 12
+        reasons.append("kandydat")
+
+    word_count = int(article["word_count"])
+    if word_count >= 600:
+        score += 14
+        reasons.append("pełna treść")
+    elif word_count >= 180:
+        score += 8
+        reasons.append("czytelna treść")
+    elif word_count < 60:
+        score -= 18
+        reasons.append("krótki fallback")
+
+    title = str(article["title"]).strip()
+    if 18 <= len(title) <= 140:
+        score += 6
+    elif len(title) < 18:
+        score -= 6
+    elif len(title) > 180:
+        score -= 8
+
+    if article.get("excerpt"):
+        score += 3
+    if article.get("author"):
+        score += 2
+
+    published_at = parse_optional_datetime(article.get("published_at"))
+    if published_at and newest_published_at:
+        age_days = max(0, (newest_published_at - published_at).days)
+        if age_days <= 1:
+            score += 12
+            reasons.append("świeże")
+        elif age_days <= 7:
+            score += 8
+            reasons.append("aktualne")
+        elif age_days <= 30:
+            score += 4
+        else:
+            score -= 10
+
+    scored["magazine_score"] = round(score, 2)
+    scored["ranking_reason"] = ", ".join(reasons[:3]) or "stabilny ranking"
+    return scored
+
+
+def renumber_articles(articles: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        {
+            **article,
+            "_position": index,
+        }
+        for index, article in enumerate(articles, start=1)
+    ]
+
+
+def newest_article_timestamp(articles: list[dict[str, object]]) -> datetime | None:
+    timestamps = [
+        timestamp
+        for article in articles
+        if (timestamp := parse_optional_datetime(article.get("published_at"))) is not None
+    ]
+    if not timestamps:
+        return None
+    return max(timestamps)
+
+
+def parse_optional_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def timestamp_sort_key(value: object) -> float:
+    parsed = parse_optional_datetime(value)
+    return parsed.timestamp() if parsed is not None else 0.0
+
+
+def magazine_dedupe_key(article: dict[str, object]) -> str:
+    content_hash = article.get("_content_hash")
+    if isinstance(content_hash, str) and content_hash.strip():
+        return f"hash:{content_hash.strip()}"
+
+    source_url = article.get("source_url")
+    if isinstance(source_url, str) and source_url.strip():
+        return f"url:{source_url.strip().lower()}"
+
+    return f"title:{str(article['title']).strip().lower()}"
 
 
 def resolve_content_html(row: dict[str, object]) -> str:
@@ -350,6 +530,8 @@ def build_selection_snapshot(articles: list[dict[str, object]]) -> list[dict[str
             "content_html": article["content_html"],
             "word_count": article["word_count"],
             "content_hash": article["_content_hash"],
+            "magazine_score": article["magazine_score"],
+            "ranking_reason": article["ranking_reason"],
         }
         for article in articles
     ]
@@ -385,9 +567,14 @@ def build_stats(
     *,
     articles: list[dict[str, object]],
     category_summary: list[dict[str, object]],
+    candidate_count: int | None = None,
+    deduplicated_count: int | None = None,
 ) -> dict[str, object]:
     word_count = sum(int(article["word_count"]) for article in articles)
     return {
+        "candidate_count": candidate_count,
+        "deduplicated_count": deduplicated_count,
+        "source_count": len({str(article["channel_id"]) for article in articles}),
         "article_count": len(articles),
         "category_count": len(category_summary),
         "unread_count": sum(0 if article["is_read"] else 1 for article in articles),
@@ -480,8 +667,3 @@ def elapsed_ms(started_at: str, completed_at: str) -> int:
     start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
     end = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
     return max(0, int((end - start).total_seconds() * 1000))
-
-
-def slugify(value: str) -> str:
-    normalized = SLUG_RE.sub("-", value.strip().lower()).strip("-")
-    return normalized or "digest"

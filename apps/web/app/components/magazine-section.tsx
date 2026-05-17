@@ -6,6 +6,11 @@ import { ArtifactMeta } from "./artifact-meta";
 import type { DigestCandidateSummaryPreview } from "./digest-candidate-summary";
 import type { DigestHistoryListItem } from "./digest-history-list";
 import { DeliveryIcon, DigestIcon, KindleIcon, StatusIcon } from "./ui-icons";
+import type {
+  MagazineSettings,
+  MagazineSettingsDraft,
+  MagazineSettingsPreflight,
+} from "@/app/lib/channel-lab-types";
 
 type MagazineSectionCopy = {
   eyebrow: string;
@@ -60,10 +65,18 @@ type MagazineSectionProps = {
   formatDeliveryStatus: (status: string) => string;
   formatTimestamp: (value: string | null | undefined, fallback: string) => string;
   history: DigestHistoryListItem[];
+  magazineSettings: MagazineSettings | null;
+  magazineSettingsBusy: boolean;
+  magazineSettingsDraft: MagazineSettingsDraft;
+  magazineSettingsMessage: string | null;
+  magazineSettingsPreflight: MagazineSettingsPreflight | null;
   message: string | null;
   onBackToReader: () => void;
   onBuild: () => void;
   onDeliveryPreflight: (issue: DigestHistoryListItem) => void;
+  onMagazineSettingsDraftChange: (field: keyof MagazineSettingsDraft, value: string | boolean) => void;
+  onMagazineSettingsPreflight: () => void;
+  onMagazineSettingsSave: () => void;
   onPreview: () => void;
   onSelectIssue: (issueId: string) => void;
   onSendDigestDryRun: (issue: DigestHistoryListItem) => void;
@@ -229,10 +242,18 @@ export function MagazineSection({
   formatDeliveryStatus,
   formatTimestamp,
   history,
+  magazineSettings,
+  magazineSettingsBusy,
+  magazineSettingsDraft,
+  magazineSettingsMessage,
+  magazineSettingsPreflight,
   message,
   onBackToReader,
   onBuild,
   onDeliveryPreflight,
+  onMagazineSettingsDraftChange,
+  onMagazineSettingsPreflight,
+  onMagazineSettingsSave,
   onPreview,
   onSelectIssue,
   onSendDigestDryRun,
@@ -313,9 +334,23 @@ export function MagazineSection({
               })}
             </div>
           ) : (
-            <div className="premium-empty-state-content">
+            <div className="premium-empty-state-content magazine-empty-issue">
               <strong>Nie ma jeszcze wydań</strong>
-              <p className="empty-state">Zbuduj pierwsze wydanie, aby zobaczyć numer magazynu, np. Wydanie 1/2026.</p>
+              <p className="empty-state">
+                Zbuduj pierwszy numer, a pojawi się tu konkretne wydanie magazynu z datą, listą artykułów i statusem EPUB.
+              </p>
+              <div className="magazine-empty-issue-blueprint" data-testid="magazine-empty-issue-blueprint">
+                <span>Przykład struktury</span>
+                <strong>Wydanie 1/2026</strong>
+                <ul>
+                  <li>Najciekawsze artykuły pogrupowane po źródle</li>
+                  <li>Podgląd czytania przed wysyłką na Kindle</li>
+                  <li>EPUB i preflight dla tego numeru</li>
+                </ul>
+              </div>
+              <button className="action-button compact-button" onClick={onBuild} type="button">
+                Zbuduj pierwsze wydanie
+              </button>
             </div>
           )}
         </section>
@@ -490,7 +525,15 @@ export function MagazineSection({
                 )}
               </div>
             ) : (
-              <p className="empty-state">Zbuduj pierwsze wydanie, aby otworzyć jego zawartość i wysyłkę Kindle.</p>
+              <div className="magazine-active-empty" data-testid="magazine-active-empty">
+                <strong>Gotowe miejsce na Wydanie 1/2026</strong>
+                <p className="empty-state">
+                  Pierwszy numer pokaże zawartość wydania, podgląd czytania, grupy źródeł oraz akcje wysyłki Kindle.
+                </p>
+                <button className="secondary-button" onClick={onBuild} type="button">
+                  Zbuduj pierwsze wydanie
+                </button>
+              </div>
             )}
           </section>
 
@@ -568,6 +611,153 @@ export function MagazineSection({
               ) : (
                 <p className="empty-state">Uruchom preflight dla otwartego wydania, aby potwierdzić gotowość wysyłki.</p>
               )}
+            </section>
+
+            <section className="ops-section magazine-settings-panel" data-testid="magazine-settings-panel">
+              <div className="ops-section-header">
+                <div>
+                  <span className="panel-badge panel-badge-with-icon">
+                    <StatusIcon className="app-icon app-icon-xs" />
+                    Konfiguracja
+                  </span>
+                  <h3>Harmonogram wydań</h3>
+                </div>
+                <span>{magazineSettings?.ready ? "gotowe" : "wymaga decyzji"}</span>
+              </div>
+              <p className="empty-state">
+                Ustaw, jak RSSmaster ma przygotowywać kolejne numery. V1 zapisuje harmonogram i preflight, a generowanie możesz nadal uruchamiać ręcznie.
+              </p>
+              <form
+                className="magazine-settings-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  onMagazineSettingsSave();
+                }}
+              >
+                <label className="field">
+                  <span>Tryb</span>
+                  <select
+                    data-testid="magazine-frequency-select"
+                    onChange={(event) => onMagazineSettingsDraftChange("frequency", event.target.value)}
+                    value={magazineSettingsDraft.frequency}
+                  >
+                    <option value="disabled">Wyłączony</option>
+                    <option value="manual">Ręczny</option>
+                    <option value="daily">Codzienny</option>
+                    <option value="weekly">Tygodniowy</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Strefa czasowa</span>
+                  <input
+                    onChange={(event) => onMagazineSettingsDraftChange("timezone", event.target.value)}
+                    placeholder="Europe/Warsaw"
+                    value={magazineSettingsDraft.timezone}
+                  />
+                </label>
+                <label className="field">
+                  <span>Godzina</span>
+                  <input
+                    onChange={(event) => onMagazineSettingsDraftChange("time_of_day", event.target.value)}
+                    placeholder="07:00"
+                    type="time"
+                    value={magazineSettingsDraft.time_of_day}
+                  />
+                </label>
+                <label className="field">
+                  <span>Dzień tygodnia</span>
+                  <select
+                    onChange={(event) => onMagazineSettingsDraftChange("day_of_week", event.target.value)}
+                    value={magazineSettingsDraft.day_of_week}
+                  >
+                    <option value="1">Poniedziałek</option>
+                    <option value="2">Wtorek</option>
+                    <option value="3">Środa</option>
+                    <option value="4">Czwartek</option>
+                    <option value="5">Piątek</option>
+                    <option value="6">Sobota</option>
+                    <option value="7">Niedziela</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Limit artykułów</span>
+                  <input
+                    max={200}
+                    min={1}
+                    onChange={(event) => onMagazineSettingsDraftChange("article_limit", event.target.value)}
+                    type="number"
+                    value={magazineSettingsDraft.article_limit}
+                  />
+                </label>
+                <label className="field">
+                  <span>Zakres</span>
+                  <select
+                    onChange={(event) => onMagazineSettingsDraftChange("source_scope", event.target.value)}
+                    value={magazineSettingsDraft.source_scope}
+                  >
+                    <option value="digest_candidates">Artykuły oznaczone do magazynu</option>
+                    <option value="favorites">Zapisane/favorites</option>
+                    <option value="all_active">Wszystkie aktywne źródła</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Format</span>
+                  <select
+                    onChange={(event) => onMagazineSettingsDraftChange("output_format", event.target.value)}
+                    value={magazineSettingsDraft.output_format}
+                  >
+                    <option value="epub">EPUB Kindle-ready</option>
+                  </select>
+                </label>
+                <label className="field field-wide">
+                  <span>Wysyłka</span>
+                  <span className="app-checkbox-row">
+                    <input
+                      checked={magazineSettingsDraft.kindle_delivery_enabled}
+                      onChange={(event) =>
+                        onMagazineSettingsDraftChange("kindle_delivery_enabled", event.target.checked)
+                      }
+                      type="checkbox"
+                    />
+                    Po wygenerowaniu przygotuj wysyłkę na Kindle, jeśli delivery jest gotowe.
+                  </span>
+                </label>
+                <div className="channel-actions field-wide">
+                  <button className="action-button compact-button" disabled={magazineSettingsBusy} type="submit">
+                    {magazineSettingsBusy ? "Zapisuję..." : "Zapisz harmonogram"}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={magazineSettingsBusy}
+                    onClick={onMagazineSettingsPreflight}
+                    type="button"
+                  >
+                    Sprawdź harmonogram
+                  </button>
+                </div>
+              </form>
+              {magazineSettingsMessage ? <p className="empty-state">{magazineSettingsMessage}</p> : null}
+              {magazineSettingsPreflight ? (
+                <div className="magazine-settings-preflight">
+                  <div className="ops-row-top">
+                    <strong>Preflight harmonogramu: {formatDeliveryStatus(magazineSettingsPreflight.status)}</strong>
+                    <span>{magazineSettingsPreflight.can_generate ? "można generować" : "wymaga konfiguracji"}</span>
+                  </div>
+                  <ul>
+                    {magazineSettingsPreflight.checks.map((check) => (
+                      <li key={`${check.name}:${check.status}`}>
+                        <strong>{check.name}</strong>: {check.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : magazineSettings?.issues.length ? (
+                <ul className="magazine-settings-preflight">
+                  {magazineSettings.issues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              ) : null}
             </section>
           </div>
 

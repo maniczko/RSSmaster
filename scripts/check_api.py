@@ -736,6 +736,22 @@ def main() -> int:
             )
             ai_settings_response = client.get("/api/v1/settings/ai")
             ai_settings_preflight_response = client.post("/api/v1/settings/ai/preflight")
+            ai_article_insight_not_ready_response = client.post(f"/api/v1/ai/items/{direct_item_id}/insight")
+            magazine_settings_response = client.get("/api/v1/settings/magazine")
+            update_magazine_settings_response = client.patch(
+                "/api/v1/settings/magazine",
+                json={
+                    "frequency": "weekly",
+                    "timezone": "Europe/Warsaw",
+                    "time_of_day": "06:15",
+                    "day_of_week": 5,
+                    "article_limit": 12,
+                    "source_scope": "digest_candidates",
+                    "output_format": "epub",
+                    "kindle_delivery_enabled": False,
+                },
+            )
+            magazine_settings_preflight_response = client.post("/api/v1/settings/magazine/preflight")
             digest_persisted_preview_response = client.post(
                 "/api/v1/digests/preview",
                 json={
@@ -1285,6 +1301,38 @@ def main() -> int:
         assert ai_preflight_payload["can_use_ai"] is False
         assert {check["name"] for check in ai_preflight_payload["checks"]} >= {"ai_enabled", "openai_api_key"}
 
+        assert ai_article_insight_not_ready_response.status_code == 409, ai_article_insight_not_ready_response.text
+        ai_article_insight_error = ai_article_insight_not_ready_response.json()["error"]
+        assert ai_article_insight_error["code"] == "ai_not_ready"
+        assert ai_article_insight_error["details"]["settings_route"] == "/settings"
+
+        assert magazine_settings_response.status_code == 200, magazine_settings_response.text
+        magazine_settings_payload = magazine_settings_response.json()["settings"]
+        assert magazine_settings_payload["frequency"] == "disabled"
+        assert magazine_settings_payload["ready"] is False
+        assert magazine_settings_payload["source_scope"] == "digest_candidates"
+        assert magazine_settings_payload["output_format"] == "epub"
+
+        assert update_magazine_settings_response.status_code == 200, update_magazine_settings_response.text
+        updated_magazine_settings_payload = update_magazine_settings_response.json()["settings"]
+        assert updated_magazine_settings_payload["frequency"] == "weekly"
+        assert updated_magazine_settings_payload["time_of_day"] == "06:15"
+        assert updated_magazine_settings_payload["day_of_week"] == 5
+        assert updated_magazine_settings_payload["article_limit"] == 12
+        assert updated_magazine_settings_payload["ready"] is True
+
+        assert magazine_settings_preflight_response.status_code == 200, magazine_settings_preflight_response.text
+        magazine_preflight_payload = magazine_settings_preflight_response.json()["preflight"]
+        assert magazine_preflight_payload["status"] == "ready"
+        assert magazine_preflight_payload["can_generate"] is True
+        assert {check["name"] for check in magazine_preflight_payload["checks"]} >= {
+            "frequency",
+            "timezone",
+            "time_of_day",
+            "day_of_week",
+            "article_limit",
+        }
+
         assert digest_persisted_preview_response.status_code == 200, digest_persisted_preview_response.text
         persisted_digest_preview = digest_persisted_preview_response.json()["preview"]
         assert persisted_digest_preview["selection_mode"] == "digest_candidates"
@@ -1574,7 +1622,7 @@ def main() -> int:
         assert cleaned_item_count == 3
         assert digest_history_count == 1
         assert delivery_log_count == 1
-        assert settings_count == 1
+        assert settings_count == 2
 
         print("API checks passed.")
         return 0

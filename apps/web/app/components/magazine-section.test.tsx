@@ -22,10 +22,40 @@ function renderMagazineSection(overrides: Partial<Parameters<typeof MagazineSect
       formatDeliveryStatus={(status) => `status:${status}`}
       formatTimestamp={(value, fallback) => value ?? fallback}
       history={[]}
+      magazineSettings={{
+        article_limit: 25,
+        day_of_week: 1,
+        frequency: "disabled",
+        issues: ["Magazyn jest wyłączony. Wybierz tryb ręczny, dzienny albo tygodniowy."],
+        kindle_delivery_enabled: false,
+        output_format: "epub",
+        ready: false,
+        source_scope: "digest_candidates",
+        time_of_day: "07:00",
+        timezone: "Europe/Warsaw",
+        updated_at: null,
+        updated_by: null,
+      }}
+      magazineSettingsBusy={false}
+      magazineSettingsDraft={{
+        article_limit: "25",
+        day_of_week: "1",
+        frequency: "disabled",
+        kindle_delivery_enabled: false,
+        output_format: "epub",
+        source_scope: "digest_candidates",
+        time_of_day: "07:00",
+        timezone: "Europe/Warsaw",
+      }}
+      magazineSettingsMessage={null}
+      magazineSettingsPreflight={null}
       message={null}
       onBackToReader={() => {}}
       onBuild={() => {}}
       onDeliveryPreflight={() => {}}
+      onMagazineSettingsDraftChange={() => {}}
+      onMagazineSettingsPreflight={() => {}}
+      onMagazineSettingsSave={() => {}}
       onPreview={() => {}}
       onSelectIssue={() => {}}
       onSendDigestDryRun={() => {}}
@@ -217,5 +247,52 @@ describe("MagazineSection", () => {
     expect(markup).toContain("Sprawdź zawartość");
     expect(markup).toContain("Zbuduj następne wydanie");
     expect(markup).toContain("Następny magazyn");
+    expect(markup).toContain("Przykład struktury");
+    expect(markup).toContain("Wydanie 1/2026");
+    expect(markup).toContain("Zbuduj pierwsze wydanie");
+    expect(markup).toContain("Gotowe miejsce na Wydanie 1/2026");
+  });
+
+  it("shows magazine schedule settings as a first-class magazine surface", () => {
+    const markup = renderMagazineSection({
+      history: issueHistory,
+      magazineSettings: {
+        article_limit: 12,
+        day_of_week: 5,
+        frequency: "weekly",
+        issues: [],
+        kindle_delivery_enabled: true,
+        output_format: "epub",
+        ready: true,
+        source_scope: "digest_candidates",
+        time_of_day: "08:30",
+        timezone: "Europe/Warsaw",
+        updated_at: "2026-05-10T08:00:00Z",
+        updated_by: "user",
+      },
+      magazineSettingsDraft: {
+        article_limit: "12",
+        day_of_week: "5",
+        frequency: "weekly",
+        kindle_delivery_enabled: true,
+        output_format: "epub",
+        source_scope: "digest_candidates",
+        time_of_day: "08:30",
+        timezone: "Europe/Warsaw",
+      },
+      magazineSettingsPreflight: {
+        can_generate: true,
+        checks: [{ message: "Harmonogram magazynu jest ustawiony: weekly.", name: "frequency", status: "passed" }],
+        status: "ready",
+      },
+    });
+
+    expect(markup).toContain("Harmonogram wydań");
+    expect(markup).toContain("Zapisz harmonogram");
+    expect(markup).toContain("Sprawdź harmonogram");
+    expect(markup).toContain("Europe/Warsaw");
+    expect(markup).toContain("EPUB Kindle-ready");
+    expect(markup).toContain("Preflight harmonogramu: status:ready");
+    expect(markup).toContain("można generować");
   });
 });

@@ -87,11 +87,16 @@ These requirement classes already have a home:
 | local runtime setup | `docs/local-development.md` |
 | code ownership and cleanup boundaries | `docs/code-ownership.md` plus `docs/code-ownership.json` |
 | backend and frontend API semantics | `docs/api-contract.md` |
-| orchestration semantics | `docs/orchestration-contract.md` |
-| storage semantics | `docs/storage-schema.md` |
+| orchestration semantics | `docs/orchestration-contract.md` and `npm run check:orchestration` |
+| storage semantics | `docs/storage-schema.md`, `npm run check:storage`, and `npm run check:archive` |
 | architecture boundaries | `docs/architecture.md` now, later mirrored or promoted into Confluence |
 | execution backlog and delivery status | Linear project `rssmaster` |
 | architectural decisions | `docs/adrs/` |
+| agent execution workflow | `CONTRIBUTING.md`, `docs/agent-workflow.md`, `docs/quality-gates.md`, `docs/rssmaster-domain-rules.md`, and `AGENTS.md` |
+| CI/CD and deployment policy | `.github/workflows/ci.yml` and `docs/ci-cd.md` |
+| observability and error monitoring | `docs/observability.md` |
+| magazine issue model | `docs/magazine-model.md` and `docs/runbooks/magazine-local-smoke.md` |
+| edition artifact storage | `docs/edition-storage.md` |
 
 ## Repository entry points
 
@@ -99,6 +104,14 @@ These requirement classes already have a home:
 - `docs/architecture.md` is the current local architecture overview mirror
 - `docs/code-ownership.md` is the current owner map for cleanup work and the source for `npm run check:ownership`
 - `docs/ui-system.md` defines the current hybrid RSSmaster + shadcn/ui migration policy
+- `docs/agent-workflow.md` defines the Linear-to-code workflow for agents
+- `docs/quality-gates.md` defines the verification gate to run for each change class
+- `docs/rssmaster-domain-rules.md` defines local-first product invariants and backlog triage rules
+- `docs/magazine-model.md` defines the digest-backed magazine issue model and future durable table boundary
+- `docs/runbooks/magazine-local-smoke.md` defines the magazine local smoke path and evidence expectations
+- `docs/edition-storage.md` defines the local artifact archive boundary and future object-storage seam
+- `docs/ci-cd.md` defines the GitHub Actions quality gate and explains why deployment is not configured yet
+- `docs/observability.md` defines optional Sentry configuration for API and web error monitoring
 - `docs/orchestration-contract.md` defines reusable pipeline semantics
 - `docs/adrs/README.md` defines where architecture decisions should be recorded
 - `docs/runbooks/live-delivery-signoff.md` defines the manual SMTP/Kindle acceptance path that automated release evidence intentionally does not perform

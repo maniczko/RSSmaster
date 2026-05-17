@@ -27,6 +27,8 @@ class DigestSelectionItemModel(BaseModel):
     content_html: str | None = None
     word_count: int | None = None
     content_hash: str | None
+    magazine_score: float | None = None
+    ranking_reason: str | None = None
 
 
 class DigestArticleModel(BaseModel):
@@ -44,6 +46,8 @@ class DigestArticleModel(BaseModel):
     digest_candidate: bool
     content_html: str
     word_count: int
+    magazine_score: float | None = None
+    ranking_reason: str | None = None
 
 
 class DigestCategorySummaryModel(BaseModel):
@@ -58,6 +62,9 @@ class DigestCategoryGroupModel(BaseModel):
 
 
 class DigestPreviewStatsModel(BaseModel):
+    candidate_count: int | None = None
+    deduplicated_count: int | None = None
+    source_count: int | None = None
     article_count: int
     category_count: int
     unread_count: int

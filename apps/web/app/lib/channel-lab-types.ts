@@ -120,6 +120,9 @@ export type DigestPreview = {
     digest_candidate_count: number;
     word_count: number;
     estimated_read_minutes: number;
+    candidate_count?: number | null;
+    deduplicated_count?: number | null;
+    source_count?: number | null;
   };
   category_summary: Array<{
     category: string;
@@ -141,6 +144,57 @@ export type DigestSelectionSnapshotItem = {
   content_html?: string | null;
   word_count?: number | null;
   content_hash: string | null;
+  magazine_score?: number | null;
+  ranking_reason?: string | null;
+};
+
+export type MagazineSettings = {
+  frequency: "disabled" | "manual" | "daily" | "weekly";
+  timezone: string;
+  time_of_day: string;
+  day_of_week: number | null;
+  article_limit: number;
+  source_scope: "digest_candidates" | "favorites" | "all_active";
+  output_format: "epub";
+  kindle_delivery_enabled: boolean;
+  ready: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+  issues: string[];
+};
+
+export type MagazineSettingsDraft = {
+  frequency: MagazineSettings["frequency"];
+  timezone: string;
+  time_of_day: string;
+  day_of_week: string;
+  article_limit: string;
+  source_scope: MagazineSettings["source_scope"];
+  output_format: MagazineSettings["output_format"];
+  kindle_delivery_enabled: boolean;
+};
+
+export type MagazineSettingsPreflight = {
+  status: "ready" | "needs_configuration" | "connection_failed";
+  can_generate: boolean;
+  checks: Array<{
+    name: string;
+    status: "passed" | "failed" | "warning" | "skipped";
+    message: string;
+  }>;
+};
+
+export type ArticleAIInsight = {
+  item_id: string;
+  generated_at: string;
+  model: string;
+  source: "openai";
+  summary: string;
+  key_points: string[];
+  tags: string[];
+  reading_time_hint: string;
+  relevance_score: number;
+  digest_recommendation: "include" | "maybe" | "skip";
 };
 
 export type DigestHistory = {
@@ -597,11 +651,23 @@ export type DeliverySettingsPayload = {
   settings: DeliverySettings;
 };
 
+export type MagazineSettingsPayload = {
+  settings: MagazineSettings;
+};
+
 export type AISettingsPayload = {
   settings: AISettings;
 };
 
 export type AISettingsPreflightPayload = AISettingsPreflight;
+
+export type MagazineSettingsPreflightPayload = {
+  preflight: MagazineSettingsPreflight;
+};
+
+export type ArticleAIInsightPayload = {
+  insight: ArticleAIInsight;
+};
 
 export type DeliverySettingsPreflightPayload = {
   preflight: {
@@ -780,6 +846,11 @@ export type FeedbackState =
 
 export type ArticleKindleFeedbackState = FeedbackState & {
   itemId: string;
+};
+
+export type ArticleAIFeedbackState = FeedbackState & {
+  itemId: string;
+  insight?: ArticleAIInsight | null;
 };
 
 export type ItemSortMode = ReaderItemSortMode;
