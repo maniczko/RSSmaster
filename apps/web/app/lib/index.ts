@@ -6,6 +6,7 @@ export * from "@/app/lib/editorial-support";
 export * from "@/app/lib/feed-browser-tree";
 export * from "@/app/lib/feed-icon";
 export * from "@/app/lib/feed-stream-copy";
+export * from "@/app/lib/magazine-settings";
 export * from "@/app/lib/reader-cleanup";
 export * from "@/app/lib/reader-controller";
 export * from "@/app/lib/reader-decision";

@@ -79,8 +79,9 @@ Stores mutable runtime configuration that belongs in app state rather than stati
 
 - Needed for: user-facing preferences, safe runtime configuration snapshots
 - Important fields: `key`, `value_json`
-- Known keys: `delivery_profile`, `ai_profile`
+- Known keys: `delivery_profile`, `ai_profile`, `magazine_profile`
 - `ai_profile` stores OpenAI readiness fields (`enabled`, `provider`, `chat_model`, `embedding_model`) and may store a local `openai_api_key`; API responses must redact that secret and `.env` remains the fallback source.
+- `magazine_profile` stores the V1 magazine schedule and generation settings (`frequency`, `timezone`, `time_of_day`, `day_of_week`, `article_limit`, `source_scope`, `output_format`, `kindle_delivery_enabled`) while issue history remains projected from `digest_history`.
 - Key guarantee: settings stay extensible without premature table sprawl
 
 ### `job_runs`
@@ -100,6 +101,8 @@ Stores digest build history and the snapshot of selected content.
 - Important fields: `selection_snapshot_json`, `article_count`, `artifact_path`, `artifact_sha256`
 - Key guarantee: a generated digest can be traced back to the exact article selection used
 - Account boundary: `artifact_path` points at the owning workspace's `digests/` folder, not the legacy shared `data/digests/` folder
+- Artifact owner: the local `EditionStorage` adapter writes generated EPUB files and returns path, SHA-256, and byte size for persistence in SQLite.
+- Archive check: `npm run check:archive` verifies that a generated EPUB is persisted, has a matching SHA-256, is visible through digest history, and is readable by the delivery artifact inspector.
 
 ### `delivery_logs`
 
@@ -122,7 +125,11 @@ Stores send attempts and outcomes for Kindle or other delivery targets.
 - The migration registry lives in `apps/api/app/db/initializer.py`.
 - Schema version is tracked in both `schema_migrations` and SQLite `PRAGMA user_version`.
 - Version 1 is the baseline migration and replays `apps/api/app/db/schema.sql` idempotently with `CREATE TABLE IF NOT EXISTS`.
+- Version 2 is the current schema version and preserves compatibility for `reader_feedback` on older local databases.
 - `ensure_database()` creates the migration table first, applies pending migrations, records applied versions, sets `user_version`, validates required tables, and returns `migration_status` for startup diagnostics.
+- `npm run check:storage` initializes an isolated temporary SQLite database, validates migration readiness, required tables, critical indexes, foreign keys, and digest/delivery storage columns, then writes `output/storage-schema-check.json`.
+- `npm run check:archive` initializes isolated storage, generates a fixture digest artifact, validates archive metadata, and writes `output/digest-archive-check.json`.
+- The current magazine model is a projection over `digest_history`; see `docs/magazine-model.md` before adding dedicated magazine tables.
 - `scripts/init_db.py` is the entry point for initializing the local database.
 - Later schema changes should add a new versioned migration instead of rewriting the V1 baseline in place.
 - If startup reports missing required tables or `migration_status.status` is not `ready`, back up the affected `data/*.db` or account workspace DB before retrying initialization; then inspect `schema_migrations`, `PRAGMA user_version`, and `/diagnostics/startup` to decide whether to rerun initialization or restore from backup.

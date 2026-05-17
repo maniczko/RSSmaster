@@ -329,6 +329,7 @@ async function collectMagazineLayoutHealth(page) {
       "[data-testid='magazine-issue-groups']",
       "[data-testid='magazine-issue-card']",
       "[data-testid='magazine-issue-article']",
+      "[data-testid='magazine-settings-panel']",
       ".magazine-secondary-grid",
       "[data-testid='magazine-next-issue-panel']",
       ".magazine-delivery-status",
@@ -338,6 +339,7 @@ async function collectMagazineLayoutHealth(page) {
       "[data-testid='magazine-active-issue']",
       "[data-testid='magazine-reading-preview']",
       "[data-testid='magazine-issue-groups']",
+      "[data-testid='magazine-settings-panel']",
       "[data-testid='magazine-next-issue-panel']",
       ".magazine-delivery-status",
       ".magazine-feedback-slot",
@@ -611,6 +613,7 @@ async function waitForSeededMagazineIssue(page, runtime, digestId) {
   await page.getByRole("heading", { name: /Magazine Smoke Candidate One/i }).waitFor({ state: "visible", timeout: 30000 });
   await page.getByText(/Czytaj wydanie przed/i).waitFor({ state: "visible", timeout: 30000 });
   await page.getByTestId("magazine-issue-article").first().waitFor({ state: "visible", timeout: 30000 });
+  await page.getByTestId("magazine-settings-panel").waitFor({ state: "visible", timeout: 30000 });
 }
 
 async function runMagazineViewportCheck(browser, viewport, runtime, digestId) {
@@ -732,6 +735,18 @@ function buildArtifact(results) {
         status: results.issuePreflightVisible ? "passed" : "failed",
       },
       {
+        id: "magazines-settings-panel",
+        label: "Magazine schedule settings panel is visible",
+        route: MAGAZINES_ROUTE,
+        status: results.settingsPanelVisible ? "passed" : "failed",
+      },
+      {
+        id: "magazines-settings-preflight",
+        label: "Magazine schedule preflight can run from the magazine route",
+        route: MAGAZINES_ROUTE,
+        status: results.settingsPreflightVisible ? "passed" : "failed",
+      },
+      {
         id: "magazines-no-overflow",
         label: "Seeded magazine issue has no horizontal overflow in every target viewport",
         route: MAGAZINES_ROUTE,
@@ -783,6 +798,8 @@ function buildArtifact(results) {
           viewport: check.viewport,
         })),
       reading_preview_visible: results.readingPreviewVisible ?? false,
+      settings_panel_visible: results.settingsPanelVisible ?? false,
+      settings_preflight_visible: results.settingsPreflightVisible ?? false,
       premium_reader_selectors: PREMIUM_READER_SELECTORS,
       premium_reader_selector_probe: results.metrics?.premiumReaderSelectorProbe ?? [],
       premium_reader_probe_note:
@@ -926,12 +943,20 @@ async function main() {
     results.issueDirectLinkVisible = true;
     await page.getByRole("button", { name: /Preflight tego wydania/i }).first().click();
     await page.getByText(/Preflight wydania:/i).waitFor({ state: "visible", timeout: 30000 });
+    await page.getByTestId("magazine-settings-panel").waitFor({ state: "visible", timeout: 30000 });
+    await page.getByRole("button", { name: /Sprawdź harmonogram/i }).first().click();
+    await page.getByTestId("magazine-settings-panel").getByText(/Preflight harmonogramu:/i).waitFor({
+      state: "visible",
+      timeout: 30000,
+    });
     results.headingVisible = true;
     results.issueListVisible = true;
     results.activeIssueVisible = true;
     results.readingPreviewVisible = true;
     results.issueGroupsVisible = true;
     results.issuePreflightVisible = true;
+    results.settingsPanelVisible = true;
+    results.settingsPreflightVisible = true;
     results.finalUrl = page.url();
     results.metrics = await collectRouteMetrics(page);
     await issueFlowContext.close();
@@ -964,6 +989,8 @@ async function main() {
     assert(results.issueUrlVisible, "Route /magazines did not push the opened issue id into the URL.");
     assert(results.issueDirectLinkVisible, "Route /magazines did not restore the seeded issue from a direct issue link.");
     assert(results.issuePreflightVisible, "Route /magazines did not run preflight for the visible issue.");
+    assert(results.settingsPanelVisible, "Route /magazines did not render magazine schedule settings.");
+    assert(results.settingsPreflightVisible, "Route /magazines did not run magazine schedule preflight.");
     assert(results.issueFirstCopy, "Route /magazines still exposes digest/candidate queue copy as primary UX.");
     assert(
       failedViewportChecks.length === 0,

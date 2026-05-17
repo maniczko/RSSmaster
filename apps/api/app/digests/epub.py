@@ -50,6 +50,11 @@ p {
 .toc-list li {
   margin: 0 0 0.6em;
 }
+.toc-list ol {
+  list-style: decimal;
+  margin: 0.4em 0 0 1.4em;
+  padding: 0;
+}
 a {
   color: #111111;
   text-decoration: none;
@@ -85,13 +90,15 @@ def build_epub_bytes(
 
     for group_index, group in enumerate(groups, start=1):
         category = str(group["category"])
+        doc_id = f"cat-{group_index}"
         documents.append(
             (
-                f"cat-{group_index}",
+                doc_id,
                 category,
                 build_category_document(
                     title=title,
                     category=category,
+                    doc_id=doc_id,
                     items=list(group["items"]),
                 ),
             )
@@ -104,14 +111,35 @@ def build_epub_bytes(
     spine_items = []
     nav_points = []
 
-    for play_order, (doc_id, label, _) in enumerate(documents, start=1):
+    play_order = 0
+    for doc_id, label, _ in documents:
+        play_order += 1
+        current_play_order = play_order
         manifest_items.append(f'<item id="{doc_id}" href="{doc_id}.xhtml" media-type="application/xhtml+xml"/>')
         spine_items.append(f'<itemref idref="{doc_id}"/>')
+        child_nav_points = ""
+        if doc_id.startswith("cat-"):
+            group_index = int(doc_id.removeprefix("cat-"))
+            group = groups[group_index - 1]
+            child_nav_parts = []
+            for article_index, item in enumerate(list(group["items"]), start=1):
+                play_order += 1
+                article_title = str(item.get("title") or f"Article {article_index}")
+                child_nav_parts.append(
+                    f"""
+                    <navPoint id="{doc_id}-{article_anchor_id(article_index)}" playOrder="{play_order}">
+                      <navLabel><text>{xml_escape(article_title)}</text></navLabel>
+                      <content src="{doc_id}.xhtml#{article_anchor_id(article_index)}"/>
+                    </navPoint>
+                    """.strip()
+                )
+            child_nav_points = "\n".join(child_nav_parts)
         nav_points.append(
             f"""
-            <navPoint id="{doc_id}" playOrder="{play_order}">
+            <navPoint id="{doc_id}" playOrder="{current_play_order}">
               <navLabel><text>{xml_escape(label)}</text></navLabel>
               <content src="{doc_id}.xhtml"/>
+              {child_nav_points}
             </navPoint>
             """.strip()
         )
@@ -140,7 +168,7 @@ def build_epub_bytes(
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
     <meta name="dtb:uid" content="urn:rssmaster:{xml_escape(digest_id)}"/>
-    <meta name="dtb:depth" content="1"/>
+    <meta name="dtb:depth" content="2"/>
     <meta name="dtb:totalPageCount" content="0"/>
     <meta name="dtb:maxPageNumber" content="0"/>
   </head>
@@ -176,7 +204,7 @@ def build_epub_bytes(
 def build_intro_document(*, title: str, generated_at: str, groups: list[dict[str, object]]) -> str:
     total_articles = sum(int(group["article_count"]) for group in groups)
     toc_items = "".join(
-        f'<li><a href="cat-{index}.xhtml">{escape(str(group["category"]))} ({int(group["article_count"])})</a></li>'
+        build_intro_toc_group(index=index, group=group)
         for index, group in enumerate(groups, start=1)
     )
     generated_label = format_timestamp(generated_at)
@@ -193,12 +221,22 @@ def build_intro_document(*, title: str, generated_at: str, groups: list[dict[str
     )
 
 
-def build_category_document(*, title: str, category: str, items: list[dict[str, object]]) -> str:
-    article_markup = "".join(build_article_markup(item) for item in items)
+def build_intro_toc_group(*, index: int, group: dict[str, object]) -> str:
+    items = list(group["items"])
+    article_items = "".join(
+        f'<li><a href="cat-{index}.xhtml#{article_anchor_id(article_index)}">{escape(str(item.get("title") or "Untitled article"))}</a></li>'
+        for article_index, item in enumerate(items, start=1)
+    )
+    nested = f"<ol>{article_items}</ol>" if article_items else ""
+    return f'<li><a href="cat-{index}.xhtml">{escape(str(group["category"]))} ({int(group["article_count"])})</a>{nested}</li>'
+
+
+def build_category_document(*, title: str, category: str, doc_id: str, items: list[dict[str, object]]) -> str:
+    article_markup = "".join(build_article_markup(item, article_index=index) for index, item in enumerate(items, start=1))
     return wrap_document(
         title=f"{title} - {category}",
         body=f"""
-        <section class="book">
+        <section class="book" id="{escape(doc_id)}">
           <h1>{escape(category)}</h1>
           <p class="meta">{len(items)} article(s)</p>
           {article_markup}
@@ -207,7 +245,7 @@ def build_category_document(*, title: str, category: str, items: list[dict[str, 
     )
 
 
-def build_article_markup(item: dict[str, object]) -> str:
+def build_article_markup(item: dict[str, object], *, article_index: int) -> str:
     title = escape(str(item["title"]))
     author = escape(str(item["author"])) if item.get("author") else None
     channel = escape(str(item["channel_title"]))
@@ -222,7 +260,7 @@ def build_article_markup(item: dict[str, object]) -> str:
     meta_line = " | ".join(meta_parts)
     excerpt_markup = f"<p><strong>Summary:</strong> {excerpt}</p>" if excerpt else ""
     return f"""
-    <article class="article">
+    <article class="article" id="{article_anchor_id(article_index)}">
       <h2>{title}</h2>
       <p class="meta">{meta_line}</p>
       {excerpt_markup}
@@ -230,6 +268,10 @@ def build_article_markup(item: dict[str, object]) -> str:
       <p class="source">Source: <a href="{escape(str(item['source_url']))}">{escape(str(item['source_url']))}</a></p>
     </article>
     """
+
+
+def article_anchor_id(index: int) -> str:
+    return f"article-{index}"
 
 
 def wrap_document(*, title: str, body: str) -> str:

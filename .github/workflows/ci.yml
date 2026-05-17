@@ -1,0 +1,90 @@
+name: RSSmaster CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: rssmaster-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Build, unit, and API contract
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    env:
+      CI: "true"
+      PYTHONUTF8: "1"
+      RSSMASTER_PLAYWRIGHT_MODULE: ${{ github.workspace }}\output\playwright-runtime\node_modules\playwright
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: python scripts/bootstrap_python.py
+
+      - name: Install Playwright runtime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/playwright-runtime | Out-Null
+          npm --prefix output/playwright-runtime install playwright@^1.59.1
+          npm --prefix output/playwright-runtime exec playwright install chromium
+
+      - name: Add Python venv to PATH
+        shell: pwsh
+        run: |
+          "$PWD\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Web unit tests
+        run: npm run test:unit:web
+
+      - name: API unit tests
+        run: python scripts/test_api_unit.py
+
+      - name: API contract smoke
+        run: python scripts/check_api.py
+
+      - name: Storage schema smoke
+        run: npm run check:storage
+
+      - name: Digest archive smoke
+        run: npm run check:archive
+
+      - name: Job orchestration smoke
+        run: npm run check:orchestration
+
+      - name: Runtime, artifact, and ownership checks
+        run: |
+          npm run test:unit:runtime
+          npm run test:unit:artifacts
+          npm run test:unit:ownership
+
+      - name: Browser canary for magazine UI
+        run: npm run check:magazines

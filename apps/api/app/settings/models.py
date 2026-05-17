@@ -5,6 +5,9 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 AIProvider = Literal["openai"]
+MagazineScheduleFrequency = Literal["disabled", "manual", "daily", "weekly"]
+MagazineSourceScope = Literal["digest_candidates", "favorites", "all_active"]
+MagazineOutputFormat = Literal["epub"]
 PreflightCheckStatus = Literal["passed", "failed", "warning", "skipped"]
 SettingsPreflightStatus = Literal["ready", "needs_configuration", "connection_failed"]
 
@@ -87,6 +90,88 @@ class DeliverySettingsPreflightRequest(BaseModel):
 
 class DeliverySettingsPreflightResponse(BaseModel):
     preflight: DeliverySettingsPreflightModel
+
+
+class MagazineSettingsModel(BaseModel):
+    frequency: MagazineScheduleFrequency
+    timezone: str
+    time_of_day: str
+    day_of_week: int | None
+    article_limit: int
+    source_scope: MagazineSourceScope
+    output_format: MagazineOutputFormat
+    kindle_delivery_enabled: bool
+    ready: bool
+    updated_at: str | None
+    updated_by: str | None
+    issues: list[str] = Field(default_factory=list)
+
+
+class MagazineSettingsResponse(BaseModel):
+    settings: MagazineSettingsModel
+
+
+class UpdateMagazineSettingsRequest(BaseModel):
+    frequency: MagazineScheduleFrequency | None = None
+    timezone: str | None = None
+    time_of_day: str | None = None
+    day_of_week: int | None = None
+    article_limit: int | None = None
+    source_scope: MagazineSourceScope | None = None
+    output_format: MagazineOutputFormat | None = None
+    kindle_delivery_enabled: bool | None = None
+    updated_by: str | None = "user"
+
+    @field_validator("timezone", "time_of_day", "updated_by", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("time_of_day")
+    @classmethod
+    def validate_time_of_day(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parts = value.split(":")
+        if len(parts) != 2 or not all(part.isdigit() for part in parts):
+            raise ValueError("Magazine time_of_day must use HH:MM format.")
+        hour, minute = (int(part) for part in parts)
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError("Magazine time_of_day must be a valid 24-hour time.")
+        return f"{hour:02d}:{minute:02d}"
+
+    @field_validator("day_of_week")
+    @classmethod
+    def validate_day_of_week(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if value < 1 or value > 7:
+            raise ValueError("Magazine day_of_week must be between 1 and 7.")
+        return value
+
+    @field_validator("article_limit")
+    @classmethod
+    def validate_article_limit(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if value < 1 or value > 200:
+            raise ValueError("Magazine article_limit must be between 1 and 200.")
+        return value
+
+
+class MagazineSettingsPreflightModel(BaseModel):
+    status: SettingsPreflightStatus
+    can_generate: bool
+    checks: list[PreflightCheckModel] = Field(default_factory=list)
+
+
+class MagazineSettingsPreflightResponse(BaseModel):
+    preflight: MagazineSettingsPreflightModel
 
 
 class AISettingsModel(BaseModel):

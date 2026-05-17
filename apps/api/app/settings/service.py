@@ -7,16 +7,26 @@ import smtplib
 import ssl
 from typing import Any, Literal
 from urllib.parse import quote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from app.config import Settings as AppSettings
 
-from .models import UpdateAISettingsRequest, UpdateDeliverySettingsRequest
+from .models import (
+    MagazineOutputFormat,
+    MagazineScheduleFrequency,
+    MagazineSourceScope,
+    UpdateAISettingsRequest,
+    UpdateDeliverySettingsRequest,
+    UpdateMagazineSettingsRequest,
+)
 from .repository import (
     AI_SETTINGS_DESCRIPTION,
     AI_SETTINGS_KEY,
     DELIVERY_SETTINGS_DESCRIPTION,
     DELIVERY_SETTINGS_KEY,
+    MAGAZINE_SETTINGS_DESCRIPTION,
+    MAGAZINE_SETTINGS_KEY,
     SettingsRepository,
 )
 
@@ -66,6 +76,20 @@ class ResolvedAISettings:
             and bool(self.embedding_model)
             and bool(self.openai_api_key)
         )
+
+
+@dataclass(slots=True, frozen=True)
+class ResolvedMagazineSettings:
+    frequency: MagazineScheduleFrequency
+    timezone: str
+    time_of_day: str
+    day_of_week: int | None
+    article_limit: int
+    source_scope: MagazineSourceScope
+    output_format: MagazineOutputFormat
+    kindle_delivery_enabled: bool
+    updated_at: str | None
+    updated_by: str | None
 
 
 class SettingsService:
@@ -303,6 +327,188 @@ class SettingsService:
             },
             True,
         )
+
+    def get_magazine_settings(self) -> dict[str, Any]:
+        resolved = self.get_resolved_magazine_settings()
+        preflight = self.preflight_magazine_settings()
+
+        return {
+            "frequency": resolved.frequency,
+            "timezone": resolved.timezone,
+            "time_of_day": resolved.time_of_day,
+            "day_of_week": resolved.day_of_week,
+            "article_limit": resolved.article_limit,
+            "source_scope": resolved.source_scope,
+            "output_format": resolved.output_format,
+            "kindle_delivery_enabled": resolved.kindle_delivery_enabled,
+            "ready": preflight["status"] == "ready",
+            "updated_at": resolved.updated_at,
+            "updated_by": resolved.updated_by,
+            "issues": [
+                check["message"]
+                for check in preflight["checks"]
+                if check["status"] in {"failed", "warning"}
+            ],
+        }
+
+    def update_magazine_settings(self, payload: UpdateMagazineSettingsRequest) -> dict[str, Any]:
+        current_record = self.repository.get_setting(MAGAZINE_SETTINGS_KEY)
+        current_value = dict(current_record["value"]) if current_record else {}
+        next_value = dict(current_value)
+
+        for field_name in (
+            "frequency",
+            "timezone",
+            "time_of_day",
+            "day_of_week",
+            "article_limit",
+            "source_scope",
+            "output_format",
+            "kindle_delivery_enabled",
+        ):
+            if field_name not in payload.model_fields_set:
+                continue
+            value = getattr(payload, field_name)
+            if value is None:
+                next_value.pop(field_name, None)
+            else:
+                next_value[field_name] = value
+
+        if next_value:
+            self.repository.upsert_setting(
+                key=MAGAZINE_SETTINGS_KEY,
+                value=next_value,
+                description=MAGAZINE_SETTINGS_DESCRIPTION,
+                updated_by=payload.updated_by,
+            )
+        else:
+            self.repository.delete_setting(MAGAZINE_SETTINGS_KEY)
+
+        return self.get_magazine_settings()
+
+    def get_resolved_magazine_settings(self) -> ResolvedMagazineSettings:
+        record = self.repository.get_setting(MAGAZINE_SETTINGS_KEY)
+        stored = dict(record["value"]) if record else {}
+
+        return ResolvedMagazineSettings(
+            frequency=resolve_magazine_frequency(stored.get("frequency")),
+            timezone=normalize_text(stored.get("timezone")) or self.settings.timezone,
+            time_of_day=resolve_time_of_day(stored.get("time_of_day"), fallback="07:00"),
+            day_of_week=resolve_day_of_week(stored.get("day_of_week"), fallback=1),
+            article_limit=resolve_article_limit(stored.get("article_limit"), fallback=self.settings.digest_max_items),
+            source_scope=resolve_magazine_source_scope(stored.get("source_scope")),
+            output_format=resolve_magazine_output_format(stored.get("output_format")),
+            kindle_delivery_enabled=resolve_bool(stored.get("kindle_delivery_enabled"), False),
+            updated_at=record["updated_at"] if record else None,
+            updated_by=record["updated_by"] if record else None,
+        )
+
+    def preflight_magazine_settings(self) -> dict[str, Any]:
+        resolved = self.get_resolved_magazine_settings()
+        checks = self._validate_magazine_configuration(resolved)
+        failed_names = {
+            check["name"]
+            for check in checks
+            if check["status"] == "failed"
+        }
+
+        return {
+            "status": "needs_configuration" if failed_names else "ready",
+            "can_generate": not failed_names,
+            "checks": checks,
+        }
+
+    def _validate_magazine_configuration(self, resolved: ResolvedMagazineSettings) -> list[dict[str, str]]:
+        checks = [
+            build_check(
+                name="frequency",
+                passed=resolved.frequency in {"manual", "daily", "weekly"},
+                success_message=f"Harmonogram magazynu jest ustawiony: {resolved.frequency}.",
+                failure_message="Magazyn jest wyłączony. Wybierz tryb ręczny, dzienny albo tygodniowy.",
+            ),
+            build_check(
+                name="timezone",
+                passed=is_valid_timezone(resolved.timezone),
+                success_message=f"Strefa czasowa magazynu jest poprawna: {resolved.timezone}.",
+                failure_message=f"Strefa czasowa magazynu jest niepoprawna: {resolved.timezone}.",
+            ),
+            build_check(
+                name="article_limit",
+                passed=1 <= resolved.article_limit <= 200,
+                success_message=f"Limit artykułów jest ustawiony: {resolved.article_limit}.",
+                failure_message="Limit artykułów musi być między 1 a 200.",
+            ),
+            build_check(
+                name="source_scope",
+                passed=resolved.source_scope in {"digest_candidates", "favorites", "all_active"},
+                success_message=f"Zakres źródeł magazynu jest ustawiony: {resolved.source_scope}.",
+                failure_message="Zakres źródeł magazynu jest niepoprawny.",
+            ),
+            build_check(
+                name="output_format",
+                passed=resolved.output_format == "epub",
+                success_message="Format wyjściowy magazynu to EPUB.",
+                failure_message="Magazyn obsługuje teraz tylko format EPUB.",
+            ),
+        ]
+
+        if resolved.frequency in {"daily", "weekly"}:
+            checks.append(
+                build_check(
+                    name="time_of_day",
+                    passed=is_valid_time_of_day(resolved.time_of_day),
+                    success_message=f"Godzina generowania jest ustawiona: {resolved.time_of_day}.",
+                    failure_message="Godzina generowania musi mieć format HH:MM.",
+                )
+            )
+        else:
+            checks.append(
+                {
+                    "name": "time_of_day",
+                    "status": "skipped",
+                    "message": "Godzina generowania jest używana dopiero dla trybu dziennego lub tygodniowego.",
+                }
+            )
+
+        if resolved.frequency == "weekly":
+            checks.append(
+                build_check(
+                    name="day_of_week",
+                    passed=resolved.day_of_week is not None and 1 <= resolved.day_of_week <= 7,
+                    success_message=f"Dzień tygodnia jest ustawiony: {resolved.day_of_week}.",
+                    failure_message="Dla tygodniowego magazynu wybierz dzień tygodnia od 1 do 7.",
+                )
+            )
+        else:
+            checks.append(
+                {
+                    "name": "day_of_week",
+                    "status": "skipped",
+                    "message": "Dzień tygodnia jest używany dopiero dla trybu tygodniowego.",
+                }
+            )
+
+        if resolved.kindle_delivery_enabled:
+            delivery = self.get_resolved_delivery_settings()
+            checks.append(
+                {
+                    "name": "kindle_delivery",
+                    "status": "passed" if delivery.smtp_ready else "warning",
+                    "message": "Automatyczna wysyłka Kindle jest gotowa."
+                    if delivery.smtp_ready
+                    else "Automatyczna wysyłka Kindle wymaga kompletnej konfiguracji SMTP i adresu Kindle.",
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "name": "kindle_delivery",
+                    "status": "skipped",
+                    "message": "Automatyczna wysyłka Kindle jest wyłączona dla harmonogramu magazynu.",
+                }
+            )
+
+        return checks
 
     def get_delivery_settings(self) -> dict[str, Any]:
         resolved = self.get_resolved_delivery_settings()
@@ -592,6 +798,70 @@ def resolve_ai_provider(value: object, fallback: str) -> Literal["openai"]:
     if normalized.lower() != "openai":
         return "openai"
     return "openai"
+
+
+def resolve_magazine_frequency(value: object) -> MagazineScheduleFrequency:
+    normalized = (normalize_text(value) or "disabled").lower()
+    if normalized in {"manual", "daily", "weekly"}:
+        return normalized  # type: ignore[return-value]
+    return "disabled"
+
+
+def resolve_magazine_source_scope(value: object) -> MagazineSourceScope:
+    normalized = (normalize_text(value) or "digest_candidates").lower()
+    if normalized in {"digest_candidates", "favorites", "all_active"}:
+        return normalized  # type: ignore[return-value]
+    return "digest_candidates"
+
+
+def resolve_magazine_output_format(value: object) -> MagazineOutputFormat:
+    normalized = (normalize_text(value) or "epub").lower()
+    if normalized == "epub":
+        return "epub"
+    return "epub"
+
+
+def resolve_time_of_day(value: object, *, fallback: str) -> str:
+    normalized = normalize_text(value) or fallback
+    return normalized if is_valid_time_of_day(normalized) else fallback
+
+
+def resolve_day_of_week(value: object, *, fallback: int) -> int:
+    try:
+        parsed = int(value) if value is not None else fallback
+    except (TypeError, ValueError):
+        return fallback
+    if parsed < 1 or parsed > 7:
+        return fallback
+    return parsed
+
+
+def resolve_article_limit(value: object, *, fallback: int) -> int:
+    try:
+        parsed = int(value) if value is not None else fallback
+    except (TypeError, ValueError):
+        parsed = fallback
+    return min(max(parsed, 1), 200)
+
+
+def is_valid_time_of_day(value: str | None) -> bool:
+    if not value:
+        return False
+    parts = value.split(":")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return False
+    hour, minute = (int(part) for part in parts)
+    return 0 <= hour <= 23 and 0 <= minute <= 59
+
+
+def is_valid_timezone(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        ZoneInfo(value)
+    except ZoneInfoNotFoundError:
+        return False
+    return True
 
 
 def is_valid_email(value: str | None) -> bool:

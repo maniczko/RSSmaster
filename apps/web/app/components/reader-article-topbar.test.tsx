@@ -14,6 +14,7 @@ function renderTopbar(overrides: Partial<Parameters<typeof ReaderArticleTopbar>[
       kindleBusy={false}
       kindleReady
       onBackToFeed={() => {}}
+      onGenerateAIInsight={() => {}}
       onSendToKindle={() => {}}
       onToggleArchive={() => {}}
       onToggleDigest={() => {}}
@@ -51,6 +52,30 @@ describe("ReaderArticleTopbar", () => {
     expect(markup).toContain("Wysyłanie...");
     expect(markup).toContain("disabled=\"\"");
   });
+
+  it("renders a visible AI insight action in the article toolbar", () => {
+    const markup = renderTopbar({ aiReady: true });
+
+    expect(markup).toContain("data-testid=\"reader-generate-ai-insight\"");
+    expect(markup).toContain("Insight AI");
+    expect(markup).toContain("Wygeneruj krótkie podsumowanie");
+  });
+
+  it("keeps the AI action discoverable while AI is not configured", () => {
+    const markup = renderTopbar({ aiReady: false });
+
+    expect(markup).toContain("Skonfiguruj AI i wygeneruj insight artykułu");
+    expect(markup).toContain("Najpierw włącz AI");
+    expect(markup).not.toContain("disabled=\"\"");
+  });
+
+  it("shows an in-progress label while the AI insight is being generated", () => {
+    const markup = renderTopbar({ aiBusy: true });
+
+    expect(markup).toContain("AI pracuje...");
+    expect(markup).toContain("disabled=\"\"");
+  });
+
   it("renders the full reader feedback set when ranking feedback is available", () => {
     const markup = renderTopbar({ onReaderFeedback: () => {} });
 

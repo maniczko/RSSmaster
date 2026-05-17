@@ -6,6 +6,10 @@ This checklist is the implementation-near gate for calling the local RSSmaster r
 
 Use these three evidence levels deliberately:
 
+- `CI green`
+  - command: GitHub Actions workflow `.github/workflows/ci.yml`
+  - proves: PR safety net for build, web/API unit tests, API contract, runtime/artifact/ownership checks, and one `/magazines` Playwright canary
+  - does not prove: full local release sign-off, every browser route, live SMTP/Kindle, or spoken screen-reader behavior
 - `contract green`
   - command: `npm run check:contract`
   - proves: the in-process API contract and the core happy path covered by `scripts/check_api.py`
@@ -37,6 +41,9 @@ Use these three evidence levels deliberately:
 | --- | --- | --- | --- |
 | `npm run check:ownership` | code ownership map is present, complete, scored, and aligned with required cleanup mechanisms | runtime behavior, actual refactor completion, browser UX | console JSON output |
 | `npm run check:contract` | in-process contract smoke for feed add, sync, extraction, item mutation, digest, and delivery dry-run semantics | healthy live runtime, browser state, canonical ports | console output only |
+| `npm run check:storage` | SQLite schema readiness in an isolated temp database: migrations, required tables, critical indexes, foreign keys, and digest/delivery columns | live data correctness, migration of existing operator databases, browser behavior | `output/storage-schema-check.json` |
+| `npm run check:archive` | isolated digest archive smoke: seeded articles build one EPUB, digest history points at the artifact, SHA matches, delivery artifact inspection is ready, and the EPUB has Kindle-safe structure (`mimetype`, OPF/NCX, article-aware TOC, chapter anchors, no scripts) | live SMTP/Kindle acceptance, object storage, migration of existing archives | `output/digest-archive-check.json` |
+| `npm run check:orchestration` | isolated scheduled workflow smoke: feed sync creates items, digest build persists an EPUB, and delivery dry-run records a completed run/log | real scheduler daemon, hosted queues, live SMTP/Kindle acceptance, external retry provider behavior | `output/job-orchestration-check.json` |
 | `python scripts/check_health.py` | live health and startup diagnostics for the runtime it is pointed at, including backend schema version and migration readiness | the full product happy path | console output only |
 | `npm run check:ports` | default port truth on `3000/8000`: free, healthy RSSmaster, stale RSSmaster, blocked non-RSSmaster, refused, timeout | browser UX, business flows, fallback runtime behavior | `output/playwright/runtime-port-audit.json` |
 | `npm run check:capture` | browser smoke for the outside-app capture flow: `/capture` prefills, manifest share target, bookmarklet readiness, save success, saved-reader handoff, and note persistence; uses an isolated runtime when the current runtime is auth-guarded | canonical cold boot, every publisher-specific article shape, spoken screen-reader behavior | `output/playwright/capture-smoke.json`, `output/playwright/capture-smoke.png` |
@@ -61,6 +68,9 @@ Use these three evidence levels deliberately:
 
 ## 4. Automated verification
 
+- GitHub Actions runs the PR/main quality gate defined in `.github/workflows/ci.yml`.
+  - It is a CI safety net for install, build, unit tests, API contract, runtime unit checks, artifact schema checks, and ownership checks.
+  - It does not replace local browser-heavy smoke checks, release evidence, live SMTP/Kindle sign-off, or spoken screen-reader evidence.
 - Run `npm run build`.
 - Run `npm run check:contract`.
 - Run `python scripts/check_health.py` on the runtime you are claiming is healthy.
@@ -74,6 +84,7 @@ Use these three evidence levels deliberately:
   - verify `output/playwright/digest-smoke/digest-smoke.json.artifactSchemaValidation.valid` is `true` when comparing browser evidence between runs
 - Run `npm run check:magazines` when the change touches `/magazines`, magazine navigation, issue deep links, digest-backed issue controls, issue detail, article snapshot rendering, issue-level preflight, or the magazine empty/history surface.
   - verify `output/playwright/magazines-smoke.json.artifactSchemaValidation.valid` is `true` when comparing browser evidence between runs
+  - keep behavior aligned with `docs/magazine-model.md`
 - Run `npm run check:feed-reading` when the change touches source readability, `reader_status`, item-level re-extract, source-health reading diagnostics, feed empty states, or fallback reading behavior.
   - verify `output/playwright/feed-reading/feed-reading-smoke.json.artifactSchemaValidation.valid` is `true` when comparing browser evidence between runs
 - Run `npm run check:sources` when the change touches `/sources` UI behavior and you need isolated browser proof that does not depend on a logged-in current runtime.

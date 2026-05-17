@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .ai.router import router as ai_router
 from .auth.router import get_accounts_store, router as auth_router
 from .channels.router import router as channels_router
 from .config import get_settings
@@ -64,6 +65,7 @@ app.add_middleware(
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 app.add_exception_handler(Exception, unexpected_error_handler)
+app.include_router(ai_router)
 app.include_router(auth_router)
 app.include_router(channels_router)
 app.include_router(digests_router)
@@ -199,6 +201,7 @@ def startup_diagnostics() -> dict[str, object]:
             "/api/v1/channels",
             "/api/v1/channels/preview",
             "/api/v1/channels/{channel_id}/health",
+            "/api/v1/ai/items/{item_id}/insight",
             "/api/v1/auth/session",
             "/api/v1/auth/register",
             "/api/v1/auth/login",
@@ -221,6 +224,7 @@ def startup_diagnostics() -> dict[str, object]:
             "/api/v1/ranking/pipeline/preview",
             "/api/v1/settings/ai",
             "/api/v1/settings/delivery",
+            "/api/v1/settings/magazine",
             "/api/v1/source-management/collections",
             "/api/v1/source-management/health-center",
             "/api/v1/source-management/opml/export",

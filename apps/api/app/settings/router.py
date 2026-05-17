@@ -10,8 +10,11 @@ from .models import (
     DeliverySettingsPreflightRequest,
     DeliverySettingsPreflightResponse,
     DeliverySettingsResponse,
+    MagazineSettingsPreflightResponse,
+    MagazineSettingsResponse,
     UpdateAISettingsRequest,
     UpdateDeliverySettingsRequest,
+    UpdateMagazineSettingsRequest,
 )
 from .repository import SettingsRepository
 from .service import SettingsService
@@ -40,6 +43,24 @@ def update_ai_settings(
 @router.post("/ai/preflight", response_model=AISettingsPreflightResponse)
 def preflight_ai_settings(service: SettingsService = Depends(get_settings_service)) -> AISettingsPreflightResponse:
     return AISettingsPreflightResponse.model_validate(service.preflight_ai_settings())
+
+
+@router.get("/magazine", response_model=MagazineSettingsResponse)
+def get_magazine_settings(service: SettingsService = Depends(get_settings_service)) -> MagazineSettingsResponse:
+    return MagazineSettingsResponse(settings=service.get_magazine_settings())
+
+
+@router.patch("/magazine", response_model=MagazineSettingsResponse)
+def update_magazine_settings(
+    payload: UpdateMagazineSettingsRequest,
+    service: SettingsService = Depends(get_settings_service),
+) -> MagazineSettingsResponse:
+    return MagazineSettingsResponse(settings=service.update_magazine_settings(payload))
+
+
+@router.post("/magazine/preflight", response_model=MagazineSettingsPreflightResponse)
+def preflight_magazine_settings(service: SettingsService = Depends(get_settings_service)) -> MagazineSettingsPreflightResponse:
+    return MagazineSettingsPreflightResponse(preflight=service.preflight_magazine_settings())
 
 
 @router.get("/delivery", response_model=DeliverySettingsResponse)

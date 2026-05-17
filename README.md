@@ -50,6 +50,9 @@ scripts/   Bootstrap, dev, and health helper scripts
 - `npm run build` verifies the Next.js application builds successfully.
 - `npm run check` builds the frontend, runs unit checks, and then runs `npm run check:contract`.
 - `npm run check:contract` runs the in-process API contract smoke in `scripts/check_api.py`. It proves contract and core workflow semantics, not a healthy live runtime.
+- `npm run check:storage` validates the SQLite schema, required tables, critical indexes, and digest/delivery columns in an isolated temporary database.
+- `npm run check:archive` builds an isolated digest EPUB and verifies archive metadata, SHA-256, history lookup, and delivery artifact readiness.
+- `npm run check:orchestration` runs an isolated scheduled workflow smoke: scheduled sync, digest build, and delivery dry-run with persisted `job_runs`.
 - `npm run check:ports` audits the canonical local ports `127.0.0.1:3000` and `127.0.0.1:8000` and writes `output/playwright/runtime-port-audit.json`.
 - `npm run check:capture` runs a browser smoke for the outside-app capture flow, including `/capture` prefills, bookmarklet readiness, manifest share target, and note persistence into the saved reader.
 - `npm run check:continuity` runs a browser smoke for the manual continuity bundle flow, including export from `/sources` backoffice, reader-context capture, bundle import, and restored route/progress in the saved reader.
@@ -93,7 +96,14 @@ For manual screen-reader sign-off, use `docs/runbooks/a11y-screen-reader-signoff
 
 ## Documentation
 
+- `CONTRIBUTING.md` defines the standard contribution and agent handoff workflow.
 - `docs/documentation-map.md` defines where requirements, execution, and technical decisions should live.
+- `docs/agent-workflow.md` defines how Codex and other agents should move from Linear issues to verified code.
+- `docs/quality-gates.md` maps change classes to required verification commands.
+- `docs/rssmaster-domain-rules.md` defines local-first product invariants and backlog triage rules.
+- `docs/magazine-model.md` defines the V1 digest-backed magazine issue model and the V2 migration path.
+- `docs/ci-cd.md` explains the GitHub Actions quality gate and the current no-deployment status.
+- `docs/observability.md` explains optional Sentry setup for web/API error monitoring.
 - `docs/prd.md` defines the canonical MVP scope and user journey.
 - `docs/local-development.md` explains clean-room setup and daily commands.
 - `docs/architecture.md` describes the service boundaries for the MVP runtime.
